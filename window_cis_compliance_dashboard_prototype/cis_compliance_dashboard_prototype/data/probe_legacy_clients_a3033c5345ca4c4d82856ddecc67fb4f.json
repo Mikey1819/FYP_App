@@ -1,0 +1,224 @@
+{
+  "run_id": "a3033c5345ca4c4d82856ddecc67fb4f",
+  "created_at": "2026-10-18T04:13:18.069059+00:00",
+  "assessment_id": "1042",
+  "target_id": "DEMO-SERVER-2022",
+  "scenario": "legacy_clients",
+  "model": "qwen3:8b",
+  "provenance": "Local Ollama",
+  "evidence_mode": "Synthetic",
+  "limits": {
+    "steps": 8,
+    "calls": 10,
+    "seconds": 240,
+    "request_seconds": 90
+  },
+  "events": [
+    {
+      "kind": "request",
+      "created_at": "2026-10-18T04:13:18.072383+00:00",
+      "data": {
+        "step": 1
+      }
+    },
+    {
+      "kind": "tool",
+      "created_at": "2026-10-18T04:13:25.829060+00:00",
+      "data": {
+        "name": "get_control_reference",
+        "arguments": {
+          "target_id": "DEMO-SERVER-2022",
+          "control_id": "DEMO-NLA"
+        },
+        "result": {
+          "evidence_reference": "1042/DEMO-NLA/get_control_reference",
+          "data": {
+            "control_id": "DEMO-NLA",
+            "title": "Remote Desktop network authentication",
+            "area": "Remote Desktop Services",
+            "rule": {
+              "operator": "equals",
+              "expected": true
+            },
+            "catalogue_version": "demo-v1",
+            "profile": "Unvalidated demonstration profile",
+            "source_reference": "Report Table 3.2 candidate: 18.10.57.3.9.4; benchmark not independently verified",
+            "source_verified": false
+          }
+        }
+      }
+    },
+    {
+      "kind": "request",
+      "created_at": "2026-10-18T04:13:25.835529+00:00",
+      "data": {
+        "step": 2
+      }
+    },
+    {
+      "kind": "tool",
+      "created_at": "2026-10-18T04:13:32.502193+00:00",
+      "data": {
+        "name": "get_finding_evidence",
+        "arguments": {
+          "control_id": "DEMO-NLA",
+          "target_id": "DEMO-SERVER-2022"
+        },
+        "result": {
+          "evidence_reference": "1042/DEMO-NLA/get_finding_evidence",
+          "data": {
+            "assessment_id": "1042",
+            "control": {
+              "control_id": "DEMO-NLA",
+              "title": "Remote Desktop network authentication",
+              "area": "Remote Desktop Services",
+              "rule": {
+                "operator": "equals",
+                "expected": true
+              },
+              "catalogue_version": "demo-v1",
+              "profile": "Unvalidated demonstration profile",
+              "source_reference": "Report Table 3.2 candidate: 18.10.57.3.9.4; benchmark not independently verified",
+              "source_verified": false
+            },
+            "evidence": {
+              "target_id": "DEMO-SERVER-2022",
+              "control_id": "DEMO-NLA",
+              "value": false,
+              "collected_at": "2026-08-12T09:18:42+08:00",
+              "mode": "Synthetic",
+              "source": "Built-in preview fixture; no server inspected",
+              "error": null
+            },
+            "status": "Non-Compliant",
+            "detail": "Observed value does not satisfy the rule",
+            "fixed_risk_score": 85
+          }
+        }
+      }
+    },
+    {
+      "kind": "request",
+      "created_at": "2026-10-18T04:13:32.508567+00:00",
+      "data": {
+        "step": 3
+      }
+    },
+    {
+      "kind": "tool",
+      "created_at": "2026-10-18T04:13:38.887292+00:00",
+      "data": {
+        "name": "inspect_related_configuration",
+        "arguments": {
+          "control_id": "DEMO-NLA",
+          "target_id": "DEMO-SERVER-2022"
+        },
+        "result": {
+          "evidence_reference": "1042/DEMO-NLA/inspect_related_configuration",
+          "data": {
+            "mode": "Synthetic",
+            "source": "Named investigation fixture: legacy_clients",
+            "nla_client_compatibility": "legacy clients need review",
+            "operational_review_required": true,
+            "proposal_allowed": false,
+            "internet_exposure": "Unknown; not inferred from local settings"
+          }
+        }
+      }
+    },
+    {
+      "kind": "request",
+      "created_at": "2026-10-18T04:13:38.895355+00:00",
+      "data": {
+        "step": 4
+      }
+    },
+    {
+      "kind": "tool",
+      "created_at": "2026-10-18T04:13:45.380829+00:00",
+      "data": {
+        "name": "get_previous_results",
+        "arguments": {
+          "control_id": "DEMO-NLA",
+          "target_id": "DEMO-SERVER-2022"
+        },
+        "result": {
+          "evidence_reference": "1042/DEMO-NLA/get_previous_results",
+          "data": {
+            "previous": {
+              "assessment_id": "1041",
+              "control": {
+                "control_id": "DEMO-NLA",
+                "title": "Remote Desktop network authentication",
+                "area": "Remote Desktop Services",
+                "rule": {
+                  "operator": "equals",
+                  "expected": true
+                },
+                "catalogue_version": "demo-v1",
+                "profile": "Unvalidated demonstration profile",
+                "source_reference": "Report Table 3.2 candidate: 18.10.57.3.9.4; benchmark not independently verified",
+                "source_verified": false
+              },
+              "evidence": {
+                "target_id": "DEMO-SERVER-2022",
+                "control_id": "DEMO-NLA",
+                "value": true,
+                "collected_at": "2026-08-05T11:35:00+08:00",
+                "mode": "Synthetic",
+                "source": "Built-in preview fixture; no server inspected",
+                "error": null
+              },
+              "status": "Compliant",
+              "detail": "Observed value satisfies the rule"
+            }
+          }
+        }
+      }
+    },
+    {
+      "kind": "request",
+      "created_at": "2026-10-18T04:13:45.387718+00:00",
+      "data": {
+        "step": 5
+      }
+    },
+    {
+      "kind": "tool",
+      "created_at": "2026-10-18T04:13:52.696881+00:00",
+      "data": {
+        "name": "get_supported_remediation",
+        "arguments": {
+          "control_id": "DEMO-NLA",
+          "target_id": "DEMO-SERVER-2022"
+        },
+        "result": {
+          "evidence_reference": "1042/DEMO-NLA/get_supported_remediation",
+          "data": {
+            "action_id": null,
+            "proposal_allowed": false,
+            "reason": "Operational compatibility review required"
+          }
+        }
+      }
+    },
+    {
+      "kind": "request",
+      "created_at": "2026-10-18T04:13:52.704375+00:00",
+      "data": {
+        "step": 6
+      }
+    },
+    {
+      "kind": "finished",
+      "created_at": "2026-10-18T04:13:58.362570+00:00",
+      "data": {
+        "status": "Completed",
+        "summary": "Operational review is required due to legacy client compatibility concerns. NLA client compatibility needs assessment before proceeding. No supported proposal can be submitted without further review.",
+        "duration_seconds": 40.281,
+        "tool_calls": 5,
+        "proposal_id": null
+      }
+    }
+  ]
+}

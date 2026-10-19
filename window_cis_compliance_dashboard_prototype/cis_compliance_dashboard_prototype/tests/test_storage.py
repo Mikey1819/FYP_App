@@ -12,10 +12,10 @@ import sys
 import tempfile
 import unittest
 
-from hardening.demo import CURRENT_RESULTS, PREVIOUS_RESULTS, TARGET_ID
-from hardening.demo_storage import load_demo
-from hardening.domain import EvidenceMode, Rule, Operator, Status, assess
-from hardening.storage import AssessmentStore, RiskInput
+from window_cis_compliance_dashboard_prototype.cis_compliance_dashboard_prototype.hardening.demo import CURRENT_RESULTS, PREVIOUS_RESULTS, TARGET_ID
+from window_cis_compliance_dashboard_prototype.cis_compliance_dashboard_prototype.hardening.demo_storage import load_demo
+from window_cis_compliance_dashboard_prototype.cis_compliance_dashboard_prototype.hardening.domain import EvidenceMode, Rule, Operator, Status, assess
+from window_cis_compliance_dashboard_prototype.cis_compliance_dashboard_prototype.hardening.storage import AssessmentStore, RiskInput
 
 
 class StorageTests(unittest.TestCase):

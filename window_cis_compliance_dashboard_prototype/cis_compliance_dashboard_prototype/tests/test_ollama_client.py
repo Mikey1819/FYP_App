@@ -4,7 +4,7 @@ import json
 import unittest
 from unittest.mock import Mock, patch
 
-from hardening.ollama_client import OllamaClient
+from window_cis_compliance_dashboard_prototype.cis_compliance_dashboard_prototype.hardening.ollama_client import OllamaClient
 
 
 class OllamaClientTests(unittest.TestCase):

@@ -11,14 +11,14 @@ import sqlite3
 from pathlib import Path
 from html import escape
 
-from hardening.demo import TARGET_ID, PROFILE, display_value
-from hardening.demo_storage import load_demo
-from hardening.storage import AssessmentStore
-from hardening.workflow import WorkflowStore, NlaSimulator
-from hardening.investigation import Coordinator, InvestigationLog
-from hardening.investigation_tools import InvestigationTools
-from hardening.ollama_client import OllamaClient
-from hardening.demo_context import DEVICE_CONTEXT
+from window_cis_compliance_dashboard_prototype.cis_compliance_dashboard_prototype.hardening.demo import TARGET_ID, PROFILE, display_value
+from window_cis_compliance_dashboard_prototype.cis_compliance_dashboard_prototype.hardening.demo_storage import load_demo
+from window_cis_compliance_dashboard_prototype.cis_compliance_dashboard_prototype.hardening.storage import AssessmentStore
+from window_cis_compliance_dashboard_prototype.cis_compliance_dashboard_prototype.hardening.workflow import WorkflowStore, NlaSimulator
+from window_cis_compliance_dashboard_prototype.cis_compliance_dashboard_prototype.hardening.investigation import Coordinator, InvestigationLog
+from window_cis_compliance_dashboard_prototype.cis_compliance_dashboard_prototype.hardening.investigation_tools import InvestigationTools
+from window_cis_compliance_dashboard_prototype.cis_compliance_dashboard_prototype.hardening.ollama_client import OllamaClient
+from window_cis_compliance_dashboard_prototype.cis_compliance_dashboard_prototype.hardening.demo_context import DEVICE_CONTEXT
 
 import streamlit as st
 

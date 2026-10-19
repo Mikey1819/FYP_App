@@ -7,9 +7,9 @@ import sys
 import tempfile
 import unittest
 
-from hardening.domain import Status, summarise
-from hardening.evidence_import import load_evidence
-from hardening.server2022_catalogue import BENCHMARK_SHA256, CATALOGUE_ID, COLLECTOR_ID, PROFILE, SOURCES
+from window_cis_compliance_dashboard_prototype.cis_compliance_dashboard_prototype.hardening.domain import Status, summarise
+from window_cis_compliance_dashboard_prototype.cis_compliance_dashboard_prototype.hardening.evidence_import import load_evidence
+from window_cis_compliance_dashboard_prototype.cis_compliance_dashboard_prototype.hardening.server2022_catalogue import BENCHMARK_SHA256, CATALOGUE_ID, COLLECTOR_ID, PROFILE, SOURCES
 
 
 NOW = datetime(2026, 10, 19, 2, tzinfo=timezone.utc)
