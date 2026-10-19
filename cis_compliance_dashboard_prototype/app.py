@@ -1,12 +1,24 @@
-"""CIS Compliance Dashboard - presentation-only Streamlit prototype.
+"""CIS Compliance Dashboard - synthetic assessment demonstration.
 
-This application deliberately uses only representative, in-memory sample data.
-It does not execute PowerShell, call an LLM, access a database, or use a backend.
+This application evaluates typed synthetic evidence using deterministic domain rules.
+SQLite preserves synthetic assessment snapshots. It does not execute PowerShell or call an LLM.
 """
 
 from __future__ import annotations
 
-import time
+import os
+import sqlite3
+from pathlib import Path
+from html import escape
+
+from hardening.demo import TARGET_ID, PROFILE, display_value
+from hardening.demo_storage import load_demo
+from hardening.storage import AssessmentStore
+from hardening.workflow import WorkflowStore, NlaSimulator
+from hardening.investigation import Coordinator, InvestigationLog
+from hardening.investigation_tools import InvestigationTools
+from hardening.ollama_client import OllamaClient
+from hardening.demo_context import DEVICE_CONTEXT
 
 import streamlit as st
 
@@ -19,142 +31,27 @@ st.set_page_config(
 )
 
 
-CONTROLS = [
-    {
-        "id": "CIS-1.2.2",
-        "title": "Account lockout threshold",
-        "observed": "0 invalid attempts",
-        "expected": "10 invalid attempts",
-        "status": "Non-Compliant",
-    },
-    {
-        "id": "CIS-1.1.4",
-        "title": "Minimum password length",
-        "observed": "8 characters",
-        "expected": "14 characters",
-        "status": "Non-Compliant",
-    },
-    {
-        "id": "CIS-2.3.1",
-        "title": "Guest account status",
-        "observed": "Disabled",
-        "expected": "Disabled",
-        "status": "Compliant",
-    },
-    {
-        "id": "CIS-9.1.1",
-        "title": "Windows Firewall (Domain) state",
-        "observed": "On",
-        "expected": "On",
-        "status": "Compliant",
-    },
-    {
-        "id": "CIS-18.9.1",
-        "title": "Remote Desktop network authentication",
-        "observed": "Not required",
-        "expected": "Required",
-        "status": "Non-Compliant",
-    },
-]
-
-RISKS = {
-    "CIS-18.9.1": {
-        "title": "Remote Desktop network authentication",
-        "score": 85,
-        "level": "Critical",
-        "factors": {"I": 5, "E": 4, "P": 4, "L": 3, "D": 5},
-        "explanation": (
-            "Network-level authentication is disabled, allowing Remote Desktop "
-            "logon prompts to be exposed to unauthenticated network connections."
-        ),
-    },
-    "CIS-1.2.2": {
-        "title": "Account lockout threshold",
-        "score": 62,
-        "level": "High",
-        "factors": {"I": 4, "E": 3, "P": 3, "L": 3, "D": 1},
-        "explanation": "A zero lockout threshold permits unlimited password-guessing attempts.",
-    },
-    "CIS-1.1.4": {
-        "title": "Minimum password length",
-        "score": 56,
-        "level": "Moderate",
-        "factors": {"I": 4, "E": 3, "P": 2, "L": 1, "D": 3},
-        "explanation": "An eight-character password policy reduces resistance to password attacks.",
-    },
-}
-
-DEVICE_CONTEXT = {
-    "CIS-18.9.1": {
-        "condition": "Remote Desktop is configured so that Network Level Authentication is not required.",
-        "meaning": "A remote connection can reach the Remote Desktop logon prompt before network-level authentication has been completed.",
-        "decision": "Prioritise approval to enable Network Level Authentication after confirming that authorised administrators use supported Remote Desktop clients.",
-        "approve_outcome": "Remote Desktop connections must authenticate earlier in the connection process. Older or unmanaged clients that do not support Network Level Authentication may need to be updated before they can connect.",
-        "defer_outcome": "The exposed Remote Desktop logon prompt remains available to unauthenticated network connections, so the Critical risk remains open.",
-    },
-    "CIS-1.2.2": {
-        "condition": "The account lockout threshold is 0 invalid attempts, so the server does not lock an account after repeated failed sign-in attempts.",
-        "meaning": "Password guessing can continue without the account-lockout safeguard slowing repeated attempts.",
-        "decision": "Plan a change to the CIS target of 10 invalid attempts and make sure the administrator account-unlock process is understood.",
-        "approve_outcome": "Repeated incorrect passwords are limited by the lockout policy, but legitimate users who repeatedly mistype a password may require support to unlock their account.",
-        "defer_outcome": "Repeated password attempts remain unrestricted, which keeps the High risk open.",
-    },
-    "CIS-1.1.4": {
-        "condition": "The minimum password length is 8 characters instead of the CIS target of 14 characters.",
-        "meaning": "Shorter passwords generally provide less resistance against password-guessing and cracking attempts.",
-        "decision": "Schedule a move to a 14-character minimum and notify affected users before they next change their password.",
-        "approve_outcome": "New and changed passwords must meet the stronger length requirement; users may need guidance during the transition.",
-        "defer_outcome": "The weaker password-length policy remains in effect, leaving the Moderate risk open.",
-    },
-}
-
-DRIFT = [
-    {
-        "Control": "CIS-18.9.1",
-        "Previous value": "Required",
-        "Current value": "Not required",
-        "Description": "Network-level authentication disabled",
-        "Detected at": "2026-08-12 09:15:44",
-    },
-    {
-        "Control": "CIS-1.2.2",
-        "Previous value": "10 invalid attempts",
-        "Current value": "0 invalid attempts",
-        "Description": "Lockout threshold reverted to 0",
-        "Detected at": "2026-08-12 09:15:48",
-    },
-    {
-        "Control": "CIS-9.1.1",
-        "Previous value": "Off",
-        "Current value": "On",
-        "Description": "Firewall re-enabled after previous remediation",
-        "Detected at": "2026-08-12 09:16:05",
-    },
-]
-
-HISTORY = [
-    {"Assessment": "1042", "Initiated by": "admin01", "Started": "2026-08-12 09:15:00", "Status": "Completed"},
-    {"Assessment": "1041", "Initiated by": "admin01", "Started": "2026-08-05 11:35:00", "Status": "Completed"},
-    {"Assessment": "1040", "Initiated by": "admin02", "Started": "2026-08-01 08:40:00", "Status": "Completed"},
-]
-
-
 INITIAL_AGENT_EVENTS = [
     {
         "Time": "—",
-        "Component": "AI Agent Orchestrator",
-        "Activity": "Sample workflow ready to replay",
+        "Component": "Workflow simulator",
+        "Activity": "Saved synthetic assessment ready for a proposal",
         "State": "Ready to Scan",
     }
 ]
 
 
 def init_session_state() -> None:
-    """Initialise the presentation-only workflow state for this browser session."""
+    """Restore the latest durable proposal when opening a new browser session."""
     st.session_state.setdefault("agent_phase", "Ready to Scan")
     st.session_state.setdefault("agent_events", INITIAL_AGENT_EVENTS.copy())
     st.session_state.setdefault("remediation_decision", None)
+    st.session_state.setdefault("decision_comment", "")
     st.session_state.setdefault("navigation", "Dashboard / Overview")
+    if "active_proposal_id" not in st.session_state:
+        saved = WORKFLOWS.list_for_assessment("1042")
+        st.session_state["active_proposal_id"] = saved[0].proposal.proposal_id if saved else None
+    sync_saved_workflow()
 
 
 def request_navigation(page: str) -> None:
@@ -163,120 +60,83 @@ def request_navigation(page: str) -> None:
     st.rerun()
 
 
+def sync_saved_workflow() -> None:
+    proposal_id = st.session_state.get("active_proposal_id")
+    if not proposal_id:
+        return
+    state = WORKFLOWS.get(proposal_id)
+    st.session_state["agent_phase"] = state.phase
+    decision = state.event("decision")
+    st.session_state["remediation_decision"] = (
+        "Approved" if decision["payload"]["approved"] else "Rejected"
+    ) if decision else None
+    st.session_state["decision_comment"] = decision["payload"]["comment"] if decision else ""
+    events = [{"Time": state.proposal.created_at, "Component": "Workflow service",
+               "Activity": "Saved synthetic NLA proposal for assessment 1042", "State": "Awaiting Approval"}]
+    for event in state.events:
+        kind, payload = event["kind"], event["payload"]
+        if kind == "decision":
+            label = "Approved" if payload["approved"] else "Rejected"
+            activity = f"{payload['actor']}: {label} this exact simulated action"
+        elif kind == "attempt":
+            label, activity = "Claimed", "Approval consumed for one simulated execution attempt"
+        elif kind == "execution":
+            label = "Executed" if payload["success"] else "Execution Failed"
+            activity = payload["detail"]
+        else:
+            label, activity = payload["status"], "Separate synthetic read-back evaluated against the original rule"
+        events.append({"Time": event["created_at"], "Component": "Administrator" if kind == "decision" else "Simulation service",
+                       "Activity": activity, "State": label})
+    st.session_state["agent_events"] = events
+
+
 def run_sample_assessment() -> None:
-    """Visibly replay the report workflow without calling any external component."""
-    events = [
-        {
-            "Time": "09:15:00",
-            "Component": "AI Agent Orchestrator",
-            "Activity": "Assessment 1042 accepted; Scanner Agent assigned",
-            "State": "Scanning",
-        }
-    ]
-    st.session_state["agent_phase"] = "Scanning"
-    st.session_state["remediation_decision"] = None
-
-    scan_times = ["09:15:12", "09:15:36", "09:16:03", "09:16:31", "09:17:04"]
-    with st.status("AI Agent Orchestrator — assessment requested", expanded=True) as status:
-        progress = st.progress(0, text="Preparing sample assessment 1042")
-        for index, control in enumerate(CONTROLS, start=1):
-            status.update(label=f"Scanner Agent — scanning {control['id']}", state="running")
-            status.write(
-                f"{control['id']} · {control['title']} — observed: {control['observed']}"
-            )
-            events.append(
-                {
-                    "Time": scan_times[index - 1],
-                    "Component": "Scanner Agent",
-                    "Activity": f"Assessed {control['id']}: {control['status']}",
-                    "State": "Completed",
-                }
-            )
-            progress.progress(index / len(CONTROLS), text=f"Scanning {index} of {len(CONTROLS)} controls")
-            time.sleep(0.42)
-
-        status.update(label="Analysis Agent — prioritising non-compliant findings", state="running")
-        status.write("Deterministic RiskEngine calculated the three sample risk scores.")
-        events.append(
-            {
-                "Time": "09:18:21",
-                "Component": "Analysis Agent",
-                "Activity": "Prioritised 3 non-compliant findings using the fixed risk formula",
-                "State": "Risk Prioritisation",
-            }
-        )
-        time.sleep(0.55)
-        status.update(label="Administrator decision required", state="complete", expanded=True)
-
-    events.append(
-        {
-            "Time": "09:18:42",
-            "Component": "AI Agent Orchestrator",
-            "Activity": "CIS-18.9.1 remediation prepared for administrator review",
-            "State": "Awaiting Approval",
-        }
+    """Prepare a proposal from the saved fixture; this does not run a new scan."""
+    proposal = WORKFLOWS.create_proposal(
+        assessment_id="1042", target_id=TARGET_ID, control_id="DEMO-NLA",
+        action_id="DEMO-ENABLE-NLA", parameters={"required": True},
+        reason="Synthetic assessment 1042 does not require NLA. Demonstrate one approved change and independent read-back.",
     )
-    st.session_state["agent_events"] = events
-    st.session_state["agent_phase"] = "Awaiting Approval"
+    st.session_state["active_proposal_id"] = proposal.proposal_id
+    st.session_state.pop("review_comment_input", None)
+    sync_saved_workflow()
 
 
-def approve_sample_remediation() -> None:
-    """Simulate the approved path; never execute scripts or modify a system."""
-    events = list(st.session_state["agent_events"])
-    with st.status("Remediation Agent — approved action simulation", expanded=True) as status:
-        status.write("Administrator approval recorded for REM-18.9.1.")
-        time.sleep(0.35)
-        status.update(label="Remediation Agent — executing approved sample action", state="running")
-        status.write("Simulation only: no PowerShell script was invoked.")
-        time.sleep(0.45)
-        status.update(label="Remediation Agent — verification complete", state="complete", expanded=True)
-
-    events.extend(
-        [
-            {
-                "Time": "09:25:00",
-                "Component": "Administrator",
-                "Activity": "Approved REM-18.9.1",
-                "State": "Approved",
-            },
-            {
-                "Time": "09:25:11",
-                "Component": "Remediation Agent",
-                "Activity": "Executed simulated Network Level Authentication remediation",
-                "State": "Executed",
-            },
-            {
-                "Time": "09:26:30",
-                "Component": "Remediation Agent",
-                "Activity": "Reassessed CIS-18.9.1; verified value: Required",
-                "State": "Passed",
-            },
-        ]
+def run_approved_simulation() -> None:
+    state = WORKFLOWS.get(st.session_state["active_proposal_id"])
+    scenario = st.session_state.get("simulation_scenario", "Successful verification")
+    simulator = NlaSimulator(
+        apply_change=scenario != "Verification failure",
+        fail_execution=scenario == "Execution failure",
+        fail_collection=scenario == "Collection error",
     )
-    st.session_state["agent_events"] = events
-    st.session_state["agent_phase"] = "Verification Passed"
-    st.session_state["remediation_decision"] = "Approved"
+    WORKFLOWS.execute_simulated(state.proposal.proposal_id, binding=state.proposal.binding, simulator=simulator)
+    sync_saved_workflow()
 
 
-def reject_sample_remediation() -> None:
-    events = list(st.session_state["agent_events"])
-    events.append(
-        {
-            "Time": "09:25:00",
-            "Component": "Administrator",
-            "Activity": "Rejected REM-18.9.1; no remediation executed",
-            "State": "Rejected",
-        }
-    )
-    st.session_state["agent_events"] = events
-    st.session_state["agent_phase"] = "Rejected"
-    st.session_state["remediation_decision"] = "Rejected"
+def approve_sample_remediation(comment: str = "") -> None:
+    state = WORKFLOWS.get(st.session_state["active_proposal_id"])
+    WORKFLOWS.decide(state.proposal.proposal_id, binding=state.proposal.binding,
+                     approved=True, actor="demo-admin", comment=comment)
+    run_approved_simulation()
+
+
+def reject_sample_remediation(comment: str = "") -> None:
+    state = WORKFLOWS.get(st.session_state["active_proposal_id"])
+    WORKFLOWS.decide(state.proposal.proposal_id, binding=state.proposal.binding,
+                     approved=False, actor="demo-admin", comment=comment)
+    sync_saved_workflow()
 
 
 def reset_sample_workflow() -> None:
+    # Clear only the current view. Saved decisions/attempts are never erased.
+    st.session_state["active_proposal_id"] = None
     st.session_state["agent_phase"] = "Ready to Scan"
     st.session_state["agent_events"] = INITIAL_AGENT_EVENTS.copy()
     st.session_state["remediation_decision"] = None
+    st.session_state["decision_comment"] = ""
+    st.session_state.pop("review_comment_input", None)
+    st.session_state.pop("simulation_scenario", None)
 
 
 def inject_css() -> None:
@@ -364,49 +224,50 @@ def badge(text: str) -> str:
         "Rejected": "badge-issue",
         "Verification Passed": "badge-good",
     }
-    return f'<span class="badge {styles.get(text, "badge-info")}">{text}</span>'
+    return f'<span class="badge {styles.get(text, "badge-info")}">{escape(text)}</span>'
 
 
 def metric_card(label: str, value: str, note: str = "") -> str:
     return f"""
     <div class="kpi-card">
-      <div class="kpi-label">{label}</div>
-      <div class="kpi-value">{value}</div>
-      <div class="kpi-note">{note}</div>
+      <div class="kpi-label">{escape(label)}</div>
+      <div class="kpi-value">{escape(value)}</div>
+      <div class="kpi-note">{escape(note)}</div>
     </div>
     """
 
 
 def html_table(rows: list[dict[str, str]], columns: list[str], badge_columns: set[str] | None = None) -> None:
     badge_columns = badge_columns or set()
-    headers = "".join(f"<th>{column}</th>" for column in columns)
+    headers = "".join(f"<th>{escape(column)}</th>" for column in columns)
     body = []
     for row in rows:
         cells = []
         for column in columns:
             value = str(row[column])
-            cells.append(f"<td>{badge(value) if column in badge_columns else value}</td>")
+            cells.append(f"<td>{badge(value) if column in badge_columns else escape(value)}</td>")
         body.append("<tr>" + "".join(cells) + "</tr>")
     st.markdown(f"<table><thead><tr>{headers}</tr></thead><tbody>{''.join(body)}</tbody></table>", unsafe_allow_html=True)
 
 
 def render_page_intro(title: str, subtitle: str) -> None:
-    st.markdown('<div class="prototype-banner">Prototype mock-up — representative sample data.</div>', unsafe_allow_html=True)
+    st.markdown('<div class="prototype-banner">Synthetic evidence · demo rules not yet benchmark-validated.</div>', unsafe_allow_html=True)
     st.title(title)
-    st.markdown(f'<div class="muted">{subtitle}</div>', unsafe_allow_html=True)
-    st.markdown('<div class="scope-label">Sample assessment: 5 of 36 scoped controls shown.</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="muted">{escape(subtitle)}</div>', unsafe_allow_html=True)
+    st.caption(f"Target: {TARGET_ID} · {PROFILE} · Backend: SQLite assessment snapshots · LLM: local qwen3:8b, invoked only on request")
+    st.caption(f"Evidence coverage: {SUMMARY.evaluated}/{SUMMARY.selected} evaluated · {SUMMARY.errors} errors · {SUMMARY.unknown} unknown. Final project catalogue: 36 planned controls.")
 
 
 def detail_item(label: str, value: str) -> None:
-    st.markdown(f'<div class="detail-label">{label}</div><div class="detail-value">{value}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="detail-label">{escape(label)}</div><div class="detail-value">{escape(value)}</div>', unsafe_allow_html=True)
 
 
 def render_agent_activity(show_heading: bool = True) -> None:
     if show_heading:
-        st.header("Agent activity")
+        st.header("Simulation activity")
     phase = st.session_state["agent_phase"]
     st.markdown(
-        f'<div class="formula">AI Agent Orchestrator state: {badge(phase)}</div>',
+        f'<div class="formula">Workflow simulator state: {badge(phase)}</div>',
         unsafe_allow_html=True,
     )
     html_table(
@@ -418,16 +279,16 @@ def render_agent_activity(show_heading: bool = True) -> None:
 
 def render_current_device_situation() -> None:
     """Describe the sample target's present posture without claiming a live scan."""
-    context = DEVICE_CONTEXT["CIS-18.9.1"]
+    context = DEVICE_CONTEXT["DEMO-NLA"]
     st.header("Current device situation")
     st.caption("Representative interpretation of the sample assessment only. It is not a live diagnosis of this device.")
     target, posture, urgent = st.columns(3)
     with target:
         st.markdown(metric_card("Sample target", "Server 2022", "CIS hardening scope"), unsafe_allow_html=True)
     with posture:
-        st.markdown(metric_card("Observed posture", "3 / 5", "Sample controls non-compliant"), unsafe_allow_html=True)
+        st.markdown(metric_card("Original snapshot", f"{SUMMARY.non_compliant} / {SUMMARY.selected}", "Sample controls non-compliant"), unsafe_allow_html=True)
     with urgent:
-        st.markdown(metric_card("Immediate concern", "RDP / NLA", "CIS-18.9.1 · Critical"), unsafe_allow_html=True)
+        st.markdown(metric_card("Immediate concern", "RDP / NLA", "DEMO-NLA · Critical"), unsafe_allow_html=True)
     st.markdown(
         f'<div class="section-card"><div class="detail-label">What is happening in this sample</div><div class="detail-value">{context["condition"]}</div><div class="detail-label">Why the administrator should care</div><div class="detail-value">{context["meaning"]}</div></div>',
         unsafe_allow_html=True,
@@ -459,19 +320,22 @@ def render_overview() -> None:
     render_page_intro("Dashboard / Overview", "Executive security posture for the latest Windows Server 2022 assessment.")
     columns = st.columns(5)
     values = [
-        ("Assessment", "1042", "Completed"),
-        ("Scoped controls", "36", "Framework selection"),
-        ("Sample compliant", "2 / 5", "40% compliance rate"),
-        ("Non-compliant", "3", "Requires review"),
-        ("Highest risk", "85", "Critical finding"),
+        ("Assessment", "1042", "Original synthetic snapshot"),
+        ("Evaluated / selected", f"{SUMMARY.evaluated} / {SUMMARY.selected}", "Evidence coverage"),
+        ("Sample compliant", f"{SUMMARY.compliant} / {SUMMARY.evaluated}", f"{SUMMARY.compliance_percent:.0f}% of evaluated controls" if SUMMARY.compliance_percent is not None else "No evaluated evidence"),
+        ("Non-compliant", str(SUMMARY.non_compliant), "Original assessment"),
+        ("Highest risk", str(max((r['score'] for r in RISKS.values()), default=0)), "Project-defined demo score"),
     ]
     for column, data in zip(columns, values):
         with column:
             st.markdown(metric_card(*data), unsafe_allow_html=True)
 
     render_current_device_situation()
+    st.caption("This view preserves the original assessment. A later verification is shown separately and does not rewrite its history.")
+    if st.session_state["agent_phase"] == "Verification Passed":
+        st.success("Later simulated verification: DEMO-NLA passed. The original snapshot below still records its earlier non-compliance.")
 
-    st.header("Agentic workflow replay")
+    st.header("Workflow simulation")
     phase = st.session_state["agent_phase"]
     action_column, summary_column, reset_column = st.columns([0.28, 0.52, 0.20])
     with action_column:
@@ -483,61 +347,109 @@ def render_overview() -> None:
             if st.button("Review remediation", type="primary", use_container_width=True, key="review_remediation"):
                 request_navigation("Remediation Review")
         else:
-            st.button("Workflow complete", disabled=True, use_container_width=True, key="workflow_complete")
+            if st.button("View saved workflow", use_container_width=True, key="workflow_complete"):
+                request_navigation("Remediation Review")
     with summary_column:
         if phase == "Ready to Scan":
-            st.info("Replay the representative assessment to watch the Orchestrator, Scanner Agent, and Analysis Agent progress through the five controls.")
+            st.info("Use the five saved synthetic results to prepare a remediation proposal. This does not run a fresh scan or call the model.")
         elif phase == "Awaiting Approval":
-            st.warning("Scanning and analysis are complete. CIS-18.9.1 is now waiting for an administrator decision; no remediation has been executed.")
+            st.warning("The proposal uses saved assessment 1042. DEMO-NLA is waiting for an administrator decision; no remediation has been executed.")
         elif phase == "Verification Passed":
-            st.success("The approved sample action has been verified. Review the verification result or replay the workflow.")
-        else:
+            st.success("The selected sample action has been verified. Review its saved result or start a new demonstration.")
+        elif phase == "Rejected":
             st.info("The proposed remediation was rejected. No configuration change was simulated.")
+        else:
+            st.warning(f"Saved workflow: {phase}. Review the recorded attempt before preparing another proposal.")
     with reset_column:
-        if phase != "Ready to Scan" and st.button("Reset replay", use_container_width=True, key="reset_workflow"):
+        if phase != "Ready to Scan" and st.button("New demonstration", use_container_width=True, key="reset_workflow"):
             reset_sample_workflow()
             st.rerun()
     render_agent_activity()
+    render_investigation()
 
     left, right = st.columns([1.24, 0.76], gap="large")
     with left:
         st.header("Assessment information")
         info = [
             {"Field": "Assessment ID", "Value": "1042"},
-            {"Field": "Initiated by", "Value": "admin01"},
+            {"Field": "Initiated by", "Value": "demo-admin"},
             {"Field": "Start time", "Value": "2026-08-12 09:15:00"},
             {"Field": "End time", "Value": "2026-08-12 09:18:42"},
-            {"Field": "Status", "Value": "Completed"},
+            {"Field": "Snapshot status", "Value": "Completed synthetic assessment"},
+            {"Field": "Workflow simulation", "Value": st.session_state["agent_phase"]},
         ]
         html_table(info, ["Field", "Value"])
     with right:
         st.header("Risk distribution")
         distribution = [
-            {"Risk level": "Critical", "Findings": "1", "Focus": "Immediate"},
-            {"Risk level": "High", "Findings": "1", "Focus": "Prioritised"},
-            {"Risk level": "Moderate", "Findings": "1", "Focus": "Planned"},
+            {"Risk level": level, "Findings": str(sum(r["level"] == level for r in RISKS.values())), "Focus": focus}
+            for level, focus in (("Critical", "Immediate"), ("High", "Prioritised"), ("Moderate", "Planned"), ("Low", "Routine"))
         ]
         html_table(distribution, ["Risk level", "Findings", "Focus"], {"Risk level"})
-        st.markdown('<div class="formula">3 non-compliant findings are prioritised for review.</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="formula">{len(RISKS)} non-compliant findings are prioritised for review.</div>', unsafe_allow_html=True)
 
     st.header("Assessment snapshot")
     snapshot = [{"Control": c["id"], "Control title": c["title"], "Status": c["status"]} for c in CONTROLS]
     html_table(snapshot, ["Control", "Control title", "Status"], {"Status"})
 
 
+def render_investigation() -> None:
+    st.header("Local AI investigation")
+    st.caption("The model chooses investigative tools over saved synthetic evidence. It cannot approve or execute a change. Limits: 8 model steps, 10 tool calls, 90 seconds per request, 240 seconds total.")
+    scenario = st.selectbox("Synthetic client context", ["compatible_clients", "legacy_clients"],
+                            format_func=lambda value: "Compatible RDP clients" if value == "compatible_clients" else "Legacy clients need operational review",
+                            key="investigation_scenario")
+    if st.button("Investigate with local Ollama", key="run_investigation"):
+        with st.spinner("Local model investigating saved evidence; the first call may load the model..."):
+            run = Coordinator(OllamaClient(), InvestigationTools(WORKFLOWS.assessments, "1042", scenario=scenario)).run()
+        proposal_id = run["events"][-1]["data"].get("proposal_id")
+        if proposal_id:
+            st.session_state["active_proposal_id"] = proposal_id
+            st.session_state.pop("review_comment_input", None)
+            sync_saved_workflow()
+        st.session_state["saved_investigation"] = run["run_id"]
+        st.rerun()
+    runs = InvestigationLog(WORKFLOWS.assessments).recent("1042")
+    if not runs:
+        st.info("No model investigation has run in this database. Assessment and manual demonstration remain available.")
+        return
+    selected = st.selectbox("Saved investigation", [run["run_id"] for run in runs], key="saved_investigation")
+    run = next(run for run in runs if run["run_id"] == selected)
+    st.caption(f"{run['provenance']} · {run['model']} · {run['scenario']} · started {run['created_at']}")
+    finished = next((event["data"] for event in reversed(run["events"]) if event["kind"] == "finished"), None)
+    if finished:
+        st.text(f"{finished['status']} | {finished['duration_seconds']} seconds | {finished['tool_calls']} requested tool calls")
+        st.text(finished["summary"])
+        if finished["status"] != "Completed":
+            st.warning("Investigation did not complete normally. Stored assessment results and deterministic risk scores remain available.")
+        if finished.get("proposal_id") and st.button("Review AI-prepared proposal", key="review_ai_proposal"):
+            st.session_state["active_proposal_id"] = finished["proposal_id"]
+            st.session_state.pop("review_comment_input", None)
+            request_navigation("Remediation Review")
+    else:
+        st.warning("This saved investigation has no completion record; it may have been interrupted. It is not resumed automatically.")
+    with st.expander("Saved tool evidence and decisions"):
+        for event in run["events"]:
+            if event["kind"] in ("tool", "tool_rejected"):
+                st.caption(f"{event['created_at']} · {event['kind']}")
+                st.json(event["data"])
+
+
 def render_results() -> None:
     render_page_intro("Assessment Results", "Detailed evidence captured for assessment 1042.")
     filter_col, summary_col = st.columns([0.62, 0.38])
     with filter_col:
-        selected_filter = st.selectbox("Show controls", ["All sample controls", "Non-Compliant only", "Compliant only"], label_visibility="collapsed")
+        selected_filter = st.selectbox("Show controls", ["All sample controls", "Non-Compliant only", "Compliant only", "Error / Unknown only"], label_visibility="collapsed")
     with summary_col:
-        st.markdown('<div class="formula">Assessment 1042 · 2 Compliant · 3 Non-Compliant</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="formula">Original snapshot 1042 · {SUMMARY.compliant} Compliant · {SUMMARY.non_compliant} Non-Compliant · {SUMMARY.errors} Error · {SUMMARY.unknown} Unknown</div>', unsafe_allow_html=True)
 
     filtered = CONTROLS
     if selected_filter == "Non-Compliant only":
         filtered = [control for control in CONTROLS if control["status"] == "Non-Compliant"]
     elif selected_filter == "Compliant only":
         filtered = [control for control in CONTROLS if control["status"] == "Compliant"]
+    elif selected_filter == "Error / Unknown only":
+        filtered = [control for control in CONTROLS if control["status"] in ("Error", "Unknown")]
     rows = [
         {
             "Control": item["id"],
@@ -545,11 +457,16 @@ def render_results() -> None:
             "Observed value": item["observed"],
             "Expected value": item["expected"],
             "Compliance": item["status"],
+            "Assessed at": item["assessed_at"],
         }
         for item in filtered
     ]
-    html_table(rows, ["Control", "Control title", "Observed value", "Expected value", "Compliance"], {"Compliance"})
-    st.info("Evidence is representative only. Use the Risk Findings view to inspect the three non-compliant controls.")
+    html_table(rows, ["Control", "Control title", "Observed value", "Expected value", "Compliance", "Assessed at"], {"Compliance"})
+    st.info("All evidence comes from built-in fixtures. These demo comparisons are not a verified CIS assessment.")
+    with st.expander("Candidate benchmark references and evidence provenance"):
+        for item in CONTROLS:
+            st.write(f"{item['id']}: {item['reference']}")
+            st.caption(item["source"])
 
 
 def render_risk() -> None:
@@ -566,7 +483,7 @@ def render_risk() -> None:
         format_func=lambda control_id: f"{control_id} — {RISKS[control_id]['title']}",
     )
     risk = RISKS[selected]
-    calculated_score = sum({"I": 6, "E": 5, "P": 4, "L": 3, "D": 2}[factor] * value for factor, value in risk["factors"].items())
+    calculated_score = risk["score"]
 
     st.markdown(f"### {selected} — {risk['title']}")
     st.markdown(f"Risk score: <strong>{calculated_score}</strong> &nbsp;&nbsp; {badge(risk['level'])}", unsafe_allow_html=True)
@@ -590,7 +507,8 @@ def render_risk() -> None:
             )
     st.markdown("### Supporting explanation")
     st.info(risk["explanation"])
-    st.caption("Analysis Agent supporting explanation — simulated prototype content; no local LLM call is made.")
+    st.caption("Risk service supporting explanation — simulated prototype content; no local LLM call is made.")
+    st.caption("I/P/L baselines and E exposure are illustrative inputs. D is derived from the compatible synthetic history. Scores are project-defined, not CIS or CVSS scores.")
     render_decision_support(selected)
 
 
@@ -601,74 +519,111 @@ def render_remediation() -> None:
     left, right = st.columns([0.66, 0.34], gap="large")
     with left:
         st.header("Finding information")
-        detail_item("Control", "CIS-18.9.1 — Remote Desktop network authentication")
-        detail_item("Risk", f"Score 85 · {badge('Critical')}")
+        detail_item("Control", "DEMO-NLA — Remote Desktop network authentication")
+        detail_item("Risk", f"Score {RISKS['DEMO-NLA']['score']} · {RISKS['DEMO-NLA']['level']}")
         st.header("Proposed remediation")
         detail_item("Proposed action", "Enable Network Level Authentication for Remote Desktop.")
-        detail_item("Script reference", "REM-18.9.1")
-        detail_item("Status before decision", badge(phase))
+        detail_item("Script reference", "DEMO-ENABLE-NLA")
+        detail_item("Current simulation state", phase)
+        if st.session_state.get("active_proposal_id"):
+            proposal = WORKFLOWS.get(st.session_state["active_proposal_id"]).proposal
+            detail_item("Saved proposal", proposal.proposal_id)
+            detail_item("Target / assessment", f"{proposal.target_id} / {proposal.assessment_id}")
+            detail_item("Exact parameters", proposal.parameters_json)
+            st.text(proposal.reason)
     with right:
         safeguard = (
-            "The simulated assessment is complete. Your decision is required before the Remediation Agent may continue."
+            "The simulated assessment is complete. Your decision is required before the Remediation simulator may continue."
             if decision_available
-            else "Run the sample assessment from Dashboard / Overview before a remediation decision can be made."
+            else "Only an undecided saved proposal accepts a new decision. Use history to review prior attempts or start a new demonstration."
         )
         st.markdown(f'<div class="section-card"><div class="detail-label">Review safeguard</div><div class="detail-value">{safeguard}</div><div class="scope-label">This prototype does not run scripts or make changes.</div></div>', unsafe_allow_html=True)
         st.markdown("#### Decision impact")
-        st.info(DEVICE_CONTEXT["CIS-18.9.1"]["approve_outcome"])
-        st.warning(DEVICE_CONTEXT["CIS-18.9.1"]["defer_outcome"])
+        st.info(DEVICE_CONTEXT["DEMO-NLA"]["approve_outcome"])
+        st.warning(DEVICE_CONTEXT["DEMO-NLA"]["defer_outcome"])
 
     st.header("Administrator decision")
-    st.text_area("Review comment (optional)", placeholder="Example: Approved for the next maintenance window.", height=94, disabled=not decision_available)
+    st.caption("Demo administrator identity only; production authentication is not implemented. Decisions and simulation results are saved in SQLite.")
+    if phase in ("Awaiting Approval", "Approved"):
+        st.selectbox("Simulation outcome for this demonstration",
+                     ["Successful verification", "Verification failure", "Execution failure", "Collection error"],
+                     key="simulation_scenario")
+    if phase == "Approved" and st.button("Run approved simulation", key="resume_approved"):
+        run_approved_simulation()
+        st.rerun()
+    comment = st.text_area("Review comment (optional)", placeholder="Example: Approved for the next maintenance window.", height=94, disabled=not decision_available, key="review_comment_input")
+    if st.session_state["remediation_decision"]:
+        st.info(f"Recorded decision: {st.session_state['remediation_decision']}")
+        st.text(f"Recorded comment: {st.session_state['decision_comment'] or '(none)'}")
     approve, reject, _ = st.columns([0.26, 0.26, 0.48])
     with approve:
         if st.button("Approve", type="primary", use_container_width=True, disabled=not decision_available, key="approve_remediation"):
-            approve_sample_remediation()
+            approve_sample_remediation(comment)
             request_navigation("Verification / Remediation Result")
     with reject:
         if st.button("Reject", type="secondary", use_container_width=True, disabled=not decision_available, key="reject_remediation"):
-            reject_sample_remediation()
-            st.toast("Prototype only: remediation rejected; no action was executed.")
+            reject_sample_remediation(comment)
+            st.rerun()
 
 
 def render_verification() -> None:
-    render_page_intro("Verification / Remediation Result", "Illustrative post-approval execution and verification outcome.")
-    if st.session_state["agent_phase"] != "Verification Passed":
-        st.warning("No verification result is available yet. The agent workflow must complete an administrator-approved remediation first.")
+    render_page_intro("Verification / Remediation Result", "Saved simulation result and independent read-back evidence.")
+    proposal_id = st.session_state.get("active_proposal_id")
+    state = WORKFLOWS.get(proposal_id) if proposal_id else None
+    execution = state.event("execution") if state else None
+    if not execution:
+        st.warning("No execution result is recorded for this proposal. An interrupted attempt is never retried automatically.")
         render_agent_activity(show_heading=False)
         return
-    st.caption("Verification scope: this view shows one selected approved remediation. Use Assessment Results to review the full five-control sample.")
-
+    st.caption("Synthetic evidence only. This result does not describe the laptop or a live Windows Server.")
+    st.text(f"Administrator comment: {st.session_state['decision_comment'] or '(none)'}")
     with st.container(border=True):
         st.subheader("Remediation execution result")
-        row_left, row_right, row_status = st.columns([1.2, 0.9, 0.55])
-        with row_left:
-            detail_item("Executed action", "Enable Network Level Authentication for Remote Desktop.")
-        with row_right:
-            detail_item("Script reference", "REM-18.9.1")
-        with row_status:
-            detail_item("Status", badge("Executed"))
-        detail_item("Executed at", "2026-08-12 09:25:11")
-
-    with st.container(border=True):
-        st.subheader("Reassessment / verification result")
-        verification = [
-            {"Control": "CIS-18.9.1", "Expected value": "Required", "Verified value": "Required", "Status": "Passed"},
-        ]
-        html_table(verification, ["Control", "Expected value", "Verified value", "Status"], {"Status"})
-        st.success("Verification Passed — the control now satisfies the expected security configuration.")
-        st.caption("Verification time: 2026-08-12 09:26:30")
+        detail_item("Action", state.proposal.action_id)
+        detail_item("Proposal", state.proposal.proposal_id)
+        detail_item("Result", execution["payload"]["detail"])
+        detail_item("Recorded at (UTC)", execution["created_at"])
+    verification = state.event("verification")
+    if verification:
+        result = verification["payload"]
+        evidence = result["evidence"]
+        with st.container(border=True):
+            st.subheader("Independent verification")
+            html_table([{"Control": state.proposal.control_id, "Expected value": "Required",
+                         "Verified value": display_value(state.proposal.control_id, evidence["value"]),
+                         "Status": result["status"]}],
+                       ["Control", "Expected value", "Verified value", "Status"], {"Status"})
+            st.text(result["detail"])
+            st.caption(f"Source: {evidence['source']} | Collected: {evidence['collected_at']}")
+        if state.phase == "Verification Passed":
+            st.success("Verification Passed in simulation. The original assessment remains unchanged.")
+        else:
+            st.error("Verification failed or evidence is unavailable. This finding remains unresolved; another attempt needs a new proposal and approval.")
+    elif execution["payload"]["success"]:
+        st.error("Execution succeeded in simulation but verification is unavailable. The finding remains unresolved; no automatic second write will occur.")
+    else:
+        st.error("Execution failed. No successful verification is claimed and no automatic second write will occur.")
     render_agent_activity()
 
 
 def render_drift() -> None:
     render_page_intro("Configuration Drift / Assessment History", "Changes detected between assessment 1042 and the previous comparable assessment.")
-    st.header("Detected configuration drift")
+    st.header("Configuration changes in synthetic history")
     html_table(DRIFT, ["Control", "Previous value", "Current value", "Description", "Detected at"])
-    st.info("CIS-18.9.1 changed from Required to Not required; this is the configuration drift evidence supporting the D=5 risk factor.")
+    st.info("NLA and lockout regressed from compliant to non-compliant, so both receive D=5. The firewall change is an improvement. Unchanged password non-compliance receives D=3.")
     st.header("Assessment history")
     html_table(HISTORY, ["Assessment", "Initiated by", "Started", "Status"], {"Status"})
     st.caption("Comparison basis: a previous comparable completed assessment with the same scope.")
+    saved = WORKFLOWS.list_for_assessment("1042")
+    if saved:
+        st.header("Saved remediation attempts (simulation)")
+        html_table([{"Proposal": item.proposal.proposal_id, "Created (UTC)": item.proposal.created_at,
+                     "Status": item.phase} for item in saved], ["Proposal", "Created (UTC)", "Status"], {"Status"})
+        selected = st.selectbox("Open saved proposal", [item.proposal.proposal_id for item in saved], key="saved_proposal")
+        if st.button("Review saved proposal", key="open_saved_proposal"):
+            st.session_state["active_proposal_id"] = selected
+            st.session_state.pop("review_comment_input", None)
+            request_navigation("Remediation Review")
 
 
 def render_sidebar() -> str:
@@ -688,17 +643,28 @@ def render_sidebar() -> str:
             "Configuration Drift / Assessment History",
         ]
         page = st.radio("Navigate between prototype views", pages, label_visibility="collapsed", key="navigation")
-        st.markdown("##### Agentic workflow")
+        st.markdown("##### Workflow simulation")
         st.markdown(f'<div class="scope-label">Orchestrator: {badge(st.session_state["agent_phase"])}</div>', unsafe_allow_html=True)
-        st.caption("In-memory simulation only")
+        st.caption("Saved assessments and simulation workflow")
         st.markdown(
-            '<div class="sidebar-footer">Assessment 1042<br>Initiated by <strong>admin01</strong><br><br>In-memory prototype only.<br>No scripts, services, or databases are connected.</div>',
+            '<div class="sidebar-footer">Assessment 1042<br>Initiated by <strong>demo-admin</strong><br><br>SQLite stores assessments, decisions and verification.<br>All target actions are simulated.</div>',
             unsafe_allow_html=True,
         )
     return page
 
 
 def main() -> None:
+    global CONTROLS, RISKS, DRIFT, HISTORY, SUMMARY, WORKFLOWS
+    database_path = Path(os.environ.get("CIS_DASHBOARD_DB", str(Path(__file__).parent / "data" / "preview.sqlite3")))
+    try:
+        assessments = AssessmentStore(database_path)
+        saved = load_demo(assessments)
+        WORKFLOWS = WorkflowStore(assessments)
+    except (OSError, sqlite3.Error, ValueError, KeyError) as error:
+        st.error(f"Assessment storage unavailable ({type(error).__name__}). Check the database path and schema; saved data was not reset.")
+        st.stop()
+    CONTROLS, RISKS, DRIFT = saved["controls"], saved["risks"], saved["drift"]
+    HISTORY, SUMMARY = saved["history"], saved["summary"]
     init_session_state()
     inject_css()
     page = render_sidebar()
@@ -710,7 +676,10 @@ def main() -> None:
         "Verification / Remediation Result": render_verification,
         "Configuration Drift / Assessment History": render_drift,
     }
-    renderers[page]()
+    try:
+        renderers[page]()
+    except (ValueError, KeyError, sqlite3.Error) as error:
+        st.error(f"Workflow could not continue ({type(error).__name__}). Reload the saved proposal; no automatic retry will occur.")
 
 
 if __name__ == "__main__":

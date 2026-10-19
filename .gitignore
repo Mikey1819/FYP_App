@@ -1,0 +1,4 @@
+.automation/
+**/__pycache__/
+*.pyc
+cis_compliance_dashboard_prototype/data/
