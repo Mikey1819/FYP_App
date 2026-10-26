@@ -274,6 +274,23 @@ try {
             }
             return ([string]$profiles[0].Enabled -eq 'True')
         }
+        New-Observation 'firewall_private_enabled' 'Get-NetFirewallProfile:ActiveStore/Private/Enabled' {
+            $profiles = @(Get-NetFirewallProfile -PolicyStore ActiveStore -Name Private -ErrorAction Stop)
+            if ($profiles.Count -ne 1 -or [string]$profiles[0].Enabled -notin @('True', 'False')) {
+                throw 'invalid_value'
+            }
+            return ([string]$profiles[0].Enabled -eq 'True')
+        }
+        foreach ($profileName in @('Private', 'Public')) {
+            New-Observation ('firewall_' + $profileName.ToLowerInvariant() + '_inbound_blocked') `
+                ('Get-NetFirewallProfile:ActiveStore/' + $profileName + '/DefaultInboundAction') {
+                $profiles = @(Get-NetFirewallProfile -PolicyStore ActiveStore -Name $profileName -ErrorAction Stop)
+                $action = if ($profiles.Count -eq 1) { [string]$profiles[0].DefaultInboundAction } else { '' }
+                # NotConfigured means the Windows default applies, which blocks unsolicited inbound traffic.
+                if ($action -notin @('Block', 'Allow', 'NotConfigured')) { throw 'invalid_value' }
+                return ($action -ne 'Allow')
+            }
+        }
         New-Observation 'nla_required' 'Win32_TSGeneralSetting:RDP-tcp/UserAuthenticationRequired' {
             $settings = @(Get-CimInstance -Namespace 'root\CIMv2\TerminalServices' -ClassName Win32_TSGeneralSetting `
                 -Filter "TerminalName='RDP-tcp'" -OperationTimeoutSec 15)

@@ -87,6 +87,18 @@ class RemediationStore:
                               (session_id,)).fetchall()
         return [dict(round_id=i, created_at=c, **json.loads(p)) for i, c, p in rows]
 
+    def recent_rounds(self, limit=5):
+        """Newest rounds across all sessions, for the overview."""
+        with self._connection() as db:
+            rows = db.execute('SELECT id,created_at,payload FROM agentic_rounds ORDER BY rowid DESC LIMIT ?',
+                              (limit,)).fetchall()
+        return [dict(round_id=i, created_at=c, **json.loads(p)) for i, c, p in rows]
+
+    def all_proposals(self):
+        with self._connection() as db:
+            ids = [r[0] for r in db.execute('SELECT id FROM rem_proposals ORDER BY rowid')]
+        return [self.get(i) for i in ids]
+
     def propose(self, *, session_id, framework_run_id, record, control_id, action_id, rank, reason, risk_score=None):
         action = LIBRARY.get(action_id)
         if action is None or action.control_id != control_id:

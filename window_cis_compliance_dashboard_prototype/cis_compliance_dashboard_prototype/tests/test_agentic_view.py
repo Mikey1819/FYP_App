@@ -16,6 +16,18 @@ from test_winrm_channel import MACHINE_UUID, target
 APP = Path(__file__).resolve().parents[1] / 'app.py'
 
 
+def agentic_page():
+    import legacy_app
+    from hardening.agentic_view import render_agentic
+    render_agentic(legacy_app.imports_database())
+
+
+def overview_page():
+    import legacy_app
+    from hardening.overview_view import render_overview
+    render_overview(legacy_app.imports_database())
+
+
 class ScriptedModel:
     """Orchestrator and Scanner requests arrive in a fixed order, so one shared script suffices."""
     model, provenance = 'mock-model', 'Mock model (test only)'
@@ -55,7 +67,7 @@ class AgenticPageTests(unittest.TestCase):
                          dict(control_id='18.10.57.3.9.4', reason_code='needs_review')])]
 
     def test_round_approval_execution_and_verification_through_the_page(self):
-        app = AppTest.from_file(str(APP), default_timeout=60)
+        app = AppTest.from_function(agentic_page, default_timeout=60)
         app.session_state[LIVE_TARGET] = target()
         app.run()
         app.text_input(key='agentic_host').input('FIXTURE-SERVER')
@@ -80,10 +92,30 @@ class AgenticPageTests(unittest.TestCase):
         self.assertEqual([v['Verdict'] for v in verdicts], ['Verified compliant'])
         self.assertIn('Run next round (rescan, re-rank, re-propose)', [b.label for b in app.button])
 
+        overview = AppTest.from_function(overview_page, default_timeout=60).run()
+        self.assertEqual(len(overview.exception), 0, [e.value for e in overview.exception])
+        metrics = {m.label: m.value for m in overview.metric}
+        self.assertEqual(metrics['Fixes awaiting you'], '0')  # One approved and executed, one rejected.
+        # 1.2.2 is fixed; 9.3.1 (firewall effectively on) leads: 65 plus D=3 for persisting non-compliance = 69.
+        self.assertEqual(metrics['Highest risk'], '69')
+        areas = {row['Security area']: row for row in overview.dataframe[0].value.to_dict('records')}
+        self.assertEqual(set(areas), {'Account Policies', 'Local Security Options', 'Windows Defender Firewall',
+                                      'Advanced Audit Policy', 'Remote Desktop Services'})
+        top = overview.dataframe[1].value.to_dict('records')
+        self.assertEqual(top[0]['Control'], '9.3.1')
+        self.assertEqual(top[0]['Fix'], 'Manual review (no library action)')
+        self.assertTrue(any('Remediation and verification' in m.value for m in overview.markdown))
+
     def test_page_without_connection_asks_to_connect(self):
-        app = AppTest.from_file(str(APP), default_timeout=30).run()
+        app = AppTest.from_function(agentic_page, default_timeout=30).run()
         self.assertEqual(len(app.exception), 0)
         self.assertTrue(any('Connect to the VM' in i.value for i in app.info))
+
+    def test_app_opens_on_overview_with_empty_state(self):
+        app = AppTest.from_file(str(APP), default_timeout=30).run()
+        self.assertEqual(len(app.exception), 0, [e.value for e in app.exception])
+        self.assertEqual(app.title[0].value, 'Overview')
+        self.assertTrue(any('No assessments yet' in i.value for i in app.info))
 
 
 if __name__ == '__main__':

@@ -1,0 +1,149 @@
+"""Overview page (report Figure 4.11): posture, risk distribution, top risks and recent activity."""
+from collections import Counter
+from pathlib import Path
+import sqlite3
+
+import altair as alt
+import pandas as pd
+import streamlit as st
+
+from .action_library import actions_for
+from .domain import summarise
+from .framework import AssessmentOrchestrator
+from .history import HistoryService
+from .import_storage import ImportedEvidenceStore
+from .remediation import RemediationStore
+from .risk import analyse
+
+LEVELS = ('Critical', 'High', 'Moderate', 'Low')
+# Ordinal one-hue ramp, darker = more severe; validated light and dark (dataviz validator, --ordinal).
+SEVERITY_RAMP = {'light': ('#0d366b', '#1c5cab', '#3987e5', '#86b6ef'),
+                 'dark': ('#184f95', '#256abf', '#3987e5', '#86b6ef')}
+# Secondary text ink per theme: labels never wear the series colour.
+TEXT_INK = {'light': '#52514e', 'dark': '#c3c2b7'}
+METER_BLUE = '#3987e5'  # Single-hue meter fill, readable on both surfaces.
+AREAS = ('Account Policies', 'Local Security Options', 'Windows Defender Firewall', 'Advanced Audit Policy',
+         'Remote Desktop Services')
+
+
+def _theme():
+    try:
+        return 'dark' if st.context.theme.type == 'dark' else 'light'
+    except AttributeError:  # Older Streamlit without theme context.
+        return 'light'
+
+
+def risk_distribution_chart(ranked):
+    counts = Counter(f.level for f in ranked)
+    data = pd.DataFrame({'Level': LEVELS, 'Findings': [counts.get(level, 0) for level in LEVELS]})
+    scale = alt.Scale(domain=list(LEVELS), range=list(SEVERITY_RAMP[_theme()]))
+    base = alt.Chart(data).encode(
+        y=alt.Y('Level:N', sort=list(LEVELS), title=None, axis=alt.Axis(labelFontSize=13, ticks=False, domain=False)),
+        x=alt.X('Findings:Q', title='Non-compliant findings', axis=alt.Axis(tickMinStep=1, grid=True)),
+        tooltip=[alt.Tooltip('Level:N'), alt.Tooltip('Findings:Q')])
+    bars = base.mark_bar(cornerRadiusEnd=4, size=22).encode(
+        color=alt.Color('Level:N', scale=scale, legend=None))
+    # Count labels in text ink beside each bar: identity never rests on colour alone.
+    labels = base.mark_text(align='left', dx=6, fontSize=13, color=TEXT_INK[_theme()]).encode(text='Findings:Q')
+    return (bars + labels).properties(height=170)
+
+
+def area_table(results):
+    rows = []
+    for area in AREAS:
+        in_area = [r for r in results if r.control.area == area]
+        if not in_area:
+            continue
+        s = summarise(tuple(in_area))
+        rows.append({'Security area': area, 'Compliance': round(s.compliance_percent or 0),
+                     'Compliant': s.compliant, 'Non-compliant': s.non_compliant,
+                     'Unknown / Error': s.unknown + s.errors, 'Controls': s.selected})
+    return rows
+
+
+def render_overview(database_path: Path):
+    st.title('Overview')
+    try:
+        imports = ImportedEvidenceStore(database_path)
+        runtime = AssessmentOrchestrator(imports)
+        store = RemediationStore(database_path.with_name(database_path.stem + '_agentic.sqlite3'), imports)
+        history = HistoryService(runtime, store)
+        targets = history.targets()
+        if not targets:
+            st.info('No assessments yet. Open **Agentic hardening**, connect to the VM and start a round.')
+            return
+        target = st.selectbox('VM', list(targets), format_func=lambda t: f'{targets[t]} ({t.removeprefix("windows:")})',
+                              key='overview_target') if len(targets) > 1 else next(iter(targets))
+        runs = history.runs(target)
+        latest = runs[-1]
+        record = imports.get(runtime.get(latest['run_id']).evidence_sha256)
+        results = record.assessment.results
+        ranked = analyse(record, history.previous_records(latest['run_id']))
+        st.caption(f"{targets[target]} · latest assessment {latest['created_at'][:16].replace('T', ' ')} UTC · "
+                   f"{latest['controls']} controls · CIS Windows Server 2022 Stand-alone v2.0.0, Level 1")
+
+        previous = runs[-2] if len(runs) > 1 else None
+        compliance = latest['compliance_percent']
+        delta = (None if previous is None or compliance is None or previous['compliance_percent'] is None
+                 else f"{compliance - previous['compliance_percent']:+.0f} pts vs previous")
+        proposals = [p for p in store.all_proposals() if p['proposal']['framework_run_id'] in
+                     {r['run_id'] for r in runs}]
+        waiting = sum(p['decision'] is None for p in proposals)
+        verified = sum(p['verdict'] == 'Verified compliant' for p in proposals)
+        tiles = st.columns(5)
+        tiles[0].metric('Compliance (evaluated)', '—' if compliance is None else f'{compliance:.0f}%', delta)
+        tiles[1].metric('Non-compliant', latest['non_compliant'])
+        tiles[2].metric('Unknown / Error', latest['unknown'] + latest['error'])
+        top = ranked[0] if ranked else None
+        tiles[3].metric('Highest risk', '—' if top is None else top.score, None if top is None else top.level,
+                        delta_color='off')
+        tiles[4].metric('Fixes awaiting you', waiting, f'{verified} verified so far', delta_color='off')
+        regressions = [d for d in history.drift_records(target)
+                       if d['current_run_id'] == latest['run_id'] and d['change'] == 'Regression']
+        if regressions:
+            st.warning(f"⚠ {len(regressions)} control(s) regressed since the previous assessment: "
+                       + ', '.join(d['control_id'] for d in regressions) + '. See History and drift.')
+
+        left, right = st.columns([1, 1.5])
+        with left:
+            st.subheader('Risk distribution')
+            if ranked:
+                st.altair_chart(risk_distribution_chart(ranked), width='stretch')
+                st.caption('Darker = more severe. Scores from the deterministic risk engine (R = 6I+5E+4P+3L+2D).')
+            else:
+                st.success('No scored non-compliant findings.')
+        with right:
+            st.subheader('Compliance by security area')
+            st.dataframe(area_table(results), hide_index=True, column_config={
+                'Compliance': st.column_config.ProgressColumn('Compliance', min_value=0, max_value=100, format='%d%%',
+                                                              color=METER_BLUE, width='small',
+                                                              help='Compliant among evaluated controls'),
+                'Compliant': st.column_config.NumberColumn('✓', width='small', help='Compliant'),
+                'Non-compliant': st.column_config.NumberColumn('✗', width='small', help='Non-compliant'),
+                'Unknown / Error': st.column_config.NumberColumn('?', width='small', help='Unknown or Error'),
+                'Controls': st.column_config.NumberColumn('Total', width='small')})
+
+        st.subheader('Top risks')
+        if ranked:
+            st.dataframe([{'Priority': f.priority, 'Control': f.control_id, 'Title': f.title, 'Risk': f.score,
+                           'Level': f.level,
+                           'Fix': (actions_for(f.control_id)[0].title if actions_for(f.control_id)
+                                   else 'Manual review (no library action)')} for f in ranked[:5]],
+                         hide_index=True)
+        else:
+            st.caption('Nothing to prioritise.')
+
+        st.subheader('Recent agent activity')
+        rounds = [r for r in store.recent_rounds(10)
+                  if r['framework_run_id'] is None or runtime.get(r['framework_run_id']).target_id == target][:5]
+        if not rounds:
+            st.caption('No agentic rounds yet for this VM.')
+        for r in rounds:
+            when = r['created_at'][:16].replace('T', ' ') + ' UTC'
+            if r['kind'] == 'assessment':
+                st.write(f"**{when} · Orchestrator round** — {r['outcome']['reason']}")
+            else:
+                verdicts = '; '.join(f"{v['control_id']}: {v['verdict']}" for v in r['verdicts'] if v['control_id'])
+                st.write(f"**{when} · Remediation and verification** — {verdicts or 'no executed fixes'}")
+    except (ValueError, OSError, sqlite3.Error) as exc:
+        st.error('Overview: ' + str(exc))
