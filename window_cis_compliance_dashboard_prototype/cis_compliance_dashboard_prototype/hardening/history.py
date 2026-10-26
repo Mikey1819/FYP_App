@@ -61,6 +61,13 @@ class HistoryService:
                              change=describe_change(prior, current)))
         return rows
 
+    def previous_records(self, run_id, limit=10):
+        """Earlier assessments of the same target, newest first (input for the drift factor D)."""
+        records, current = [], run_id
+        while len(records) < limit and (current := self.previous_run(current)) is not None:
+            records.append(self._record(current))
+        return records
+
     def previous_run(self, run_id):
         with self.runtime._connection() as db:
             created, target = db.execute('SELECT created_at,target_id FROM framework_runs WHERE run_id=?',

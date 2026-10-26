@@ -2,6 +2,7 @@
 import unittest
 
 from hardening.domain import Operator, Rule, Status, summarise
+from hardening.evidence_import import CONTEXT_SOURCES, CONTEXT_SOURCES_V5
 from hardening.server2022_catalogue import FULL_CATALOGUE, FULL_CATALOGUE_ID, FULL_SOURCES
 from test_evidence_import import load
 from test_expanded_controls import observation
@@ -17,6 +18,9 @@ def full_fixture():
     data.update(schema_version=5, collector_id='server2022-readonly-v5', catalogue_id=FULL_CATALOGUE_ID)
     data['observations'] += [dict(control_id=k, source=FULL_SOURCES[k], state='ok', value=v, error=None,
                                   collected_at=data['observations'][0]['collected_at']) for k, v in FULL_VALUES.items()]
+    data['effective_context'] += [dict(control_id=k, source=CONTEXT_SOURCES_V5[k], state='ok', value=True, error=None,
+                                       collected_at=data['observations'][0]['collected_at'])
+                                  for k in CONTEXT_SOURCES_V5 if k not in CONTEXT_SOURCES]
     return data
 
 

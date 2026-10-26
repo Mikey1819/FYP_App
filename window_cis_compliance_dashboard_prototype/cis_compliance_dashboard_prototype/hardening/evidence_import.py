@@ -22,6 +22,16 @@ CONTEXT_SOURCES = {
     "nla_required": "Win32_TSGeneralSetting:RDP-tcp/UserAuthenticationRequired",
     "nla_policy_source": "Win32_TSGeneralSetting:RDP-tcp/PolicySourceUserAuthenticationRequired",
 }
+# Schema 5 also reads the effective state behind the other firewall policy checks, so a policy that is
+# merely not configured is not mistaken for disabled protection (risk Exposure only; never compliance).
+CONTEXT_SOURCES_V5 = {
+    **CONTEXT_SOURCES,
+    "firewall_private_enabled": "Get-NetFirewallProfile:ActiveStore/Private/Enabled",
+    "firewall_private_inbound_blocked": "Get-NetFirewallProfile:ActiveStore/Private/DefaultInboundAction",
+    "firewall_public_inbound_blocked": "Get-NetFirewallProfile:ActiveStore/Public/DefaultInboundAction",
+}
+BOOLEAN_CONTEXT = {"firewall_public_enabled", "firewall_private_enabled", "firewall_private_inbound_blocked",
+                   "firewall_public_inbound_blocked"}
 
 
 def effective_context(raw):
@@ -30,21 +40,22 @@ def effective_context(raw):
     return data.get("effective_context", [])
 
 
-def _validate_context(rows, started, completed):
-    if type(rows) is not list or len(rows) != len(CONTEXT_SOURCES):
-        raise ValueError("All three effective context observations are required")
+def _validate_context(rows, started, completed, version=4):
+    sources = CONTEXT_SOURCES_V5 if version >= 5 else CONTEXT_SOURCES
+    if type(rows) is not list or len(rows) != len(sources):
+        raise ValueError(f"All {len(sources)} effective context observations are required")
     seen = set()
     for row in rows:
         _object(row, "control_id source state value error collected_at", "effective context")
         key = row["control_id"]
-        if type(key) is not str or key not in CONTEXT_SOURCES or key in seen:
+        if type(key) is not str or key not in sources or key in seen:
             raise ValueError("Unknown or duplicate effective context")
         seen.add(key)
-        if row["source"] != CONTEXT_SOURCES[key] or not started <= _time(row["collected_at"]) <= completed:
+        if row["source"] != sources[key] or not started <= _time(row["collected_at"]) <= completed:
             raise ValueError("Invalid effective context provenance")
         state, value, error = row["state"], row["value"], row["error"]
         if state == "ok":
-            scalar = bool if key == "firewall_public_enabled" else int
+            scalar = bool if key in BOOLEAN_CONTEXT else int
             allowed = (0, 1, 2) if key == "nla_policy_source" else (0, 1)
             if error is not None or type(value) is not scalar or value not in allowed:
                 raise ValueError("Invalid effective context value")
@@ -160,7 +171,7 @@ def load_evidence(raw: bytes, *, expected_hostname: str, expected_machine_uuid: 
     if completed > now + timedelta(minutes=5):
         raise ValueError("Evidence timestamp is in the future; check the VM clock")
     if version >= 2:
-        _validate_context(data["effective_context"], started, completed)
+        _validate_context(data["effective_context"], started, completed, version)
     observations = data["observations"]
     if type(observations) is not list or len(observations) != len(catalogue):
         raise ValueError(f"Export must include all {len(catalogue)} selected controls, including failures")

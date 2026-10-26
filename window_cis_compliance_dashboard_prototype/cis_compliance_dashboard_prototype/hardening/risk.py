@@ -181,8 +181,13 @@ def effective_context(raw):
 # Policy controls whose protection the collector also reads as *effective* local state. When the policy is
 # absent but the protection is effectively on, the weakness is not currently reachable: E = 1 (Table 4.14b,
 # "minimal exposure"). The finding stays Non-Compliant because CIS requires the policy itself.
-EFFECTIVE_PROTECTION = {'9.3.1': ('firewall_public_enabled', True, 'Public firewall is effectively enabled'),
-                        '18.10.57.3.9.4': ('nla_required', 1, 'NLA is effectively required on RDP-Tcp')}
+EFFECTIVE_PROTECTION = {
+    '9.2.1': ('firewall_private_enabled', True, 'Private firewall is effectively enabled'),
+    '9.2.2': ('firewall_private_inbound_blocked', True, 'Private profile effectively blocks unsolicited inbound'),
+    '9.3.1': ('firewall_public_enabled', True, 'Public firewall is effectively enabled'),
+    '9.3.2': ('firewall_public_inbound_blocked', True, 'Public profile effectively blocks unsolicited inbound'),
+    '18.10.57.3.9.4': ('nla_required', 1, 'NLA is effectively required on RDP-Tcp'),
+}
 
 
 def exposure(surface, context, control_id=None, observed=0):

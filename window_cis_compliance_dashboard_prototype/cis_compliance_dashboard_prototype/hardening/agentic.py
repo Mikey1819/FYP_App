@@ -451,12 +451,7 @@ class AgenticHardening:
 
     def previous_records(self, framework_run_id, limit=10):
         """Earlier runs for the same target, newest first, for drift (D) comparison."""
-        with self.runtime._connection() as db:
-            current = db.execute('SELECT created_at,target_id FROM framework_runs WHERE run_id=?',
-                                 (framework_run_id,)).fetchone()
-            rows = db.execute('''SELECT digest FROM framework_runs WHERE target_id=? AND created_at<? AND run_id<>?
-                ORDER BY created_at DESC LIMIT ?''', (current[1], current[0], framework_run_id, limit)).fetchall()
-        return [self.runtime.imports.get(digest) for (digest,) in rows]
+        return self.history.previous_records(framework_run_id, limit)
 
     def run_round(self, session_id=None):
         self.session_id, self.round_id = session_id or uuid4().hex, uuid4().hex
