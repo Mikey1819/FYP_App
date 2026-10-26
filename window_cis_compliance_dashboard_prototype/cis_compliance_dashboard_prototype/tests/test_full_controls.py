@@ -47,12 +47,20 @@ class FullCatalogueTests(unittest.TestCase):
         observation(data, '17.1.1')['value'] = 1      # Windows default: Success only.
         observation(data, '17.5.1')['value'] = 1      # Success only does not include Failure.
         observation(data, '17.2.2')['value'] = 3      # Success and Failure includes Success.
-        observation(data, '9.2.6').update(state='missing', value=None)
+        observation(data, '9.2.6').update(state='missing', value=None)      # Group Policy: Not configured.
+        observation(data, '2.3.10.2').update(state='missing', value=None)   # Non-policy LSA value.
         status = {r.control.control_id: r.status for r in load(data).results}
         self.assertEqual(status['17.1.1'], Status.NON_COMPLIANT)
         self.assertEqual(status['17.5.1'], Status.NON_COMPLIANT)
         self.assertEqual(status['17.2.2'], Status.COMPLIANT)
-        self.assertEqual(status['9.2.6'], Status.UNKNOWN)
+        self.assertEqual(status['9.2.6'], Status.NON_COMPLIANT)
+        self.assertEqual(status['2.3.10.2'], Status.UNKNOWN)
+
+    def test_not_configured_rule_applies_exactly_to_group_policy_sources(self):
+        for control in FULL_CATALOGUE:
+            with self.subTest(control=control.control_id):
+                self.assertEqual(control.not_configured_fails,
+                                 FULL_SOURCES[control.control_id].startswith('HKLM\\SOFTWARE\\Policies\\'))
 
     def test_registered_sources_and_incomplete_exports_are_enforced(self):
         data = full_fixture()

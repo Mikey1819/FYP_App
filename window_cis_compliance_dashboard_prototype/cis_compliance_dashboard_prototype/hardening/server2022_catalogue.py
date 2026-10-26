@@ -13,8 +13,12 @@ COLLECTOR_ID = "server2022-readonly-v1"
 
 
 def _control(identifier, title, area, rule, pages):
+    # Firewall (9.x) and Remote Desktop (18.x) controls are Group Policy values under
+    # HKLM\SOFTWARE\Policies: "Not configured" fails them (decision D5). Tests check this
+    # matches the registered evidence sources.
     return Control(identifier, title, area, rule, CATALOGUE_ID, PROFILE,
-                   f"{BENCHMARK}, section {identifier}, pp. {pages}", True)
+                   f"{BENCHMARK}, section {identifier}, pp. {pages}", True,
+                   not_configured_fails=identifier.startswith(("9.", "18.")))
 
 
 CATALOGUE = (

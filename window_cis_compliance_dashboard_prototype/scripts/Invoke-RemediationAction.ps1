@@ -41,6 +41,7 @@ $Library = [ordered]@{
     'REM-18.10.57.2.2'   = @{ control_id = '18.10.57.2.2'; value = 1; kind = 'reg_dword'; key = $TsKey; name = 'DisablePasswordSaving' }
     'REM-18.10.57.3.9.1' = @{ control_id = '18.10.57.3.9.1'; value = 1; kind = 'reg_dword'; key = $TsKey; name = 'fPromptForPassword' }
     'REM-18.10.57.3.9.3' = @{ control_id = '18.10.57.3.9.3'; value = 2; kind = 'reg_dword'; key = $TsKey; name = 'SecurityLayer' }
+    'REM-18.10.57.3.9.4' = @{ control_id = '18.10.57.3.9.4'; value = 1; kind = 'reg_dword'; key = $TsKey; name = 'UserAuthentication' }
     'REM-18.10.57.3.9.5' = @{ control_id = '18.10.57.3.9.5'; value = 3; kind = 'reg_dword'; key = $TsKey; name = 'MinEncryptionLevel' }
 }
 
@@ -63,11 +64,14 @@ function Assert-RemediationRequest($Request, [string]$ComputerName, [string]$Mac
         'control_id', 'action_id', 'value', 'expected_before', 'approved_by', 'approved_at', 'expires_at')
     if (-not $Library.Contains([string]$Request.action_id)) { throw 'Action is not in the pre-approved library.' }
     $entry = $Library[[string]$Request.action_id]
+    # A null precondition means "Not configured" (value absent); only registry policy actions can set one.
+    $beforeTypeOk = if ($null -eq $Request.expected_before) { $entry.kind -eq 'reg_dword' }
+                    else { ($Request.expected_before -is [bool]) -eq ($entry.value -is [bool]) }
     if ($Request.schema_version -isnot [int] -or $Request.schema_version -ne 2 -or
         $Request.request_id -cnotmatch '^[a-f0-9]{32}$' -or $Request.evidence_sha256 -cnotmatch '^[a-f0-9]{64}$' -or
         $Request.hostname -ine $ComputerName -or $Request.machine_uuid -ine $MachineUuid -or
         $Request.control_id -cne $entry.control_id -or -not (Test-SameTypedValue $Request.value $entry.value) -or
-        ($Request.expected_before -is [bool]) -ne ($entry.value -is [bool]) -or
+        -not $beforeTypeOk -or
         [string]::IsNullOrWhiteSpace($Request.approved_by)) {
         throw 'Request is outside the approved library contract.'
     }
@@ -82,6 +86,13 @@ function Get-ObservedValue($Evidence, [string]$ControlId) {
     $rows = @($Evidence.observations | Where-Object { $_.control_id -ceq $ControlId })
     if ($rows.Count -ne 1 -or $rows[0].state -cne 'ok') { throw 'Precondition could not be collected.' }
     return $rows[0].value
+}
+
+function Test-Precondition($Evidence, [string]$ControlId, $ExpectedBefore) {
+    # Approved observation must still hold: the same typed value, or still "Not configured" (missing).
+    $rows = @($Evidence.observations | Where-Object { $_.control_id -ceq $ControlId })
+    if ($null -eq $ExpectedBefore) { return ($rows.Count -eq 1 -and $rows[0].state -ceq 'missing') }
+    return (Test-SameTypedValue (Get-ObservedValue $Evidence $ControlId) $ExpectedBefore)
 }
 
 function Invoke-LibraryAction($Entry) {
@@ -184,7 +195,7 @@ try {
     if ($beforeDocument.target.hostname -ine $request.hostname -or $beforeDocument.target.machine_uuid -ine $request.machine_uuid) {
         throw 'Precondition target mismatch.'
     }
-    if (-not (Test-SameTypedValue (Get-ObservedValue $beforeDocument $entry.control_id) $request.expected_before)) {
+    if (-not (Test-Precondition $beforeDocument $entry.control_id $request.expected_before)) {
         throw 'Configuration changed since assessment. Rescan and obtain a new approval.'
     }
     $null = Assert-RemediationRequest $request $ExpectedComputerName $actualUuid ([DateTimeOffset]::UtcNow)

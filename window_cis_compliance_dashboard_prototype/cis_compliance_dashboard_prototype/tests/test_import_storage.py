@@ -62,12 +62,12 @@ print(json.dumps({'raw':r.raw.decode(), 'values':[x.evidence.value for x in r.as
     def test_error_and_unknown_survive_restart(self):
         data = export_fixture()
         data['observations'][0].update(state='error', value=None, error='timeout')
-        data['observations'][4].update(state='missing', value=None)
+        data['observations'][2].update(state='missing', value=None)  # Guest: non-policy, stays Unknown.
         self.raw = json.dumps(data).encode()
         saved, _ = self.save()
         reopened = ImportedEvidenceStore(self.path).get(saved.assessment.source_sha256)
         self.assertEqual(reopened.assessment.results[0].status.value, 'Error')
-        self.assertEqual(reopened.assessment.results[4].status.value, 'Unknown')
+        self.assertEqual(reopened.assessment.results[2].status.value, 'Unknown')
 
     def test_snapshots_reject_sql_overwrites_deletes_and_replacement(self):
         self.save()

@@ -121,7 +121,7 @@ class AgenticTestCase(unittest.TestCase):
         t = 'windows:' + target().machine_uuid
         return self.hardening(vm, [call('delegate_scanner', t), call('delegate_analysis', t), plan(t,
             fixes=[('1.2.2', 'REM-1.2.2', 'high_risk'), ('1.1.1', 'REM-1.1.1', 'low_impact')],
-            skipped=[('2.3.10.3', 'needs_review'), ('1.1.3', 'lower_priority')])])
+            skipped=[('2.3.10.3', 'needs_review'), ('1.1.3', 'lower_priority'), ('18.10.57.3.9.4', 'needs_review')])])
 
     def rejected(self, hardening, round_id):
         trace = next(t for t in hardening.traces(round_id) if t['agent_role'] == ORCHESTRATOR)
@@ -133,7 +133,8 @@ def plan(t, fixes=(), skipped=()):
                 skipped=[dict(control_id=c, reason_code=r) for c, r in skipped])
 
 
-DEFER_ALL = [(c, 'lower_priority') for c in ('1.2.2', '2.3.10.3', '1.1.1', '1.1.3')]
+# The lab VM's fixable findings; NLA policy is Not configured there (Non-Compliant under decision D5).
+DEFER_ALL = [(c, 'lower_priority') for c in ('1.2.2', '2.3.10.3', '1.1.1', '1.1.3', '18.10.57.3.9.4')]
 
 
 class AgenticRoundTests(AgenticTestCase):
@@ -188,7 +189,8 @@ class AgenticRoundTests(AgenticTestCase):
     def test_blocked_prerequisite_and_duplicate_decisions_are_refused(self):
         state = dict(LAB_STATE, **{'1.2.1': 5})  # Duration non-compliant while threshold is still 0.
         t = 'windows:' + target().machine_uuid
-        others = [('2.3.10.3', 'lower_priority'), ('1.1.1', 'lower_priority'), ('1.1.3', 'lower_priority')]
+        others = [('2.3.10.3', 'lower_priority'), ('1.1.1', 'lower_priority'), ('1.1.3', 'lower_priority'),
+                  ('18.10.57.3.9.4', 'needs_review')]
         hardening = self.hardening(FakeVm(state), [call('delegate_scanner', t), call('delegate_analysis', t),
             plan(t, fixes=[('1.2.1', 'REM-1.2.1', 'high_risk'), ('1.2.2', 'REM-1.2.2', 'unblocks_other')], skipped=others),
             plan(t, fixes=[('1.2.2', 'REM-1.2.2', 'unblocks_other')], skipped=[('1.2.2', 'lower_priority')] + others)])
@@ -204,7 +206,8 @@ class AgenticRoundTests(AgenticTestCase):
         result = self.hardening(FakeVm(state), [call('delegate_scanner', t), call('delegate_analysis', t),
             plan(t, fixes=[('1.2.2', 'REM-1.2.2', 'unblocks_other')],
                  skipped=[('1.2.1', 'waits_for_prerequisite'), ('2.3.10.3', 'lower_priority'),
-                          ('1.1.1', 'lower_priority'), ('1.1.3', 'lower_priority')])]).run_round()
+                          ('1.1.1', 'lower_priority'), ('1.1.3', 'lower_priority'),
+                          ('18.10.57.3.9.4', 'needs_review')])]).run_round()
         self.assertEqual(result['outcome']['outcome'], 'awaiting_approval')
         proposals = self.store.for_run(result['framework_run_id'])
         self.assertEqual([p['proposal']['control_id'] for p in proposals], ['1.2.2'])
@@ -258,9 +261,10 @@ class OrchestratorAccountabilityTests(AgenticTestCase):
         outcome = result['outcome']
         self.assertNotIn('model_commentary', outcome)
         self.assertEqual(outcome['reason'], 'Proposed for your approval, in order: 1.2.2 (High 69), 1.1.1 (High 63). '
-                         'Deferred by the Orchestrator: 2.3.10.3, 1.1.3. 4 Unknown/Error gap(s) not scored. '
+                         'Deferred by the Orchestrator: 2.3.10.3, 1.1.3, 18.10.57.3.9.4. '
+                         'No library action (manual review): 9.3.1. 2 Unknown/Error gap(s) not scored. '
                          'Nothing has been approved or executed.')
-        self.assertEqual([s['control_id'] for s in outcome['skipped']], ['2.3.10.3', '1.1.3'])
+        self.assertEqual([s['control_id'] for s in outcome['skipped']], ['2.3.10.3', '1.1.3', '18.10.57.3.9.4'])
         reasons = [p['proposal']['reason'] for p in self.store.for_run(result['framework_run_id'])]
         self.assertEqual(reasons, ['High-priority finding (high_risk)', 'Low operational impact (low_impact)'])
 
@@ -277,12 +281,12 @@ class OrchestratorAccountabilityTests(AgenticTestCase):
     def test_unaccounted_finding_and_reasons_that_contradict_facts_are_rejected(self):
         t = 'windows:' + target().machine_uuid
         hardening = self.hardening(FakeVm(), [call('delegate_scanner', t), call('delegate_analysis', t),
-            plan(t, fixes=[('1.1.3', 'REM-1.1.3', 'high_risk')], skipped=DEFER_ALL[:3]),
+            plan(t, fixes=[('1.1.3', 'REM-1.1.3', 'high_risk')], skipped=DEFER_ALL[:3] + DEFER_ALL[4:]),
             plan(t, fixes=[('1.2.2', 'REM-1.2.2', 'high_risk')], skipped=[('1.1.1', 'lower_priority')])])
         result = hardening.run_round()
         errors = self.rejected(hardening, result['round_id'])
         self.assertEqual(errors[0], 'reason_code high_risk does not fit 1.1.3 (Moderate 57)')
-        self.assertEqual(errors[1], 'Every must_decide finding needs a fix or a skip reason; missing: 2.3.10.3, 1.1.3')
+        self.assertEqual(errors[1], 'Every must_decide finding needs a fix or a skip reason; missing: 2.3.10.3, 18.10.57.3.9.4, 1.1.3')
         self.assertEqual(result['outcome']['outcome'], 'incomplete')  # Two invalid calls end the run unfinished.
         self.assertEqual(self.store.for_run(result['framework_run_id']), [])
 
@@ -303,7 +307,8 @@ class ExpandedControlRoundTests(AgenticTestCase):
         t = 'windows:' + target().machine_uuid
         hardening = self.hardening(FakeVm(state), [call('delegate_scanner', t), call('delegate_analysis', t),
             plan(t, fixes=[('17.5.1', 'REM-17.5.1', 'improves_detection')],
-                 skipped=[(c, 'lower_priority') for c in ('1.2.2', '2.3.10.3', '1.1.1', '1.1.3', '17.1.1')])])
+                 skipped=[(c, 'lower_priority') for c in ('1.2.2', '2.3.10.3', '1.1.1', '1.1.3', '17.1.1', '18.10.57.3.9.4',
+                                                       '18.10.57.3.9.3')])])
         result = hardening.run_round()
         self.assertEqual(result['outcome']['outcome'], 'awaiting_approval')
         record = self.runtime.imports.get(self.runtime.get(result['framework_run_id']).evidence_sha256)
@@ -316,6 +321,44 @@ class ExpandedControlRoundTests(AgenticTestCase):
         self.assertEqual(executed['verdicts'][0]['verdict'], 'Verified compliant')
         after = self.runtime.imports.get(self.runtime.get(executed['verification_run_id']).evidence_sha256)
         self.assertEqual(next(r.evidence.value for r in after.assessment.results if r.control.control_id == '17.5.1'), 3)
+
+
+class NotConfiguredPolicyTests(AgenticTestCase):
+    """Decision D5: an absent Group Policy value is Non-Compliant and, if in the library, fixable."""
+
+    def test_not_configured_nla_policy_is_fixed_from_absent_to_set_and_verified(self):
+        t = 'windows:' + target().machine_uuid
+        vm = FakeVm()
+        hardening = self.hardening(vm, [call('delegate_scanner', t), call('delegate_analysis', t),
+            plan(t, fixes=[('18.10.57.3.9.4', 'REM-18.10.57.3.9.4', 'low_impact')],
+                 skipped=[(c, 'lower_priority') for c in ('1.2.2', '2.3.10.3', '1.1.1', '1.1.3')])])
+        result = hardening.run_round()
+        proposal = self.store.for_run(result['framework_run_id'])[0]['proposal']
+        self.assertIsNone(proposal['expected_before'])  # Approved precondition: still Not configured.
+        self.store.decide(proposal['request_id'], approve=True, operator='admin01')
+        executed = hardening.execute_approved(result['session_id'])
+        self.assertEqual(executed['verdicts'][0]['verdict'], 'Verified compliant')
+        self.assertEqual(vm.writes, ['18.10.57.3.9.4'])
+        change = next(c for c in hardening.changes(result['framework_run_id'], executed['verification_run_id'])
+                      if c['control_id'] == '18.10.57.3.9.4')
+        self.assertEqual((change['before'], change['after'], change['change']), (None, 1, 'Improvement'))
+
+    def test_firewall_policy_findings_are_scored_but_never_fixable(self):
+        hardening = self.standard_round(FakeVm())
+        result = hardening.run_round()
+        self.assertIn('No library action (manual review): 9.3.1.', result['outcome']['reason'])
+        trace = next(x for x in hardening.traces(result['round_id']) if x['agent_role'] == ORCHESTRATOR)
+        analysis = next(e['data']['result'] for e in trace['events'] if e['data'].get('name') == 'delegate_analysis')
+        self.assertNotIn('9.3.1', [d['control_id'] for d in analysis['must_decide']])
+
+    def test_effective_protection_lowers_exposure_only_when_actually_on(self):
+        record = lambda vm: self.runtime.imports.get(LiveScanner(self.runtime, target(), session_factory=vm)
+                                                     .request(target().hostname, target().machine_uuid)['evidence_sha256'])
+        on = {f.control_id: f for f in analyse(record(FakeVm()))}
+        self.assertEqual(on['9.3.1'].factors['E'], 1)
+        self.assertIn('effectively enabled', on['9.3.1'].exposure_reason)
+        off = {f.control_id: f for f in analyse(record(FakeVm(firewall=False)))}
+        self.assertEqual((off['9.3.1'].factors['E'], off['9.3.1'].score, off['9.3.1'].level), (4, 80, 'Critical'))
 
 
 class RemediationAgentTests(AgenticTestCase):
@@ -384,12 +427,12 @@ class RiskEngineTests(AgenticTestCase):
 
     def test_scores_rank_and_skip_unknowns(self):
         ranked = {f.control_id: f for f in analyse(self.record(FakeVm()))}
-        self.assertEqual(set(ranked), {'1.2.2', '1.1.1', '1.1.3', '2.3.10.3'})
+        self.assertEqual(set(ranked), {'1.2.2', '1.1.1', '1.1.3', '2.3.10.3', '9.3.1', '18.10.57.3.9.4'})
         # Derived: protection_weakened I4, all_local_accounts P4, Level 1 Automated L4; E3; D1.
         self.assertEqual(ranked['1.2.2'].factors, dict(I=4, E=3, P=4, L=4, D=1))
         self.assertEqual((ranked['1.2.2'].score, ranked['1.2.2'].level), (69, 'High'))
         self.assertEqual([(f.control_id, f.score) for f in analyse(self.record(FakeVm()))],
-                         [('1.2.2', 69), ('1.1.1', 63), ('2.3.10.3', 60), ('1.1.3', 57)])
+                         [('1.2.2', 69), ('9.3.1', 65), ('1.1.1', 63), ('2.3.10.3', 60), ('18.10.57.3.9.4', 59), ('1.1.3', 57)])
         self.assertTrue(ranked['1.2.2'].factor_reasons['P'].startswith('all_local_accounts: applies to every local account'))
 
     def test_regression_drift_and_disabled_firewall_raise_scores(self):

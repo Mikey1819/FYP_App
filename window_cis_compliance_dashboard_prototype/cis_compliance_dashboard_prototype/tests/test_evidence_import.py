@@ -66,10 +66,12 @@ class EvidenceImportTests(unittest.TestCase):
         data = export_fixture()
         for index in (0, 1):
             data['observations'][index].update(state='error', value=None, error='timeout')
-        for index in (3, 4):
+        for index in (2, 3, 4):  # Guest (non-policy), Public firewall and NLA (Group Policy).
             data['observations'][index].update(state='missing', value=None)
         summary = summarise(load(data).results)
-        self.assertEqual((summary.selected, summary.evaluated, summary.errors, summary.unknown), (5, 1, 2, 2))
+        # D5: absent policies fail as Non-Compliant; an absent non-policy value stays Unknown. Neither passes.
+        self.assertEqual((summary.selected, summary.compliant, summary.non_compliant, summary.errors, summary.unknown),
+                         (5, 0, 2, 2, 1))
 
     def test_rejects_other_platforms_roles_and_boolean_identity_fields(self):
         for key, value in [('os_caption', 'Windows 11'), ('os_version', '10.0.26100'),

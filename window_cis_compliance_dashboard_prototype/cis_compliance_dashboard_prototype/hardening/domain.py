@@ -79,6 +79,9 @@ class Control:
     profile: str
     source_reference: str
     source_verified: bool = False
+    # Decision D5: a Group Policy setting that is absent ("Not configured") fails the CIS
+    # recommendation, which requires it to be set. Other absent values stay Unknown.
+    not_configured_fails: bool = False
 
     def __post_init__(self) -> None:
         if any(not value.strip() for value in (
@@ -123,6 +126,8 @@ def assess(assessment_id: str, control: Control, evidence: Evidence) -> Assessme
         raise ValueError("Evidence belongs to a different control")
     if evidence.error is not None:
         status, detail = Status.ERROR, evidence.error or "Collection failed"
+    elif evidence.value is None and control.not_configured_fails:
+        status, detail = Status.NON_COMPLIANT, "Not configured: the benchmark requires this policy to be set"
     elif evidence.value is None:
         status, detail = Status.UNKNOWN, "No configuration value was collected"
     else:

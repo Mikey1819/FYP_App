@@ -8,8 +8,8 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'cis_compliance_dashboard_prototype'))
-from hardening.risk import (ATTRIBUTES, BASELINE_VERSION, CONSEQUENCE, LIKELIHOOD, PRIVILEGE_SCOPE,  # noqa: E402
-                            SURFACE_EXPOSURE, derive)
+from hardening.risk import (ATTRIBUTES, BASELINE_VERSION, CONSEQUENCE, EFFECTIVE_PROTECTION, LIKELIHOOD,  # noqa: E402
+                            PRIVILEGE_SCOPE, SURFACE_EXPOSURE, derive)
 from hardening.server2022_catalogue import FULL_CATALOGUE  # noqa: E402
 
 
@@ -34,7 +34,10 @@ def main():
         *[f'| Level {lvl} | {"Automated" if auto else "Manual"} | {v} |' for (lvl, auto), v in LIKELIHOOD.items()], '',
         '**Exposure (E).** Base value from the exposure surface (Table 4.14b), plus 1 when the *collected* effective '
         'Public firewall state is disabled, for network-reachable surfaces. Surfaces: '
-        + ', '.join(f'`{k}` = {v}' for k, v in SURFACE_EXPOSURE.items()) + '.', '',
+        + ', '.join(f'`{k}` = {v}' for k, v in SURFACE_EXPOSURE.items()) + '. '
+        'Exception: for ' + ', '.join(EFFECTIVE_PROTECTION) + ', when the policy is Not configured but the collected '
+        'effective local state shows the protection is on, E = 1 ("minimal exposure"). The finding stays '
+        'Non-Compliant (decision D5) because CIS requires the policy itself.', '',
         '**Configuration State or Drift (D).** From the previous comparable assessment (Table 4.14e): 1 when there is '
         'none, 3 when the control was already non-compliant, 5 when it was compliant before (a regression).', '',
         '## Per-control derivation', '',
