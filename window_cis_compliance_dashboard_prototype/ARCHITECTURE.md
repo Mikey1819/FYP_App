@@ -36,7 +36,7 @@ flowchart TD
 
 | Role | Tools (validated by code) | Decides | Cannot |
 | --- | --- | --- | --- |
-| AI Agent Orchestrator, assessment phase | `delegate_scanner`, `delegate_analysis`, `submit_plan` | Delegation order. Whether to send the Scanner back **once**, only when Analysis requested a rescan. **Which fixes to propose, in what order, and why each other fixable finding waits.** | Scan, score, approve, execute. Fix a gap, use an action outside the library or the finding's list, fix a blocked finding, leave a fixable finding undecided, give a reason that contradicts the analysis. |
+| AI Agent Orchestrator, assessment phase | `delegate_scanner`, `delegate_analysis`, `submit_plan` | Delegation order. Whether to send the Scanner back **once**, only when Analysis requested a rescan or the Scanner stopped without handing off (a stopped Scanner is reported as `scan_not_handed_off`, never as a collection failure). **Which fixes to propose, in what order, and why each other fixable finding waits.** | Scan, score, approve, execute. Fix a gap, use an action outside the library or the finding's list, fix a blocked finding, leave a fixable finding undecided, give a reason that contradicts the analysis. |
 | AI Agent Orchestrator, remediation phase | `delegate_remediation`, `delegate_verification`, `submit_review` | Next step: `finish`, `next_round` or `remediation_review` (report Figure 4.4), with a fact-checked reason code | Decide before verifying executed fixes. Finish while a fix failed, is uncertain or was not attempted. |
 | Scanner Agent | `scan_target`, `read_coverage`, `inspect_observation`, `rescan`, `handoff_analysis` / `handoff_verification`, `report_failure` | When to scan. Whether coverage is acceptable. Whether to rescan once (Error results only). | Change settings or send anything but the fixed collector |
 | Analysis Agent | `score_findings`, `inspect_finding`, `check_history`, `submit_analysis` | What to investigate (at most 2 investigations). **Which findings need your attention first** (≤ 3). **How to triage every gap:** rescan, resolves with a prerequisite, or manual review. | Change any factor, score or level (D2). There is no tool that could. |
@@ -51,10 +51,10 @@ A rejected call has no effect and names the exact problem, so the model can corr
 
 - An agent that answers with no tool call before its terminal decision gets **one reminder** listing its valid tools.
 - In a plan, a *skip* entry for a control with nothing to decide (a gap) is ignored and recorded in the round summary. A *fix* for such a control is still refused.
-- Analysis attention flags beyond 3 are fact-checked and then dropped (noted in the summary) instead of failing the decision.
-- `delegate_analysis` may name the scan it hands over, but only the current one.
+- An Analysis attention flag that does not fit the facts is discarded and recorded (`discarded_flags`), never shown. Fitting flags beyond 3 are dropped and noted. Gap triage stays strict. Attention is advisory and changes no number, and refusing the whole decision for one wrong flag lost the analysis in the 26 October evaluation.
+- `delegate_analysis` may name the scan it hands over (by `framework_run_id` or `evidence_sha256`), but only the current one.
 
-Both came from real-model probes. Repeating an identical call is blocked, except for calls a role declares repeatable and bounds itself (`delegate_scanner`/`delegate_analysis` after a rescan request, a second `precheck`).
+Both came from real-model probes. Repeating an identical call is blocked, except for calls a role declares repeatable and bounds itself: `delegate_scanner`/`delegate_analysis` for the one permitted re-delegation, a second `precheck`, and the Scanner's `read_coverage`/`inspect_observation` after a rescan, since those return new data.
 
 ## Reasons are codes, not prose
 

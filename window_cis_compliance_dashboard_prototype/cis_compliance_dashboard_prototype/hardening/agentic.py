@@ -232,6 +232,7 @@ class _RoleTools:
 
 class ScannerTools(_RoleTools):
     names = ('scan_target', 'read_coverage', 'inspect_observation', 'rescan', 'handoff_analysis', 'report_failure')
+    repeatable = ('read_coverage', 'inspect_observation')  # After a rescan the same call returns new data.
 
     def __init__(self, rounds, *, verify_run_id=None):
         super().__init__(rounds, SCANNER)
@@ -418,24 +419,30 @@ class AnalysisTools(_RoleTools):
         if self.analysis is None:
             raise ValueError('Call score_findings before submitting')
         waiting, attention_facts, triage_facts, prerequisite = self._facts()
-        # Every entry is fact-checked; beyond the first 3, flags are dropped rather than failing the decision
-        # (real qwen3:8b tends to flag many findings; attention is advisory and changes no number).
+        # Attention is advisory and changes no number, so a flag that does not fit the facts is discarded and
+        # recorded instead of failing the decision; only fitting flags are shown, at most 3. Real qwen3:8b
+        # over-flagged and wrongly called 17.1.1 manual_fix_needed in the 26 Oct evaluation, and the retry of
+        # a refused decision ran out of time. Gap triage stays strict: every gap needs one fitting code.
         attention = check_entries(arguments['attention'], ('control_id', 'attention_code'), 'attention', ATTENTION)
-        dropped = [e['control_id'] for e in attention[3:]]
+        fitting, discarded = [], []
+        for entry in attention:
+            control, code = entry['control_id'], entry['attention_code']
+            fits = control in attention_facts and attention_facts[control][code] and control not in {
+                e['control_id'] for e in fitting}
+            (fitting if fits else discarded).append(entry)
+        attention, dropped = fitting[:3], [e['control_id'] for e in fitting[3:]]
         triage = check_entries(arguments['gap_triage'], ('control_id', 'triage_code'), 'gap_triage', TRIAGE)
-        for entries, facts, code_key, label in ((attention, attention_facts, 'attention_code', 'a scored finding'),
-                                                (triage, triage_facts, 'triage_code', 'a gap')):
-            seen = set()
-            for entry in entries:
-                control, code = entry['control_id'], entry[code_key]
-                if control not in facts:
-                    raise ValueError(f'{control[:20]} is not {label}')
-                if control in seen:
-                    raise ValueError(f'{control} appears more than once')
-                seen.add(control)
-                if not facts[control][code]:
-                    allowed = ', '.join(c for c, true in facts[control].items() if true) or 'none'
-                    raise ValueError(f'{code_key} {code} does not fit {control}; true codes: {allowed}')
+        seen = set()
+        for entry in triage:
+            control, code = entry['control_id'], entry['triage_code']
+            if control not in triage_facts:
+                raise ValueError(f'{control[:20]} is not a gap')
+            if control in seen:
+                raise ValueError(f'{control} appears more than once')
+            seen.add(control)
+            if not triage_facts[control][code]:
+                allowed = ', '.join(c for c, true in triage_facts[control].items() if true)
+                raise ValueError(f'triage_code {code} does not fit {control}; true codes: {allowed}')
         missing = [g for g in triage_facts if g not in {e['control_id'] for e in triage}]
         if missing:
             raise ValueError('Every gap needs a triage_code; missing: ' + ', '.join(missing))
@@ -445,16 +452,19 @@ class AnalysisTools(_RoleTools):
         triage = [dict(e, reason=TRIAGE[e['triage_code']].format(prerequisite=prerequisite[e['control_id']]))
                   for e in triage]
         rescan = [e['control_id'] for e in triage if e['triage_code'] == 'rescan']
-        attention = attention[:3]
         parts = [f"{len(self.analysis['findings'])} finding(s) scored by the deterministic engine."]
         if attention:
             parts.append('For attention: ' + '; '.join(f"{a['control_id']} ({a['reason']})" for a in attention) + '.')
         if dropped:
             parts.append('Further flags beyond 3 not shown: ' + ', '.join(dropped) + '.')
+        if discarded:
+            parts.append('Flags that did not fit the analysis were discarded: ' + ', '.join(
+                f"{e['control_id']} ({e['attention_code']})" for e in discarded) + '.')
         if triage:
             parts.append('Gaps: ' + '; '.join(f"{g['control_id']} ({g['reason']})" for g in triage) + '.')
         self.terminal_outcome = dict(outcome='analysis_complete', reason=' '.join(parts), attention=attention,
-                                     gap_triage=triage, rescan_requested=rescan, framework_run_id=self.framework_run_id)
+                                     gap_triage=triage, rescan_requested=rescan, framework_run_id=self.framework_run_id,
+                                     discarded_flags=[(e['control_id'], e['attention_code']) for e in discarded])
         return dict(self.terminal_outcome)
 
     def call(self, name, arguments):
@@ -684,7 +694,12 @@ class OrchestratorTools(_RoleTools):
         self.proposals, self.scans, self.ignored_skips = [], 0, []
 
     def _rescan_allowed(self):
-        return self.scans == 1 and bool(self.analysis_outcome and self.analysis_outcome['rescan_requested'])
+        """A second Scanner delegation: when Analysis asked for a rescan, or the Scanner stopped without a
+        handoff (in the 26 Oct evaluation it stopped after a rescan instead of handing off)."""
+        if self.scans != 1:
+            return False
+        stalled = self.scanner_outcome is not None and self.scanner_outcome['outcome'] == 'incomplete'
+        return stalled or bool(self.analysis_outcome and self.analysis_outcome['rescan_requested'])
 
     def available(self):
         handed_off = bool(self.scanner_outcome and self.scanner_outcome['outcome'] == 'handoff_analysis')
@@ -779,8 +794,12 @@ class OrchestratorTools(_RoleTools):
 
     def _summary(self, skipped):
         """Round summary written by code from records; the model contributes no free prose here."""
-        if self.scanner_outcome['outcome'] != 'handoff_analysis':
+        if self.scanner_outcome['outcome'] == 'collection_failed':
             return 'collection_failed', 'Scanner could not collect evidence. Nothing was proposed or executed.'
+        if self.scanner_outcome['outcome'] != 'handoff_analysis':
+            # Evidence may exist, but no agent validated it; it is never analysed or acted on.
+            return 'scan_not_handed_off', ('The Scanner Agent stopped without handing off a validated scan ('
+                                           + self.scanner_outcome['reason'][:200] + '). Nothing was proposed or executed.')
         scores = {f['control_id']: f for f in self.analysis['findings']}
         parts = []
         if self.proposals:
@@ -813,11 +832,15 @@ class OrchestratorTools(_RoleTools):
                                  'requests a rescan')
             return self._delegate_scanner()
         if name == 'delegate_analysis':
-            # The model may name the scan it hands over (it did in 3 of 3 probes); it must be the current one.
-            if type(arguments) is dict and 'framework_run_id' in arguments:
-                if arguments['framework_run_id'] != self.framework_run_id:
-                    raise ValueError('framework_run_id must be the current scan ' + str(self.framework_run_id))
-                arguments = {k: v for k, v in arguments.items() if k != 'framework_run_id'}
+            # The model may name the scan it hands over by either identifier from the Scanner handoff (probes and
+            # the 26 Oct evaluation); whichever it names must be the current scan.
+            current = dict(framework_run_id=self.framework_run_id,
+                           evidence_sha256=self.record.assessment.source_sha256 if self.record else None)
+            if type(arguments) is dict:
+                for key in set(arguments) & set(current):
+                    if arguments[key] != current[key]:
+                        raise ValueError(f'{key} must be the current scan {current[key]}')
+                arguments = {k: v for k, v in arguments.items() if k not in current}
             self._args(name, arguments)
             if not self.scanner_outcome or self.scanner_outcome['outcome'] != 'handoff_analysis':
                 raise ValueError('A Scanner handoff is required before analysis')

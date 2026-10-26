@@ -351,6 +351,29 @@ class AgenticRoundTests(AgenticTestCase):
             rescans = [e for e in trace['events'] if e['data'].get('name') == 'rescan']
             self.assertEqual(rescans[0]['kind'], 'tool' if allowed else 'tool_rejected')
 
+    def test_scanner_may_read_coverage_again_after_a_rescan(self):
+        t = 'windows:' + target().machine_uuid
+        scanner = [call('scan_target', t), call('read_coverage', t), call('rescan', t, reason='Error on 1.1.5'),
+                   call('read_coverage', t), call('handoff_analysis', t, reason='Error persists after one rescan.')]
+        result = self.hardening(FakeVm(error_controls=('1.1.5',)), [call('delegate_scanner', t),
+            call('delegate_analysis', t), plan(t, skipped=DEFER_ALL)], scanner=scanner).run_round()
+        self.assertEqual(result['outcome']['outcome'], 'no_fix_proposed')  # Found in the 26 Oct evaluation.
+
+    def test_a_scanner_that_stops_without_handoff_is_reported_truthfully_and_can_be_redelegated(self):
+        t = 'windows:' + target().machine_uuid
+        silent = {'content': '', 'tool_calls': []}
+        stalled = [call('scan_target', t), call('read_coverage', t), silent, silent]
+        result = self.hardening(FakeVm(), [call('delegate_scanner', t), plan(t)], scanner=stalled).run_round()
+        self.assertEqual(result['outcome']['outcome'], 'scan_not_handed_off')  # Not "could not collect evidence".
+        self.assertTrue(result['outcome']['reason'].startswith('The Scanner Agent stopped without handing off'))
+        hardening = self.hardening(FakeVm(), [call('delegate_scanner', t), call('delegate_scanner', t),
+                                              call('delegate_analysis', t), plan(t, skipped=DEFER_ALL)],
+                                   scanner=stalled + [call('scan_target', t), call('read_coverage', t),
+                                                      call('handoff_analysis', t, reason='ok')])
+        result = hardening.run_round()
+        self.assertEqual(len(self.trace(hardening, result['round_id'], SCANNER)), 2)
+        self.assertEqual(result['outcome']['outcome'], 'no_fix_proposed')
+
     def test_models_receive_compact_views(self):
         result = self.standard_round(FakeVm()).run_round()
         hardening = self.standard_round(FakeVm())
@@ -529,7 +552,7 @@ class AnalysisAgentTests(AgenticTestCase):
             plan(t, fixes=[('1.2.2', 'REM-1.2.2', 'high_risk')], skipped=DEFER_ALL[1:])], analysis=analysis)
         result = hardening.run_round()
         self.assertEqual(self.rejected(hardening, result['round_id'], ANALYSIS), [
-            'attention_code high_risk does not fit 1.1.3; true codes: none',
+            'Every gap needs a triage_code; missing: 1.2.1, 1.2.4',
             'triage_code rescan does not fit 1.2.1; true codes: resolves_with_prerequisite, manual_review'])
         stored = self.store.rounds(result['session_id'])[0]
         self.assertEqual(stored['analysis_outcome']['outcome'], 'incomplete')
@@ -575,6 +598,22 @@ class AnalysisAgentTests(AgenticTestCase):
         stored = self.store.rounds(result['session_id'])[0]['analysis_outcome']
         self.assertEqual([a['control_id'] for a in stored['attention']], ['1.2.2', '9.3.1', '1.1.1'])
         self.assertIn('Further flags beyond 3 not shown: 2.3.10.3.', stored['reason'])
+
+    def test_a_flag_that_does_not_fit_is_discarded_and_recorded_never_shown(self):
+        t = 'windows:' + target().machine_uuid
+        flags = [('1.1.3', 'high_risk'), ('1.2.2', 'unblocks_other'), ('17.1.1', 'manual_fix_needed')]
+        analysis = [call('score_findings', t), call('submit_analysis', t,
+                    attention=[dict(control_id=c, attention_code=a) for c, a in flags],
+                    gap_triage=[dict(control_id=g, triage_code='manual_review') for g in ('1.2.1', '1.2.4')])]
+        hardening = self.hardening(FakeVm(), [call('delegate_scanner', t), call('delegate_analysis', t),
+                                              plan(t, skipped=DEFER_ALL)], analysis=analysis)
+        result = hardening.run_round()
+        stored = self.store.rounds(result['session_id'])[0]['analysis_outcome']
+        self.assertEqual(stored['outcome'], 'analysis_complete')
+        self.assertEqual([a['control_id'] for a in stored['attention']], ['1.2.2'])  # Only the fitting flag.
+        self.assertEqual(stored['discarded_flags'], [['1.1.3', 'high_risk'], ['17.1.1', 'manual_fix_needed']])
+        self.assertIn('Analysis Agent flags for attention: 1.2.2 (fixing it unblocks 1.2.1, 1.2.4).',
+                      result['outcome']['reason'])
 
     def test_delegate_analysis_may_name_the_current_scan_only(self):
         t = 'windows:' + target().machine_uuid
