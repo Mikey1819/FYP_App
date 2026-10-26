@@ -10,7 +10,7 @@ from streamlit.testing.v1 import AppTest
 from hardening import agentic, agentic_view
 from hardening.scan_view import LIVE_TARGET
 from hardening.winrm_channel import LiveScanner
-from test_agentic import FakeVm, call
+from test_agentic import FakeVm, TeamDouble, call, clients
 from test_winrm_channel import MACHINE_UUID, target
 
 APP = Path(__file__).resolve().parents[1] / 'app.py'
@@ -29,15 +29,15 @@ def overview_page():
 
 
 class ScriptedModel:
-    """Orchestrator and Scanner requests arrive in a fixed order, so one shared script suffices."""
+    """Stands in for OllamaClient; every role's request is routed to that role's test double."""
     model, provenance = 'mock-model', 'Mock model (test only)'
-    script = []
+    team = None
 
     def __init__(self, num_predict=384):
         self.num_predict = num_predict
 
     def chat(self, messages, tools, *, timeout):
-        return ScriptedModel.script.pop(0)
+        return ScriptedModel.team.chat(messages, tools, timeout=timeout)
 
 
 class AgenticPageTests(unittest.TestCase):
@@ -55,16 +55,15 @@ class AgenticPageTests(unittest.TestCase):
         scanner_patch = patch.object(agentic_view, 'LiveScanner', FakeChannel)
         scanner_patch.start(); self.addCleanup(scanner_patch.stop)
         t = 'windows:' + MACHINE_UUID
-        ScriptedModel.script = [
+        ScriptedModel.team = TeamDouble(clients(t, [
             call('delegate_scanner', t),
-            call('scan_target', t), call('read_coverage', t), call('handoff_analysis', t, reason='Coverage read.'),
             call('delegate_analysis', t),
             call('submit_plan', t, fixes=[
                 dict(control_id='1.2.2', action_id='REM-1.2.2', reason_code='high_risk'),
                 dict(control_id='1.1.1', action_id='REM-1.1.1', reason_code='low_impact')],
                 skipped=[dict(control_id='2.3.10.3', reason_code='needs_review'),
                          dict(control_id='1.1.3', reason_code='lower_priority'),
-                         dict(control_id='18.10.57.3.9.4', reason_code='needs_review')])]
+                         dict(control_id='18.10.57.3.9.4', reason_code='needs_review')])]))
 
     def test_round_approval_execution_and_verification_through_the_page(self):
         app = AppTest.from_function(agentic_page, default_timeout=60)
@@ -87,7 +86,8 @@ class AgenticPageTests(unittest.TestCase):
         app.button(key='agentic_execute').click().run()
         self.assertEqual(len(app.exception), 0)
         self.assertEqual(self.vm.writes, ['1.2.2'])
-        self.assertIn('6. Verification', [h.value for h in app.subheader])
+        self.assertIn('6. Remediation and verification', [h.value for h in app.subheader])
+        self.assertTrue(any('Next step (next round)' in i.value for i in app.info))
         verdicts = [row for frame in app.dataframe for row in frame.value.to_dict('records') if 'Verdict' in row]
         self.assertEqual([v['Verdict'] for v in verdicts], ['Verified compliant'])
         self.assertIn('Run next round (rescan, re-rank, re-propose)', [b.label for b in app.button])

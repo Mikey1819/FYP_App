@@ -1,6 +1,8 @@
 # Scanner connection to the lab VM
 
-> **Fallback only (26 October 2026).** The Scanner Agent's primary channel is PowerShell Remoting: see [VM_CONNECTION.md](VM_CONNECTION.md). This shared-folder worker needs a person to start it inside the VM, so by itself it does not make the Scanner an agent.
+> **Archived 26 October 2026.** Describes the legacy **Evidence upload** page (manual file exchange and the earlier agent team), not the current agentic framework. Current design: [ARCHITECTURE.md](../../../ARCHITECTURE.md); current status: [PROGRESS.md](../../../PROGRESS.md).
+
+> **Fallback only (26 October 2026).** The Scanner Agent's primary channel is PowerShell Remoting: see [VM_CONNECTION.md](../../../VM_CONNECTION.md). This shared-folder worker needs a person to start it inside the VM, so by itself it does not make the Scanner an agent.
 
 The dashboard can now queue a read-only scan and import the worker's response without a JSON upload. The AI Scanner can use the same connection when it finds missing/error readings and requests recollection. A running worker inside the selected VM is required. This connection has been tested with synthetic evidence and mocked collection; an actual VM worker trial is still pending.
 

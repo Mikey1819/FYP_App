@@ -1,5 +1,7 @@
 # Complete project requirements and report coverage
 
+> **Status, 26 October 2026: requirement text current, status columns outdated.** The FR/NFR/STR/UC traceability and the report-section index remain the reference. The implementation-status columns and the 36-control register predate the 32-control Stand-alone v2.0.0 catalogue, the WinRM channel and the four-agent loop. For control status use [BENCHMARK_MAPPING.md](BENCHMARK_MAPPING.md), for design [ARCHITECTURE.md](ARCHITECTURE.md), and for current progress [PROGRESS.md](PROGRESS.md).
+
 Reviewed on **22 October 2026, Asia/Kuala_Lumpur** against `RIS_KhooTengYi_Report.docx`, SHA-256 `8ee4293978a456ea6c2f51532afc475ef8a5813b9cbef47f1f980df256074a75`.
 
 The project target is an **Agentic AI Framework for Windows Systems Hardening and CIS Compliance Assessment**: a reusable, locally operated framework that assesses one Windows Server 2022 target, explains and prioritises findings, supports administrator-approved remediation, verifies changes, and detects configuration drift. The working assessment target is the report's 36 candidate controls, with a stated minimum of 30; five reviewed checks and one executable action are the demonstrated preview scope. Full report coverage in documentation does not mean full implementation.
@@ -18,7 +20,7 @@ Jump to [objectives and scope](#agreed-objectives-and-scope), [functional requir
 | What is implemented, tested or currently being worked on? | Latest dated handoff in [PROGRESS.md](PROGRESS.md), supported by source and validation records |
 | How do I run the current application? | [README.md](README.md) |
 | What benchmark rules are actually reviewed? | [BENCHMARK_MAPPING.md](BENCHMARK_MAPPING.md) |
-| How do we collect evidence and execute an approved lab action? | [VM_EVIDENCE.md](VM_EVIDENCE.md) and [VM_BRIDGE.md](VM_BRIDGE.md) |
+| How do we collect evidence and execute an approved lab action? | [VM_EVIDENCE.md](docs/archive/legacy/VM_EVIDENCE.md) and [VM_BRIDGE.md](docs/archive/legacy/VM_BRIDGE.md) |
 | What has been demonstrated on the actual VM or actual local model? | [VM_VALIDATION.md](VM_VALIDATION.md) and [docs/archive/LOCAL_MODEL_VALIDATION.md](docs/archive/LOCAL_MODEL_VALIDATION.md) (synthetic preview era) |
 
 **Interpretation rule:** explicit user decisions take precedence over older plans. Preserve the original report for traceability; record a revision instead of silently rewriting its meaning. A report requirement describes a target, a source file establishes that code exists, and a validation record establishes only what that specific test demonstrated. Older preview schedules and sample screenshots are historical.
@@ -84,9 +86,9 @@ The user accepted these three consolidated objectives on 22 October 2026. The or
 | Five selected controls | Reviewed catalogue, guarded collection, strict real-evidence import and deterministic evaluation | Expand reviewed coverage and complete independent comparisons/classification review |
 | One password-length action | Exact request/approval/receipt machinery; historical user-run 0 to 14 verified result | Defined additional subset, per-action failure and recovery evidence |
 | Current test UI | Upload, analyse, review, approve/reject, VM execution exchange, matching receipt | Real risk and separate opt-in history/drift views |
-| Local model | Historical Qwen3 investigations plus [three F2 synthetic context traces](ADAPTIVE_INVESTIGATION.md#actual-local-model-results), with clarification/proposal/deferral outcomes and one blocked unsafe proposal attempt | Repeated/broader adaptive investigation, claim review and final-framework evaluation |
+| Local model | Historical Qwen3 investigations plus [three F2 synthetic context traces](docs/archive/legacy/ADAPTIVE_INVESTIGATION.md#actual-local-model-results), with clarification/proposal/deferral outcomes and one blocked unsafe proposal attempt | Repeated/broader adaptive investigation, claim review and final-framework evaluation |
 | Risk and drift | Domain logic and synthetic regression evidence | Reviewed real-factor assignment, real ranking and compatible real history flow |
-| Framework roles | [F1 foundation](FRAMEWORK_RUNTIME.md) plus [AI agent team](AGENT_TEAM.md): isolated Scanner/Analysis/Remediation conversations, AI delegation, role capabilities and durable public handoffs; fixed assessment and lifecycle retained | Real-model reliability, connected Scanner collection, broader remediation and recovery evaluation remain unfinished |
+| Framework roles | [F1 foundation](docs/archive/legacy/FRAMEWORK_RUNTIME.md) plus [AI agent team](docs/archive/legacy/AGENT_TEAM.md): isolated Scanner/Analysis/Remediation conversations, AI delegation, role capabilities and durable public handoffs; fixed assessment and lifecycle retained | Real-model reliability, connected Scanner collection, broader remediation and recovery evaluation remain unfinished |
 | Transport | Manual shared-folder exchange with guarded VM-side execution | Optional explicitly registered worker/adapter and validated recovery semantics |
 
 The inspected F1 Analysis Agent explicitly returns unavailable real risk and does not invoke AI in that assessment stage. The inspected Remediation Agent identifies eligible actions without granting approval or executing them. Preserve these distinctions in demonstrations. Historical verification of 14 is not current posture after the user's subsequent reset to 0.
@@ -245,7 +247,7 @@ Persist the proposal, binding to evidence/target/action/parameters, administrato
 
 Verification recollects the affected setting and applies the original reviewed comparison. A successful process exit is insufficient. Fresh matching evidence must show compliance; otherwise report failed, unknown or unresolved verification. Preserve the original assessment and show a separate current postcheck. Every additional write requires a distinct attempt with fresh exact approval, even for the same action.
 
-The current password-length action sets the registered VM's minimum to 14. Impact concerns future password-policy enforcement; it is not evidence that existing passwords were changed. Use the current action metadata and [VM_BRIDGE.md](VM_BRIDGE.md) for actual prerequisites and procedure. This documentation does not execute a remediation.
+The current password-length action sets the registered VM's minimum to 14. Impact concerns future password-policy enforcement; it is not evidence that existing passwords were changed. Use the current action metadata and [VM_BRIDGE.md](docs/archive/legacy/VM_BRIDGE.md) for actual prerequisites and procedure. This documentation does not execute a remediation.
 
 ## Data design and provenance
 

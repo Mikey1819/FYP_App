@@ -30,7 +30,9 @@ class Limits:
     request_seconds: int = 90
 
     def __post_init__(self):
-        for name, maximum in (("steps", 12), ("calls", 16), ("seconds", 300), ("request_seconds", 120)):
+        # 600 s matches NFR06 (assessment and verification within 10 minutes); one local request may need 240 s
+        # on laptop-class hardware when switching agents evicts the model's prompt cache.
+        for name, maximum in (("steps", 12), ("calls", 16), ("seconds", 600), ("request_seconds", 240)):
             value = getattr(self, name)
             if type(value) is not int or not 1 <= value <= maximum:
                 raise ValueError("Investigation limits must be positive bounded integers")
@@ -92,7 +94,7 @@ class Coordinator:
             "The fixed assessment and scores are already saved; do not replace them.")
         messages = [{"role": "system", "content": getattr(self.tools, "system_prompt", SYSTEM)},
                     {"role": "user", "content": getattr(self.tools, 'initial_message', initial)}]
-        seen, call_count, invalid_count = set(), 0, 0
+        seen, call_count, invalid_count, nudged = set(), 0, 0, False
         status, summary = "Step limit reached", "Investigation stopped at its step limit."
         for step in range(self.limits.steps):
             remaining = self.limits.seconds - (self.clock() - started)
@@ -112,6 +114,15 @@ class Coordinator:
             except Exception as error:
                 status, summary = "Unavailable", f"Model investigation unavailable ({type(error).__name__}); deterministic assessment remains usable."
                 break
+            if not calls and getattr(self.tools, 'nudge', False) and self.tools.terminal_outcome is None and not nudged:
+                # An agent that still owes a structured decision gets one reminder (real qwen3:8b sometimes answered
+                # with nothing at all). The reply text is discarded, as during tool selection.
+                nudged = True
+                names = [s['function']['name'] for s in self.tools.schemas()]
+                self.log.append(run_id, "nudge", {"available": names})
+                messages.append({"role": "user", "content": "Answer with exactly one tool call. Valid now: "
+                                 + ", ".join(names) + "."})
+                continue
             if not calls:
                 status = "Completed" if call_count else "No tool evidence"
                 summary = re.sub(r"<think>.*?(?:</think>|$)", "", content, flags=re.S).strip()[:2000]
@@ -136,7 +147,8 @@ class Coordinator:
                     if type(name) is not str or len(name) > 80:
                         raise ValueError("Invalid tool name")
                     signature = json.dumps([name, arguments], sort_keys=True, allow_nan=False)
-                    if signature in seen:
+                    # Tools may declare calls that are legitimately repeated; their own guards bound them.
+                    if signature in seen and name not in getattr(self.tools, 'repeatable', ()):
                         status, summary, stop = "Repeated call blocked", "An identical tool call was blocked; no repeat was executed.", True
                         break
                     seen.add(signature)

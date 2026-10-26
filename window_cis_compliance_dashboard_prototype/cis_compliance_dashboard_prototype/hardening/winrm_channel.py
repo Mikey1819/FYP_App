@@ -9,6 +9,7 @@ import hashlib
 import json
 from uuid import uuid4
 
+from .evidence_import import load_evidence
 from .scan_exchange import COLLECTOR
 
 DEFAULT_HOST, DEFAULT_PORT = '127.0.0.1', 55985
@@ -134,17 +135,28 @@ class LiveScanner:
     def collector_text():
         return COLLECTOR.read_text(encoding='utf-8-sig')
 
-    def request(self, hostname, machine_uuid, *, origin_run_id=None):
-        """Collect now and return a new assessed framework run. Raises ChannelError."""
-        self._same_target(hostname, machine_uuid)
+    def _collect(self):
         self.identity()
-        script = self.collector_text()
-        collector_sha256 = hashlib.sha256(COLLECTOR.read_bytes()).hexdigest()
-        output, had_errors, errors = self._run(script, {'ExpectedComputerName': self.target.hostname,
-                                                        'EmitJson': True})
+        output, had_errors, errors = self._run(self.collector_text(), {'ExpectedComputerName': self.target.hostname,
+                                                                       'EmitJson': True})
         if had_errors or len(output) != 1:
             detail = (errors[0] if errors else 'Collector returned no evidence.')[:300]
             raise ChannelError('collection_failed', detail)
+        return output[0]
+
+    def observe(self):
+        """Read-only collection that is evaluated but not stored (Remediation Agent precheck)."""
+        try:
+            return load_evidence(self._collect().encode('utf-8'), expected_hostname=self.target.hostname,
+                                 expected_machine_uuid=self.target.machine_uuid)
+        except ValueError as exc:
+            raise ChannelError('collection_failed', 'Evidence failed validation: ' + str(exc)[:200]) from None
+
+    def request(self, hostname, machine_uuid, *, origin_run_id=None):
+        """Collect now and return a new assessed framework run. Raises ChannelError."""
+        self._same_target(hostname, machine_uuid)
+        collector_sha256 = hashlib.sha256(COLLECTOR.read_bytes()).hexdigest()
+        output = [self._collect()]
         request_id = uuid4().hex
         run = self.runtime.start(output[0].encode('utf-8'), expected_hostname=self.target.hostname,
                                  expected_machine_uuid=self.target.machine_uuid, collection_request_id=request_id)

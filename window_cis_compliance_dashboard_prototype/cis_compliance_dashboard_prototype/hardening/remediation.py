@@ -1,8 +1,9 @@
-"""Proposal/approval records and the Remediation Agent (report Section 4.6.3).
+"""Proposal/approval records and the approved-action executor (report Section 4.6.3).
 
 The Orchestrator proposes a library action; the administrator approves or rejects
-it here; the Remediation Agent executes only an approved request, once, over the
-Scanner's WinRM channel, then verifies with the same collector and rule.
+it here. ApprovedActionExecutor is the Remediation Agent's execute tool: it runs only
+an approved request, once, over the Scanner's WinRM channel, then verifies with the
+same collector and rule.
 """
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -216,9 +217,8 @@ class RemediationStore:
         return verdict
 
 
-class RemediationAgent:
+class ApprovedActionExecutor:
     """Executes one approved request per call. No self-approval, no generated commands, no retry."""
-    role = 'Remediation Agent'
 
     def __init__(self, store, scanner):
         self.store, self.scanner = store, scanner
