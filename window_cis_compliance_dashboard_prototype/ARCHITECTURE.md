@@ -69,9 +69,11 @@ Defined in two places that must agree. The Python metadata is [action_library.py
 | REM-2.3.1.1 | Disable Guest (SID RID 501) | `Disable-LocalUser -SID` |
 | REM-2.3.1.2, REM-2.3.10.2, REM-2.3.10.3 | LSA DWORDs = 1 | 64-bit registry `SetValue` |
 | REM-17.1.1, 17.2.2, 17.2.3, 17.5.1, 17.5.4 | Advanced audit subcategories | `auditpol /set /subcategory:{GUID}` that only *enables* the required Success/Failure flags |
-| REM-18.10.57.2.2, 3.9.1, 3.9.3, 3.9.5 | RDP policy values | 64-bit registry `CreateSubKey` + `SetValue` under `Policies\…\Terminal Services` |
+| REM-18.10.57.2.2, 3.9.1, 3.9.3, 3.9.4 (NLA), 3.9.5 | RDP policy values (also fixes a "Not configured" policy) | 64-bit registry `CreateSubKey` + `SetValue` under `Policies\…\Terminal Services` |
 
-That makes 20 actions for 32 assessed controls. These are assessment-only, with no action: `1.1.5` and `1.1.7` (need `secedit /configure`), `2.3.10.1`, NLA, and all **firewall policy** controls. Firewall policy writes could cut the agent's own WinRM channel, so they wait for a channel-safety precheck. Unconfigured policies are Unknown and get no action until decision D5.
+That makes 21 actions for 32 assessed controls. These are assessment-only, with no action: `1.1.5` and `1.1.7` (need `secedit /configure`), `2.3.10.1`, and all **firewall policy** controls. Firewall policy writes could cut the agent's own WinRM channel, so they wait for a channel-safety precheck.
+
+**Decision D5, "Not configured" policy.** An absent firewall or RDP Group Policy value is Non-Compliant (`Control.not_configured_fails`). For a library action, the approved precondition is then `null` ("still not configured"). The VM runner accepts `null` only for registry actions, and refuses to write unless the value is still absent. Other absent values stay Unknown.
 
 ## Remediation guarantees
 

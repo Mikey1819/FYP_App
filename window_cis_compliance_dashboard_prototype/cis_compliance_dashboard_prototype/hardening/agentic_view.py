@@ -16,6 +16,13 @@ SESSION = 'agentic_session'
 LEVEL_ICON = {'Critical': '🟥', 'High': '🟧', 'Moderate': '🟨', 'Low': '🟩'}
 
 
+def shown(value, status):
+    """Display value; an absent policy that fails (decision D5) reads as Not configured."""
+    if value is None:
+        return 'Not configured' if status == 'Non-Compliant' else '—'
+    return repr(value)
+
+
 def _services(database_path, target):
     imports = ImportedEvidenceStore(database_path)
     runtime = AssessmentOrchestrator(imports)
@@ -57,7 +64,7 @@ def _show_timeline(hardening, assessment_round):
 def _show_assessment(runtime, run_id):
     record = runtime.imports.get(runtime.get(run_id).evidence_sha256)
     rows = [{'Control': r.control.control_id, 'Title': r.control.title, 'Area': r.control.area,
-             'Status': r.status.value, 'Observed': repr(r.evidence.value) if r.evidence.value is not None else '—'}
+             'Status': r.status.value, 'Observed': shown(r.evidence.value, r.status.value)}
             for r in record.assessment.results]
     counts = {s: sum(r['Status'] == s for r in rows) for s in ('Compliant', 'Non-Compliant', 'Unknown', 'Error')}
     cols = st.columns(4)
@@ -77,7 +84,7 @@ def _show_risk(analysis, round_id):
         with st.container(border=True):
             left, right = st.columns([3, 1])
             left.markdown(f"**{finding['control_id']} · {finding['title']}**  \n"
-                          f"Observed `{finding['observed']!r}` · required {finding['rule']}")
+                          f"Observed `{shown(finding['observed'], 'Non-Compliant')}` · required {finding['rule']}")
             right.markdown(f"{LEVEL_ICON[finding['level']]} **{finding['score']}** {finding['level']}  \nPriority {finding['priority']}")
             st.caption(f"I={f['I']} E={f['E']} P={f['P']} L={f['L']} D={f['D']} → "
                        f"6×{f['I']} + 5×{f['E']} + 4×{f['P']} + 3×{f['L']} + 2×{f['D']} = {finding['score']}")
@@ -116,7 +123,7 @@ def _show_proposals(store, run_id, round_id):
         action = LIBRARY[p['action_id']]
         with st.container(border=True):
             st.markdown(f"**#{p['rank']} · {p['control_id']} → {action.title}**  (`{p['action_id']}`, risk {p['risk_score']})")
-            st.caption('Change: ' + repr(p['expected_before']) + ' → ' + repr(p['value']) + '. Impact: ' + action.impact)
+            st.caption('Change: ' + shown(p['expected_before'], 'Non-Compliant') + ' → ' + repr(p['value']) + '. Impact: ' + action.impact)
             st.caption('Orchestrator’s reason (a fixed reason code it chose, checked against the analysis):')
             st.text(p['reason'])
             if record['verdict']:

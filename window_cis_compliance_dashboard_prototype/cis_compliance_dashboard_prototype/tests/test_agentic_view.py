@@ -51,7 +51,8 @@ class AgenticPageTests(unittest.TestCase):
                 dict(control_id='1.2.2', action_id='REM-1.2.2', reason_code='high_risk'),
                 dict(control_id='1.1.1', action_id='REM-1.1.1', reason_code='low_impact')],
                 skipped=[dict(control_id='2.3.10.3', reason_code='needs_review'),
-                         dict(control_id='1.1.3', reason_code='lower_priority')])]
+                         dict(control_id='1.1.3', reason_code='lower_priority'),
+                         dict(control_id='18.10.57.3.9.4', reason_code='needs_review')])]
 
     def test_round_approval_execution_and_verification_through_the_page(self):
         app = AppTest.from_file(str(APP), default_timeout=60)

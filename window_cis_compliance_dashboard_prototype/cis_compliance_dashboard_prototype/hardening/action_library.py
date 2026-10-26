@@ -21,9 +21,12 @@ class LibraryAction:
     requires_compliant: tuple[str, ...] = ()
 
     def eligible(self, result: AssessmentResult) -> bool:
+        observed = result.evidence.value
+        # A "Not configured" policy (value absent, decision D5) may be set; any other absent value may not.
+        typed = (observed is None and result.control.not_configured_fails) or type(observed) is type(self.target_value)
         return (result.control.control_id == self.control_id
                 and result.status == Status.NON_COMPLIANT
-                and type(result.evidence.value) is type(self.target_value)
+                and typed
                 and result.control.rule.matches(self.target_value))
 
     def blocked_by(self, results) -> list[str]:
@@ -71,6 +74,8 @@ LIBRARY = MappingProxyType({a.action_id: a for a in (
                   _RDP + 'Users must type their password at every RDP connection.'),
     LibraryAction('REM-18.10.57.3.9.3', '18.10.57.3.9.3', 'RDP: require SSL (TLS) security layer', 2,
                   _RDP + 'Clients that cannot negotiate TLS can no longer connect.'),
+    LibraryAction('REM-18.10.57.3.9.4', '18.10.57.3.9.4', 'RDP: require Network Level Authentication', 1,
+                  _RDP + 'RDP clients must authenticate before a session is created; very old clients cannot connect.'),
     LibraryAction('REM-18.10.57.3.9.5', '18.10.57.3.9.5', 'RDP: High client connection encryption', 3,
                   _RDP + 'Clients that cannot use 128-bit encryption can no longer connect.'),
 )})

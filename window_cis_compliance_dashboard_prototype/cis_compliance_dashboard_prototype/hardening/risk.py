@@ -178,7 +178,18 @@ def effective_context(raw):
     return {r['control_id']: r['value'] for r in rows if isinstance(r, dict) and r.get('state') == 'ok'}
 
 
-def exposure(surface, context):
+# Policy controls whose protection the collector also reads as *effective* local state. When the policy is
+# absent but the protection is effectively on, the weakness is not currently reachable: E = 1 (Table 4.14b,
+# "minimal exposure"). The finding stays Non-Compliant because CIS requires the policy itself.
+EFFECTIVE_PROTECTION = {'9.3.1': ('firewall_public_enabled', True, 'Public firewall is effectively enabled'),
+                        '18.10.57.3.9.4': ('nla_required', 1, 'NLA is effectively required on RDP-Tcp')}
+
+
+def exposure(surface, context, control_id=None, observed=0):
+    effective = EFFECTIVE_PROTECTION.get(control_id)
+    if effective and observed is None and context.get(effective[0]) == effective[1]:
+        return 1, (f'{effective[2]} by local setting although the policy is not configured: minimal exposure (E=1). '
+                   'The policy is still required, so a local change could silently remove the protection.')
     score = SURFACE_EXPOSURE[surface]
     reason = f'Surface {surface}: base exposure {score}.'
     if surface in FIREWALL_SENSITIVE and context.get('firewall_public_enabled') is False:
@@ -208,7 +219,7 @@ def analyse(record, previous_records=()):
         if result.control.control_id not in ATTRIBUTES:
             continue  # No recorded attributes: never invent a score.
         derivation = derive(result.control.control_id)
-        e, e_reason = exposure(derivation.surface, context)
+        e, e_reason = exposure(derivation.surface, context, result.control.control_id, result.evidence.value)
         previous = next((p for older in previous_records for p in older.assessment.results
                          if comparable(p, result)), None)
         d = drift_factor(result, previous)

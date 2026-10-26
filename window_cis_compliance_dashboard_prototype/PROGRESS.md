@@ -24,6 +24,8 @@ Full run-by-run history up to 26 October 2026: [docs/archive/PROGRESS_LOG_2026-1
 - **Control expansion** to 32 (firewall Private/Public policy, 5 audit subcategories via `auditpol /backup` numeric values with new `has_flags` rule, 4 RDP policies); 9 new library actions (audit enable-only, RDP policy). Firewall policy actions deliberately excluded (channel safety). Extraction script [scripts/extract_benchmark_audit.py](scripts/extract_benchmark_audit.py).
 - Checks: Python suite **214 passed**; PowerShell `test_collector_helpers` (now with audit parsing), `test_scan_worker`, `test_vm_runner`, `test_remediation_runner` all PASS; real-model probe passed as above. All against fixtures or the simulated VM.
 
+- **Decision D5** (user, 26 Oct): absent firewall/RDP Group Policy values are Non-Compliant (CIS audit semantics); other absent values stay Unknown; Error stays Error. New action REM-18.10.57.3.9.4 (NLA policy, 21 actions); runner accepts a `null` ("still not configured") precondition for registry actions only. Risk: when the collected effective state shows the protection on (Public firewall, NLA), E = 1 instead of the surface value, so a merely unenforced policy is not ranked Critical (lab state: 9.3.1 = 65, NLA = 59). Expected effect on the lab VM: about 11 former Unknowns become scored findings. Checks: **226 passed** (incl. 3 D5 tests); `test_remediation_runner.ps1` PASS with null-precondition guards.
+
 ## Still stale
 
 - FRAMEWORK_RUNTIME, ADAPTIVE_INVESTIGATION, AGENT_TEAM, VM_BRIDGE, SCANNER_CONNECTION, VM_EVIDENCE describe the legacy page only. REPORT_REQUIREMENTS_AND_COVERAGE's 36-row status column predates schema 5; BENCHMARK_MAPPING is authoritative for control status.
@@ -32,6 +34,6 @@ Full run-by-run history up to 26 October 2026: [docs/archive/PROGRESS_LOG_2026-1
 
 1. **User (at home):** VirtualBox snapshot, then one agentic round on the real VM; check the 5 audit controls read real values (not Unknown) — confirms the `auditpol /backup` `Setting Value` assumption; approve one fix, execute, confirm verification. Record outcome here.
 2. **User review of risk attributes:** check each control's consequence category and privilege scope in [RISK_DERIVATION.md](RISK_DERIVATION.md) against the benchmark rationale; update the report's Section 4.6.2 examples (62/70 become 69/77) and state the constant-L limitation. Regenerate the doc after any change with `scripts/generate_risk_derivation.py`.
-3. Decide D5 (Unknown = not configured): e.g. treat unconfigured policy as non-compliant per CIS and enable RDP/firewall policy actions, with a channel-safety precheck for firewall.
+3. Firewall policy actions: design a channel-safety precheck (e.g. confirm a WinRM allow rule survives) before adding them to the library.
 4. Independent manual comparison of the 16 new controls in the VM (gpedit/auditpol).
 5. Retire legacy orchestration paths once the agentic page covers their evaluation evidence.

@@ -97,7 +97,7 @@ Schema 5 uses `cis-server2022-standalone-2.0.0-full1` and collector `server2022-
 
 **Audit values.** The collector runs `auditpol /backup` (read-only) and reads the numeric `Setting Value` column: 0 = none, 1 = Success, 2 = Failure, 3 = both. Unlike the "Inclusion Setting" text, this value doesn't depend on the OS language. It is assessed with a new `has_flags` rule, so CIS "include Success" passes both Success and Success-and-Failure. *Unverified assumption:* that the VM's backup CSV has the `Setting Value` column (the standard GPO `audit.csv` format). If it doesn't, the five audit controls report Unknown, never a false Compliant. The first live scan will confirm.
 
-**Not configured.** A missing policy value is reported as Unknown (decision D5 pending). It is not a pass, and it is not inferred from effective firewall/RDP state.
+**Not configured (decision D5, 26 Oct).** Each firewall and RDP recommendation's audit step names a value under `HKLM\SOFTWARE\Policies` that must be set. A missing value ("Not configured") therefore fails the recommendation and is assessed as **Non-Compliant**. This also applies to the original 9.3.1 and NLA checks; earlier documents described them as Unknown. The collected *effective* firewall/NLA state never turns a failing policy into a pass. It only lowers the risk Exposure factor (see RISK_DERIVATION.md). Missing non-policy values remain Unknown.
 
 ### Where the report's Table 3.2 IDs differ from this edition
 

@@ -35,7 +35,7 @@ The report formula is `R = 6I + 5E + 4P + 3L + 2D` (Section 4.6.2.4). No factor 
 | Level 2 | Automated | 3 |
 | Level 2 | Manual | 2 |
 
-**Exposure (E).** Base value from the exposure surface (Table 4.14b), plus 1 when the *collected* effective Public firewall state is disabled, for network-reachable surfaces. Surfaces: `network_logon` = 3, `network_anonymous` = 4, `network_boundary` = 4, `remote_desktop` = 4, `local_account` = 3, `local_secret` = 2, `detection` = 2.
+**Exposure (E).** Base value from the exposure surface (Table 4.14b), plus 1 when the *collected* effective Public firewall state is disabled, for network-reachable surfaces. Surfaces: `network_logon` = 3, `network_anonymous` = 4, `network_boundary` = 4, `remote_desktop` = 4, `local_account` = 3, `local_secret` = 2, `detection` = 2. Exception: for 9.3.1, 18.10.57.3.9.4, when the policy is Not configured but the collected effective local state shows the protection is on, E = 1 ("minimal exposure"). The finding stays Non-Compliant (decision D5) because CIS requires the policy itself.
 
 **Configuration State or Drift (D).** From the previous comparable assessment (Table 4.14e): 1 when there is none, 3 when the control was already non-compliant, 5 when it was compliant before (a regression).
 

@@ -34,7 +34,8 @@ class ContextTests(unittest.TestCase):
     def test_enabled_effective_state_does_not_rewrite_missing_policy(self):
         data = self.fixture()
         result = load(data)
-        self.assertEqual([r.status.value for r in result.results[3:]], ["Unknown", "Unknown"])
+        # Effective firewall/NLA being on does not satisfy the unconfigured policies (D5: Non-Compliant).
+        self.assertEqual([r.status.value for r in result.results[3:]], ["Non-Compliant", "Non-Compliant"])
         self.assertEqual(len(effective_context(encode(data))), 3)
         self.assertEqual(effective_context(encode(export_fixture())), [])
 

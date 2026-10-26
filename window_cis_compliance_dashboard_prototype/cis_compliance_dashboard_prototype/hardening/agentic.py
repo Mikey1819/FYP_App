@@ -41,7 +41,7 @@ PROMPTS = {
         'a plan is not approval: the administrator decides.',
     SCANNER: COMMON + 'You are the Scanner Agent. Call scan_target first to collect evidence from the VM over WinRM. '
         'Then call read_coverage. If any control is in Error state you may call rescan once: Error can be transient, '
-        'while Unknown means the setting is not configured and a rescan will not change it. You may inspect '
+        'while Unknown means no value is recorded (e.g. not applicable) and a rescan will not change it. You may inspect '
         'observations. Finish with handoff_analysis, or report_failure if scanning failed. You never change settings.',
 }
 GAP_HINTS = {
@@ -83,7 +83,7 @@ def gap_hint(result, results):
     lockout = next((r for r in results if r.control.control_id == '1.2.2'), None)
     if hint and lockout is not None and lockout.evidence.value == 0:
         return hint
-    return 'Setting not configured in local policy; no library action. Assessment-only: review manually.'
+    return 'No value recorded for this non-policy setting; Windows applies its default. Assessment-only: review manually.'
 
 
 class _RoleTools:

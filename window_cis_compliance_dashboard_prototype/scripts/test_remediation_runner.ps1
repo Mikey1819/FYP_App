@@ -41,6 +41,13 @@ if ($auditEntry.kind -ne 'audit_flags' -or $auditEntry.guid -ne '0cce9217-69ae-1
 $rdpEntry = Assert-RemediationRequest (New-Request @{ control_id = '18.10.57.3.9.3'; action_id = 'REM-18.10.57.3.9.3'; value = 2; expected_before = 1 }) 'WIN-LAB' 'e5d10741-f200-4292-a099-e6be76032f4e' $now
 if ($rdpEntry.key -ne 'SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services' -or $rdpEntry.name -ne 'SecurityLayer') { throw 'RDP action resolved incorrectly.' }
 Assert-Refused @{ control_id = '17.5.1'; action_id = 'REM-17.5.1'; value = 3; expected_before = 1 } 'audit value differs from library'
+$nla = Assert-RemediationRequest (New-Request @{ control_id = '18.10.57.3.9.4'; action_id = 'REM-18.10.57.3.9.4'; value = 1; expected_before = $null }) 'WIN-LAB' 'e5d10741-f200-4292-a099-e6be76032f4e' $now
+if ($nla.name -ne 'UserAuthentication') { throw 'Not-configured NLA policy request resolved incorrectly.' }
+Assert-Refused @{ expected_before = $null } 'not-configured precondition for a net accounts action'
+$missing = [pscustomobject]@{ observations = @([pscustomobject]@{ control_id = '18.10.57.3.9.4'; state = 'missing'; value = $null }) }
+$setTo0 = [pscustomobject]@{ observations = @([pscustomobject]@{ control_id = '18.10.57.3.9.4'; state = 'ok'; value = 0 }) }
+if (-not (Test-Precondition $missing '18.10.57.3.9.4' $null)) { throw 'Still not configured must satisfy a null precondition.' }
+if (Test-Precondition $setTo0 '18.10.57.3.9.4' $null) { throw 'A policy set since approval must fail a null precondition.' }
 if (Test-SameTypedValue 0 $false) { throw '0 must not equal $false.' }
 if (-not (Test-SameTypedValue 5 5)) { throw 'Equal integers must match.' }
 if (Test-SameTypedValue 5.0 5) { throw 'Floating-point values must not match integer settings.' }
