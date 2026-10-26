@@ -169,11 +169,22 @@ def summarise(results: tuple[AssessmentResult, ...]) -> AssessmentSummary:
 VALID_STATUSES = (Status.COMPLIANT, Status.NON_COMPLIANT)
 
 
+def same_measurement(a: Control, b: Control) -> bool:
+    """Same control, benchmark citation (edition, section, pages), profile and rule.
+
+    The catalogue version labels a catalogue's scope (5, 12, 16 or 32 controls); a control
+    whose source, profile and rule are unchanged is the same measurement in every scope.
+    """
+    return (a.control_id == b.control_id and a.rule == b.rule and a.profile == b.profile
+            and a.source_reference == b.source_reference)
+
+
 def comparable(previous: AssessmentResult | None, current: AssessmentResult) -> bool:
     return bool(
         previous is not None
         and previous.assessment_id != current.assessment_id
-        and previous.control == current.control
+        and same_measurement(previous.control, current.control)
+        and previous.evidence.source == current.evidence.source
         and previous.evidence.target_id == current.evidence.target_id
         and previous.evidence.mode == current.evidence.mode
         and previous.evidence.collected_at < current.evidence.collected_at

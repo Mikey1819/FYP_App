@@ -15,7 +15,8 @@ import time
 from uuid import uuid4
 
 from .action_library import actions_for
-from .domain import Status, change_kind, summarise
+from .domain import Status, summarise
+from .history import HistoryService
 from .investigation import Coordinator, InvestigationLog, Limits
 from .ollama_client import OllamaClient
 from .remediation import RemediationAgent
@@ -443,6 +444,7 @@ class AgenticHardening:
         self.seconds, self.deadline = seconds, None
         self.session_id = self.round_id = None
         self.children = {}
+        self.history = HistoryService(runtime, store)
 
     def remaining(self):
         return int(self.deadline - time.monotonic())
@@ -464,6 +466,8 @@ class AgenticHardening:
             steps=12, calls=16, seconds=self.seconds, request_seconds=120)).run()
         outcome = tools.terminal_outcome or dict(outcome='incomplete', proposals=list(tools.proposals),
             reason='The Orchestrator stopped without finishing the round: ' + result['events'][-1]['data']['summary'])
+        if tools.framework_run_id:
+            self.history.record_drift(tools.framework_run_id)
         self.store.add_round(self.session_id, 'assessment', tools.framework_run_id, round_id=self.round_id,
                              orchestrator_run_id=result['run_id'], children=dict(self.children), outcome=outcome)
         return dict(session_id=self.session_id, round_id=self.round_id, framework_run_id=tools.framework_run_id,
@@ -488,6 +492,7 @@ class AgenticHardening:
         try:
             scan = self.scanner.request(self.target.hostname, self.target.machine_uuid, origin_run_id=run_id)
             verification = scan['framework_run_id']
+            self.history.record_drift(verification)
         except ChannelError as exc:
             verdicts.append(dict(proposal_id=None, control_id=None, action_id=None,
                                  verdict='Verification scan unavailable: ' + exc.detail))
@@ -497,20 +502,7 @@ class AgenticHardening:
 
     def changes(self, before_run_id, after_run_id):
         """Per-control change between two runs (improvement, regression, unchanged...)."""
-        before = self.runtime.imports.get(self.runtime.get(before_run_id).evidence_sha256).assessment.results
-        after = self.runtime.imports.get(self.runtime.get(after_run_id).evidence_sha256).assessment.results
-        earlier = {r.control.control_id: r for r in before}
-        rows = []
-        for current in after:
-            prior = earlier.get(current.control.control_id)
-            change = change_kind(prior, current)
-            if change == 'No comparable evidence' and prior and prior.status != current.status:
-                change = prior.status.value + ' -> ' + current.status.value  # e.g. Unknown -> Compliant
-            rows.append(dict(control_id=current.control.control_id,
-                             before=prior.evidence.value if prior else None, after=current.evidence.value,
-                             status_before=prior.status.value if prior else None, status_after=current.status.value,
-                             change=change))
-        return rows
+        return self.history.compare(before_run_id, after_run_id)
 
     def traces(self, round_id):
         with self.store._connection() as db:

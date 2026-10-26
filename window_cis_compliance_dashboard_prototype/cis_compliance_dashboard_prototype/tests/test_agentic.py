@@ -246,9 +246,9 @@ class AgenticRoundTests(AgenticTestCase):
         trace = next(t for t in AgenticHardening.traces(hardening, result['round_id']) if t['agent_role'] == ORCHESTRATOR)
         analysis = next(e['data']['result'] for e in trace['events'] if e['data'].get('name') == 'delegate_analysis')
         self.assertEqual(set(analysis), {'agent', 'must_decide', 'no_action', 'gaps'})
-        self.assertEqual(analysis['must_decide'][0], dict(control_id='1.2.2', level='High', score=62, actions=['REM-1.2.2'],
+        self.assertEqual(analysis['must_decide'][0], dict(control_id='1.2.2', level='High', score=69, actions=['REM-1.2.2'],
             fix_codes=['high_risk', 'low_impact'], skip_codes=['needs_review', 'lower_priority']))
-        moderate = next(d for d in analysis['must_decide'] if d['control_id'] == '1.1.1')
+        moderate = next(d for d in analysis['must_decide'] if d['control_id'] == '1.1.3')
         self.assertEqual(moderate['fix_codes'], ['low_impact'])  # Only codes that are true for this finding.
 
 
@@ -257,7 +257,7 @@ class OrchestratorAccountabilityTests(AgenticTestCase):
         result = self.standard_round(FakeVm()).run_round()
         outcome = result['outcome']
         self.assertNotIn('model_commentary', outcome)
-        self.assertEqual(outcome['reason'], 'Proposed for your approval, in order: 1.2.2 (High 62), 1.1.1 (Moderate 56). '
+        self.assertEqual(outcome['reason'], 'Proposed for your approval, in order: 1.2.2 (High 69), 1.1.1 (High 63). '
                          'Deferred by the Orchestrator: 2.3.10.3, 1.1.3. 4 Unknown/Error gap(s) not scored. '
                          'Nothing has been approved or executed.')
         self.assertEqual([s['control_id'] for s in outcome['skipped']], ['2.3.10.3', '1.1.3'])
@@ -277,11 +277,11 @@ class OrchestratorAccountabilityTests(AgenticTestCase):
     def test_unaccounted_finding_and_reasons_that_contradict_facts_are_rejected(self):
         t = 'windows:' + target().machine_uuid
         hardening = self.hardening(FakeVm(), [call('delegate_scanner', t), call('delegate_analysis', t),
-            plan(t, fixes=[('1.1.1', 'REM-1.1.1', 'high_risk')], skipped=DEFER_ALL[:2] + DEFER_ALL[3:]),
+            plan(t, fixes=[('1.1.3', 'REM-1.1.3', 'high_risk')], skipped=DEFER_ALL[:3]),
             plan(t, fixes=[('1.2.2', 'REM-1.2.2', 'high_risk')], skipped=[('1.1.1', 'lower_priority')])])
         result = hardening.run_round()
         errors = self.rejected(hardening, result['round_id'])
-        self.assertEqual(errors[0], 'reason_code high_risk does not fit 1.1.1 (Moderate 56)')
+        self.assertEqual(errors[0], 'reason_code high_risk does not fit 1.1.3 (Moderate 57)')
         self.assertEqual(errors[1], 'Every must_decide finding needs a fix or a skip reason; missing: 2.3.10.3, 1.1.3')
         self.assertEqual(result['outcome']['outcome'], 'incomplete')  # Two invalid calls end the run unfinished.
         self.assertEqual(self.store.for_run(result['framework_run_id']), [])
@@ -385,16 +385,44 @@ class RiskEngineTests(AgenticTestCase):
     def test_scores_rank_and_skip_unknowns(self):
         ranked = {f.control_id: f for f in analyse(self.record(FakeVm()))}
         self.assertEqual(set(ranked), {'1.2.2', '1.1.1', '1.1.3', '2.3.10.3'})
-        self.assertEqual((ranked['1.2.2'].score, ranked['1.2.2'].level), (62, 'High'))  # Report example I4 E3 P3 L3 D1.
-        self.assertEqual([f.control_id for f in analyse(self.record(FakeVm()))], ['1.2.2', '2.3.10.3', '1.1.1', '1.1.3'])
+        # Derived: protection_weakened I4, all_local_accounts P4, Level 1 Automated L4; E3; D1.
+        self.assertEqual(ranked['1.2.2'].factors, dict(I=4, E=3, P=4, L=4, D=1))
+        self.assertEqual((ranked['1.2.2'].score, ranked['1.2.2'].level), (69, 'High'))
+        self.assertEqual([(f.control_id, f.score) for f in analyse(self.record(FakeVm()))],
+                         [('1.2.2', 69), ('1.1.1', 63), ('2.3.10.3', 60), ('1.1.3', 57)])
+        self.assertTrue(ranked['1.2.2'].factor_reasons['P'].startswith('all_local_accounts: applies to every local account'))
 
     def test_regression_drift_and_disabled_firewall_raise_scores(self):
         compliant = self.record(FakeVm(dict(LAB_STATE, **{'1.2.2': 5, '1.2.1': 15, '1.2.4': 15})))
         regressed = self.record(FakeVm())
         finding = next(f for f in analyse(regressed, [compliant]) if f.control_id == '1.2.2')
-        self.assertEqual((finding.factors['D'], finding.score), (5, 70))  # Report's confirmed-regression example.
+        self.assertEqual((finding.factors['D'], finding.score), (5, 77))  # Confirmed regression adds 2 x (5-1).
         exposed = next(f for f in analyse(self.record(FakeVm(firewall=False))) if f.control_id == '1.2.2')
-        self.assertEqual((exposed.factors['E'], exposed.score), (4, 67))
+        self.assertEqual((exposed.factors['E'], exposed.score), (4, 74))
+
+
+class RiskDerivationTests(unittest.TestCase):
+    def test_every_catalogue_control_has_attributes_and_no_hand_assigned_factor(self):
+        from hardening.risk import ATTRIBUTES, CONSEQUENCE, LIKELIHOOD, PRIVILEGE_SCOPE, derive
+        from hardening.server2022_catalogue import FULL_CATALOGUE
+        self.assertEqual({c.control_id for c in FULL_CATALOGUE}, set(ATTRIBUTES))
+        for control_id, attributes in ATTRIBUTES.items():
+            derivation = derive(control_id)
+            self.assertEqual(derivation.impact, CONSEQUENCE[attributes.consequence][0])
+            self.assertEqual(derivation.privilege, PRIVILEGE_SCOPE[attributes.privilege_scope][0])
+            self.assertEqual(derivation.likelihood, LIKELIHOOD[(attributes.level, attributes.automated)])
+            self.assertEqual(set(derivation.reasons), {'I', 'P', 'L'})
+
+    def test_likelihood_rule_and_its_documented_limitation(self):
+        from hardening.risk import ATTRIBUTES, LIKELIHOOD
+        self.assertEqual(LIKELIHOOD, {(1, True): 4, (1, False): 3, (2, True): 3, (2, False): 2})
+        # Every selected control is Level 1 and Automated, so L does not separate them (stated limitation).
+        self.assertEqual({(a.level, a.automated) for a in ATTRIBUTES.values()}, {(1, True)})
+
+    def test_logging_consequences_score_lower_than_authentication_weaknesses(self):
+        from hardening.risk import derive
+        self.assertLess(derive('17.1.1').impact, derive('1.2.2').impact)  # Table 4.15: logging visibility lower.
+        self.assertGreater(derive('2.3.10.1').privilege, derive('2.3.10.2').privilege)  # Admin identity vs anonymous.
 
 
 @unittest.skipUnless(shutil.which('powershell.exe'), 'Windows PowerShell required')

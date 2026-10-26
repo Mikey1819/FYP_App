@@ -79,7 +79,16 @@ def _show_risk(analysis, round_id):
             left.markdown(f"**{finding['control_id']} · {finding['title']}**  \n"
                           f"Observed `{finding['observed']!r}` · required {finding['rule']}")
             right.markdown(f"{LEVEL_ICON[finding['level']]} **{finding['score']}** {finding['level']}  \nPriority {finding['priority']}")
-            st.caption(f"I={f['I']} E={f['E']} P={f['P']} L={f['L']} D={f['D']} · {finding['exposure_reason']} {finding['drift_reason']}")
+            st.caption(f"I={f['I']} E={f['E']} P={f['P']} L={f['L']} D={f['D']} → "
+                       f"6×{f['I']} + 5×{f['E']} + 4×{f['P']} + 3×{f['L']} + 2×{f['D']} = {finding['score']}")
+            with st.expander('How this score was derived'):
+                reasons = finding.get('factor_reasons', {})
+                st.dataframe([{'Factor': 'I Security Impact', 'Value': f['I'], 'Rule': reasons.get('I', '')},
+                              {'Factor': 'E Exposure', 'Value': f['E'], 'Rule': finding['exposure_reason']},
+                              {'Factor': 'P Privilege Impact', 'Value': f['P'], 'Rule': reasons.get('P', '')},
+                              {'Factor': 'L Likelihood', 'Value': f['L'], 'Rule': reasons.get('L', '')},
+                              {'Factor': 'D Drift', 'Value': f['D'], 'Rule': finding['drift_reason']}], hide_index=True)
+                st.caption('Benchmark rationale (paraphrased): ' + finding['rationale'])
             key = 'agentic_explain_' + round_id + finding['control_id']
             if st.button('Explain with local AI', key=key + '_btn'):
                 with st.spinner('Asking local qwen3:8b for a plain-language explanation…'):
