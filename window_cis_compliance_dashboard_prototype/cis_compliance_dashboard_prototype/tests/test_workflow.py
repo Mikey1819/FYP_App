@@ -12,11 +12,11 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from window_cis_compliance_dashboard_prototype.cis_compliance_dashboard_prototype.hardening.demo import CURRENT_RESULTS
-from window_cis_compliance_dashboard_prototype.cis_compliance_dashboard_prototype.hardening.demo_storage import load_demo
-from window_cis_compliance_dashboard_prototype.cis_compliance_dashboard_prototype.hardening.domain import EvidenceMode, Status
-from window_cis_compliance_dashboard_prototype.cis_compliance_dashboard_prototype.hardening.storage import AssessmentStore, _decode_result
-from window_cis_compliance_dashboard_prototype.cis_compliance_dashboard_prototype.hardening.workflow import WorkflowStore, NlaSimulator
+from hardening.demo import CURRENT_RESULTS
+from hardening.demo_storage import load_demo
+from hardening.domain import EvidenceMode, Status
+from hardening.storage import AssessmentStore, _decode_result
+from hardening.workflow import WorkflowStore, NlaSimulator
 
 
 class WorkflowTests(unittest.TestCase):

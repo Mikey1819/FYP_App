@@ -2,8 +2,8 @@ import unittest
 from dataclasses import FrozenInstanceError, replace
 from datetime import timedelta
 
-from window_cis_compliance_dashboard_prototype.cis_compliance_dashboard_prototype.hardening.demo import CATALOGUE, CURRENT_RESULTS, PREVIOUS_RESULTS, RISKS
-from window_cis_compliance_dashboard_prototype.cis_compliance_dashboard_prototype.hardening.domain import (
+from hardening.demo import CATALOGUE, CURRENT_RESULTS, PREVIOUS_RESULTS, RISKS
+from hardening.domain import (
     EvidenceMode, Operator, RiskFactors, Rule, Status, assess, change_kind,
     comparable, drift_factor, prioritise, risk_level, summarise,
 )

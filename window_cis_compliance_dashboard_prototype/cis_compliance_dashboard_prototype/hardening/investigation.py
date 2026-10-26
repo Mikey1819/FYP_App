@@ -44,7 +44,14 @@ class InvestigationLog:
         run_id = uuid.uuid4().hex
         payload = {"assessment_id": tools.assessment_id, "target_id": tools.target_id,
                    "scenario": tools.scenario, "model": client.model, "provenance": client.provenance,
-                   "evidence_mode": "Synthetic", "limits": asdict(limits)}
+                   "evidence_mode": getattr(tools, "evidence_mode", "Synthetic"), "limits": asdict(limits)}
+        if getattr(tools, 'framework_run_id', None) is not None:
+            payload['framework_run_id'] = tools.framework_run_id
+        if hasattr(tools, 'context'):
+            payload['operational_context'] = tools.context
+        for key in ('agent_role', 'team_id', 'handoff'):
+            if hasattr(tools, key):
+                payload[key] = getattr(tools, key)
         with self.store._connection() as connection:
             connection.execute("INSERT INTO investigation_runs VALUES (?, ?, ?, ?)",
                                (run_id, tools.assessment_id, _now(), json.dumps(payload)))
@@ -80,10 +87,11 @@ class Coordinator:
     def run(self):
         started = self.clock()
         run_id = self.log.start(self.tools, self.client, self.limits)
-        messages = [{"role": "system", "content": SYSTEM}, {"role": "user", "content":
-            f"Investigate DEMO-NLA on target {self.tools.target_id}, assessment {self.tools.assessment_id}. "
+        initial = (f"Investigate {getattr(self.tools, 'focus_control', 'DEMO-NLA')} on target {self.tools.target_id}, assessment {self.tools.assessment_id}. "
             "Use evidence to decide whether to prepare a supported proposal or request operational review. "
-            "The fixed assessment and scores are already saved; do not replace them."}]
+            "The fixed assessment and scores are already saved; do not replace them.")
+        messages = [{"role": "system", "content": getattr(self.tools, "system_prompt", SYSTEM)},
+                    {"role": "user", "content": getattr(self.tools, 'initial_message', initial)}]
         seen, call_count, invalid_count = set(), 0, 0
         status, summary = "Step limit reached", "Investigation stopped at its step limit."
         for step in range(self.limits.steps):
@@ -139,12 +147,20 @@ class Coordinator:
                     output = {"error": str(error)[:200]}
                     self.log.append(run_id, "tool_rejected", {"name": str(name)[:80], "error": output["error"]})
                 messages.append({"role": "tool", "tool_name": str(name)[:80], "content": json.dumps(output)})
+                terminal = getattr(self.tools, 'terminal_outcome', None)
+                if terminal is not None:
+                    status, summary, stop = 'Completed', terminal['reason'], True
+                    break
                 if invalid_count >= 2:
                     status, summary, stop = "Invalid calls blocked", "Investigation stopped after two invalid tool calls.", True
                     break
             if stop:
                 break
+        terminal = getattr(self.tools, 'terminal_outcome', None)
+        if hasattr(self.tools, 'terminal_outcome') and terminal is None and status == 'Completed':
+            status = 'No structured decision'
         self.log.append(run_id, "finished", {"status": status, "summary": summary,
                          "duration_seconds": round(self.clock() - started, 3), "tool_calls": call_count,
-                         "proposal_id": self.tools.proposal_id})
+                         "proposal_id": self.tools.proposal_id,
+                         "outcome": terminal})
         return self.log.get(run_id)

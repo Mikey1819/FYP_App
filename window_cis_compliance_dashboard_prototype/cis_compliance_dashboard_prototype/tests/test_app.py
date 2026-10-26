@@ -9,14 +9,14 @@ import unittest
 from unittest.mock import patch
 
 from streamlit.testing.v1 import AppTest
-from window_cis_compliance_dashboard_prototype.cis_compliance_dashboard_prototype.hardening.demo_storage import load_demo
-from window_cis_compliance_dashboard_prototype.cis_compliance_dashboard_prototype.hardening.storage import AssessmentStore
-from window_cis_compliance_dashboard_prototype.cis_compliance_dashboard_prototype.hardening.workflow import WorkflowStore
-from window_cis_compliance_dashboard_prototype.cis_compliance_dashboard_prototype.hardening.ollama_client import OllamaClient
-from window_cis_compliance_dashboard_prototype.cis_compliance_dashboard_prototype.hardening.investigation import InvestigationLog
+from hardening.demo_storage import load_demo
+from hardening.storage import AssessmentStore
+from hardening.workflow import WorkflowStore
+from hardening.ollama_client import OllamaClient
+from hardening.investigation import InvestigationLog
 
 
-APP = Path(__file__).resolve().parents[1] / "app.py"
+APP = Path(__file__).resolve().parents[1] / "synthetic_demo_app.py"
 
 
 class DashboardTests(unittest.TestCase):

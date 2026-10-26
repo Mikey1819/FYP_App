@@ -9,11 +9,16 @@ class OllamaClient:
     model = "qwen3:8b"
     provenance = "Local Ollama"
 
+    def __init__(self, num_predict=384):
+        if type(num_predict) is not int or not 64 <= num_predict <= 2048:
+            raise ValueError("num_predict must be between 64 and 2048 tokens")
+        self.num_predict = num_predict
+
     def chat(self, messages, tools, *, timeout):
         deadline = time.monotonic() + timeout
         payload = json.dumps({"model": self.model, "messages": messages, "tools": tools,
                               "stream": False, "think": False, "keep_alive": "5m",
-                              "options": {"temperature": 0, "num_predict": 384, "num_ctx": 4096}}).encode()
+                              "options": {"temperature": 0, "num_predict": self.num_predict, "num_ctx": 4096}}).encode()
         connection = http.client.HTTPConnection("127.0.0.1", 11434, timeout=timeout)
         try:
             connection.connect()
