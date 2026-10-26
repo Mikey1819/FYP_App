@@ -1,5 +1,7 @@
 # F2: operational-context investigation
 
+> **Archived 26 October 2026.** Describes the legacy **Evidence upload** page (manual file exchange and the earlier agent team), not the current agentic framework. Current design: [ARCHITECTURE.md](../../../ARCHITECTURE.md); current status: [PROGRESS.md](../../../PROGRESS.md).
+
 This implementation adds bounded, evidence-dependent decisions for the existing imported minimum-password-length finding. It does not expand the five-control catalogue, add a new executable action, or complete the full multi-role adaptive orchestrator. [FRAMEWORK_RUNTIME.md](FRAMEWORK_RUNTIME.md) describes the underlying assessment and approval lifecycle.
 
 ## Operational context and authority
@@ -56,7 +58,7 @@ Each investigator holds a snapshot of its context. The callback rechecks its ID 
 
 ## Reproducible evaluation
 
-[probe_adaptive_vm.py](scripts/probe_adaptive_vm.py) runs the actual installed local `qwen3:8b` against labelled synthetic fixtures conforming to the imported-evidence schema. It never approves or executes a proposal. Every invocation creates an isolated folder under application `data/adaptive_probes/` containing databases, per-run public traces and `summary.json`.
+[probe_adaptive_vm.py](../../../scripts/probe_adaptive_vm.py) runs the actual installed local `qwen3:8b` against labelled synthetic fixtures conforming to the imported-evidence schema. It never approves or executes a proposal. Every invocation creates an isolated folder under application `data/adaptive_probes/` containing databases, per-run public traces and `summary.json`.
 
 From the Windows project directory:
 
@@ -66,7 +68,7 @@ From the Windows project directory:
 
 The probe records tool path, rejected calls, structured outcome, duration, framework/model run IDs and comparison with a simple fixed-rule outcome baseline. That baseline is explicitly deterministic; it is not an independent accuracy assessment or proof the model adds value. A single run per scenario demonstrates an example only, not reliability, performance superiority or live VM safety. Repeat evaluations, unsupported-claim review, human review burden and broader scenarios remain required for E03/F2 completion.
 
-Automated [boundary tests](cis_compliance_dashboard_prototype/tests/test_vm_adaptive.py) use fixtures and scripted clients. They cover structured branching, optional lookups, unknown/incompatible/missing/compliant refusal, context revision and freeze, instruction-like notes, terminal batch stopping and unstructured prose. Those tests are distinct from actual model evidence. Dashboard tests cover context entry, disabled proposals and reset isolation.
+Automated [boundary tests](../../../cis_compliance_dashboard_prototype/tests/test_vm_adaptive.py) use fixtures and scripted clients. They cover structured branching, optional lookups, unknown/incompatible/missing/compliant refusal, context revision and freeze, instruction-like notes, terminal batch stopping and unstructured prose. Those tests are distinct from actual model evidence. Dashboard tests cover context entry, disabled proposals and reset isolation.
 
 ## Actual local-model results
 
@@ -84,9 +86,9 @@ The unknown path read the finding, context, reference and supported action, then
 
 The reasons cite facts supplied by the fixtures. They do not establish real provisioning compatibility or independent VM ground truth. All three final outcomes match the documented fixed-rule comparator; this does not demonstrate superiority over that comparator. Timing includes the observed model/runtime conditions and was not a controlled warm/cold benchmark. One sample per context is insufficient for a reliability claim.
 
-Local evidence is preserved in [summary.json](cis_compliance_dashboard_prototype/data/adaptive_probes/1e9948a2acdf4a78a83664ae4a31f88a/summary.json) and the neighbouring run-ID JSON files and databases. These files are under ignored `data/`; they must be copied separately if exporting the evaluation evidence. The runner script and this summary remain reproducible source documentation.
+Local evidence is preserved in [summary.json](../../../cis_compliance_dashboard_prototype/data/adaptive_probes/1e9948a2acdf4a78a83664ae4a31f88a/summary.json) and the neighbouring run-ID JSON files and databases. These files are under ignored `data/`; they must be copied separately if exporting the evaluation evidence. The runner script and this summary remain reproducible source documentation.
 
-Automated validation: the full suite passed **128 tests in 36.447 seconds** before the last display-only additions. Final dashboard validation and handoff are recorded in [PROGRESS.md](PROGRESS.md). These include scripted scenarios for compliant/missing evidence; those scenarios have not yet received real-model validation.
+Automated validation: the full suite passed **128 tests in 36.447 seconds** before the last display-only additions. Final dashboard validation and handoff are recorded in [PROGRESS.md](../../../PROGRESS.md). These include scripted scenarios for compliant/missing evidence; those scenarios have not yet received real-model validation.
 
 ## Remaining evaluation
 

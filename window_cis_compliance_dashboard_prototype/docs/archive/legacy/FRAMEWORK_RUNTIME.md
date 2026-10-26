@@ -1,6 +1,8 @@
 # Imported-assessment framework foundation
 
-Implementation status: 23 October 2026, Asia/Kuala_Lumpur (UTC+08:00). F1 now includes the assessment runtime and a durable service linking each run to exact proposals, decisions and returned verification. The full adaptive AI orchestrator remains unfinished. See [the framework plan](REPORT_ALIGNMENT_AND_FRAMEWORK_PLAN.md) for the final target and [progress](PROGRESS.md) for exact validation results.
+> **Archived 26 October 2026.** Describes the legacy **Evidence upload** page (manual file exchange and the earlier agent team), not the current agentic framework. Current design: [ARCHITECTURE.md](../../../ARCHITECTURE.md); current status: [PROGRESS.md](../../../PROGRESS.md).
+
+Implementation status: 23 October 2026, Asia/Kuala_Lumpur (UTC+08:00). F1 now includes the assessment runtime and a durable service linking each run to exact proposals, decisions and returned verification. The full adaptive AI orchestrator remains unfinished. See [the framework plan](../../../REPORT_ALIGNMENT_AND_FRAMEWORK_PLAN.md) for the final target and [progress](../../../PROGRESS.md) for exact validation results.
 
 ## Delivered behaviour
 
@@ -58,7 +60,7 @@ Concurrent callers serialize through `BEGIN IMMEDIATE`. A failed read-only stage
 
 ## Remediation lifecycle service
 
-[RemediationLifecycle](cis_compliance_dashboard_prototype/hardening/lifecycle.py) uses the existing framework and bridge stores without importing Streamlit or the model client. Instantiate it with stores pointing to the same imported-evidence database:
+[RemediationLifecycle](../../../cis_compliance_dashboard_prototype/hardening/lifecycle.py) uses the existing framework and bridge stores without importing Streamlit or the model client. Instantiate it with stores pointing to the same imported-evidence database:
 
 ```python
 from hardening.framework import AssessmentOrchestrator
@@ -98,9 +100,9 @@ The bounded investigator receives a trusted proposal callback from `investigatio
 
 ## Validation and requirement evidence
 
-- [Framework tests](cis_compliance_dashboard_prototype/tests/test_framework.py): process restart and CLI reuse, concurrent advance/dispatch, invalid identity and altered/stale messages, coverage outcomes, failed-stage rollback, eligibility boundaries, immutable records and additive storage guards.
-- [Dashboard tests](cis_compliance_dashboard_prototype/tests/test_import_view.py): current upload creates three persisted stages, unrelated run blocks solution review, blank restart, two test cycles, exact approval and rejection of the previous receipt.
-- [Lifecycle tests](cis_compliance_dashboard_prototype/tests/test_lifecycle.py): atomic/concurrent proposal linkage, cross-run rejection with identical evidence, retained rejection and guarded retries, process restart without UI/model modules, interrupted receipt recovery, unresolved outcomes, model proposal linkage and immutable audit records.
+- [Framework tests](../../../cis_compliance_dashboard_prototype/tests/test_framework.py): process restart and CLI reuse, concurrent advance/dispatch, invalid identity and altered/stale messages, coverage outcomes, failed-stage rollback, eligibility boundaries, immutable records and additive storage guards.
+- [Dashboard tests](../../../cis_compliance_dashboard_prototype/tests/test_import_view.py): current upload creates three persisted stages, unrelated run blocks solution review, blank restart, two test cycles, exact approval and rejection of the previous receipt.
+- [Lifecycle tests](../../../cis_compliance_dashboard_prototype/tests/test_lifecycle.py): atomic/concurrent proposal linkage, cross-run rejection with identical evidence, retained rejection and guarded retries, process restart without UI/model modules, interrupted receipt recovery, unresolved outcomes, model proposal linkage and immutable audit records.
 - Existing bridge/workflow tests continue to verify approval, rejection and receipt handling. The new service references those records without replacing their gates.
 
 This supports N1/N3, the limited-scope FR05/FR08–FR12/FR16 handoffs, NFR04 persistence and part of NFR05/E02 reuse. It does not close the full requirements, registry-extension evaluation, adaptive behaviour E03, or live evaluation. Five controls and one eligible executable action remain the scope; real-evidence numeric risk and drift remain pending.

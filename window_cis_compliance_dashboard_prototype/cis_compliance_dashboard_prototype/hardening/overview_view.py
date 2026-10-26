@@ -144,6 +144,8 @@ def render_overview(database_path: Path):
                 st.write(f"**{when} · Orchestrator round** — {r['outcome']['reason']}")
             else:
                 verdicts = '; '.join(f"{v['control_id']}: {v['verdict']}" for v in r['verdicts'] if v['control_id'])
-                st.write(f"**{when} · Remediation and verification** — {verdicts or 'no executed fixes'}")
+                step = (r.get('outcome') or {}).get('outcome')
+                st.write(f"**{when} · Remediation and verification** — {verdicts or 'no executed fixes'}"
+                         + (f" · next step: {step.replace('_', ' ')}" if step else ''))
     except (ValueError, OSError, sqlite3.Error) as exc:
         st.error('Overview: ' + str(exc))

@@ -1,7 +1,8 @@
 """Real local-model agentic round against the SIMULATED VM (tests/test_agentic.FakeVm).
 
-Exercises qwen3:8b as Orchestrator and Scanner with the production prompts and tools.
-Never contacts the real VM; writes isolated databases under data/agentic_probes/.
+Exercises qwen3:8b as Orchestrator, Scanner, Analysis and Remediation agents with the production
+prompts and tools: one assessment round, then (simulated administrator) approval of every proposal
+and the remediation phase. Never contacts the real VM; writes isolated databases under data/agentic_probes/.
 Usage (from the Windows project folder):
   .\\cis_compliance_dashboard_prototype\\.venv\\Scripts\\python.exe -B scripts\\probe_agentic_round.py
 """
@@ -23,6 +24,17 @@ from test_agentic import LAB_STATE, FakeVm  # noqa: E402
 from test_winrm_channel import target  # noqa: E402
 
 
+def agents(hardening, round_id):
+    rows = []
+    for trace in hardening.traces(round_id):
+        finished = next((e['data'] for e in reversed(trace['events']) if e['kind'] == 'finished'), {})
+        rows.append(dict(agent=trace['agent_role'], status=finished.get('status'),
+                         seconds=finished.get('duration_seconds'),
+                         calls=[(e['kind'], e['data'].get('name'), e['data'].get('error')) for e in trace['events']
+                                if e['kind'] in ('tool', 'tool_rejected')]))
+    return rows
+
+
 def main():
     folder = APP / 'data' / 'agentic_probes' / uuid.uuid4().hex
     folder.mkdir(parents=True)
@@ -38,14 +50,18 @@ def main():
     started = time.monotonic()
     result = hardening.run_round()
     summary = dict(seconds=round(time.monotonic() - started, 1), outcome=result['outcome'],
+                   analysis=store.rounds(result['session_id'])[0].get('analysis_outcome'),
                    proposals=[{k: r['proposal'][k] for k in ('rank', 'control_id', 'action_id', 'reason')}
                               for r in store.for_run(result['framework_run_id'] or '')],
-                   vm_writes=vm.writes, agents=[])
-    for trace in hardening.traces(result['round_id']):
-        finished = next((e['data'] for e in reversed(trace['events']) if e['kind'] == 'finished'), {})
-        summary['agents'].append(dict(agent=trace['agent_role'], status=finished.get('status'),
-            calls=[(e['kind'], e['data'].get('name'), e['data'].get('error')) for e in trace['events']
-                   if e['kind'] in ('tool', 'tool_rejected')]))
+                   agents=agents(hardening, result['round_id']))
+    if summary['proposals']:
+        for record in store.for_run(result['framework_run_id']):
+            store.decide(record['proposal']['request_id'], approve=True, operator='probe (simulated VM)')
+        started = time.monotonic()
+        phase = hardening.execute_approved(result['session_id'])
+        summary['remediation'] = dict(seconds=round(time.monotonic() - started, 1), outcome=phase['outcome'],
+                                      verdicts=phase['verdicts'], agents=agents(hardening, phase['round_id']))
+    summary['vm_writes'] = vm.writes
     (folder / 'summary.json').write_text(json.dumps(summary, indent=2, default=str), encoding='utf-8')
     print(json.dumps(summary, indent=2, default=str))
 

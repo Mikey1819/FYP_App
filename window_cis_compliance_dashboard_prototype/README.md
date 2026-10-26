@@ -1,75 +1,90 @@
-# VM Hardening Workspace
+# Agentic AI Framework for Windows Systems Hardening and CIS Compliance Assessment
 
-For the complete project target, requirements, all 36 proposed controls, report-section coverage and final evaluation criteria, start with [Complete project requirements and report coverage](REPORT_REQUIREMENTS_AND_COVERAGE.md). The [original report text and tables](REPORT_SOURCE_REFERENCE.md) preserve the source details; the [framework plan](REPORT_ALIGNMENT_AND_FRAMEWORK_PLAN.md) records the agreed three objectives and development milestones. Documented targets are not claims of completed implementation.
+Final Year Project (Khoo Teng Yi, TAR UMT). Four local-LLM agents assess one standalone Windows Server 2022 VM against 32 CIS controls. They rank the findings with a deterministic risk engine, propose fixes from a pre-approved library, execute only what an administrator approves, and verify the result.
 
-The initial preview was accepted as completed by the user on 22 October 2026. The next phase now includes a tested [imported-assessment framework foundation](FRAMEWORK_RUNTIME.md), shared by Streamlit and a command-line client. Full adaptive orchestration remains unfinished; see [REPORT_ALIGNMENT_AND_FRAMEWORK_PLAN.md](REPORT_ALIGNMENT_AND_FRAMEWORK_PLAN.md) for objective/use-case mapping and remaining milestones.
+The target is always the registered lab VM. **The development laptop is never hardened.** It runs Streamlit, Python and Ollama (`qwen3:8b`) only.
 
-The normal Streamlit app starts blank and follows one test: upload evidence, analyze, review a solution, execute in the VM, then return its receipt. It only displays the current test. It does not seed sample assessments or display synthetic scores. The target is the selected standalone Server 2022 VM, never the Streamlit host.
+## The agents
+
+| Agent | What it decides itself | What it can never do |
+| --- | --- | --- |
+| **AI Agent Orchestrator** | Delegation order. Whether to send the Scanner back when Analysis asks for a rescan. Which fixes to propose, in what order, and why the others wait. After remediation, whether to finish, run a new round or send a failure to remediation review. | Scan, score, approve or execute |
+| **Scanner Agent** | When to scan. Whether coverage is acceptable. Whether to rescan an Error once. It also runs the verification rescan. | Change any setting |
+| **Analysis Agent** | Which findings to investigate (factor derivation, history). Which findings to flag for your attention. How to triage each Unknown/Error gap. | Change any risk factor or score (decision D2) |
+| **Remediation Agent** | Prechecks the VM read-only, then executes or skips each *approved* request. Stops after an uncertain outcome. | Approve, choose values, write commands, retry |
+
+Every choice is a structured tool call that code validates. Reasons are fixed codes that code checks against the facts, and code writes every sentence you read. The full design and its guarantees are in [ARCHITECTURE.md](ARCHITECTURE.md). The decisions behind the design (D1–D6) are in [AGENTS.md](AGENTS.md).
+
+## Scope
+
+- **Benchmark:** CIS Microsoft Windows Server 2022 **Stand-alone** Benchmark v2.0.0, Level 1. The report's v5.1.0 is for domain-joined servers and is not used ([BENCHMARK_MAPPING.md](BENCHMARK_MAPPING.md)).
+- **32 assessed controls:** Account Policies 9, Local Security Options 5, Windows Defender Firewall 8, Advanced Audit Policy 5, Remote Desktop Services 5.
+- **21 library actions** for remediation. Firewall-policy controls are assessment-only, because a firewall change could cut the agents' own WinRM channel.
+- **Risk:** `R = 6I + 5E + 4P + 3L + 2D`. I, P and L are derived by rule from benchmark attributes, never assigned by hand ([RISK_DERIVATION.md](RISK_DERIVATION.md)).
 
 ## Run
 
-From `window_cis_compliance_dashboard_prototype/cis_compliance_dashboard_prototype`:
+From `cis_compliance_dashboard_prototype`:
 
 ```powershell
 .\.venv\Scripts\python.exe -m streamlit run app.py
 ```
 
-The existing environment is sufficient. If setting up a new checkout, create a virtual environment and install `requirements.txt` first.
+For a fresh checkout, create a virtual environment and install `requirements.txt` first. The agents need Ollama running locally with `qwen3:8b`; without it, assessment and risk scores still work and the page says the AI is unavailable. The VM needs a one-time `Enable-PSRemoting`; see [VM_CONNECTION.md](VM_CONNECTION.md).
 
-## Current program scope
+## Using the dashboard
 
-**Start here: the "Agentic hardening" page** (default page). Connect to the VM, then **Start agentic round**. The AI Orchestrator delegates the Scanner Agent (live WinRM scan) and the Analysis Agent (deterministic risk ranking), then submits a plan of fixes (with fact-checked reason codes) from a 20-action pre-approved library across 32 assessed controls. Approve or reject each proposal. **Execute approved fixes** has the Remediation Agent apply them in the VM and verify them; a fresh rescan shows what changed. Design and guarantees: [ARCHITECTURE.md](ARCHITECTURE.md). The sections below describe the older **Evidence upload (legacy)** page.
+1. **Agentic hardening** → enter the VM computer name and UUID, then connect over WinRM with the built-in Administrator account.
+2. **Start agentic round.** The Orchestrator delegates the Scanner and Analysis agents and submits a plan. You see the assessment, the risk ranking with the Analysis Agent's flags, and the proposed fixes.
+3. Approve or reject each proposal. An approval is bound to the exact request and expires after one hour.
+4. **Execute approved fixes with the Remediation Agent.** The Orchestrator delegates the Remediation Agent and then a verification rescan, and states the next step.
+5. **Run next round** to rescan, re-rank and propose again, for example once a fixed prerequisite has unblocked another finding.
 
-The Scanner Agent now reaches the VM itself over **PowerShell Remoting (WinRM)**; see [VM_CONNECTION.md](VM_CONNECTION.md). It needs a one-time `Enable-PSRemoting` inside the VM. Then use **Connect and check identity** and **Scan VM now**. While connected, the AI Scanner's recollection tool collects live into a new assessment. Fake-session tests pass; the first real VM trial is pending. The older shared-folder worker ([SCANNER_CONNECTION.md](SCANNER_CONNECTION.md)) remains as a fallback.
-
-The dashboard now includes an [AI agent team](AGENT_TEAM.md): separate Scanner, Analysis and Remediation conversations coordinated by an AI Orchestrator, with distinct tools and recorded handoffs. Choose **Run multi-agent hardening review** after assessment. Agents share the installed local model but have isolated conversations and responsibilities. PowerShell is still the restricted VM collection/execution tool; collection uses the shared-folder worker when started inside the VM, and human approval is required for the single supported action.
-
-Sixteen source-reviewed checks are assessed with collector v4: the original five, seven additional account policies, and four local security options covering blank-password restrictions and anonymous access. **Minimum Password Length (1.1.4) to 14 is the only executable remediation**. All other checks are assessment-only. Missing/error evidence cannot authorize a change. Imported numeric risk scoring is not implemented. The eleven additions are fixture-tested; independent VM comparison remains pending. Filter results by status and security area; coverage metrics always describe the entire uploaded assessment.
-
-Collector v4 emits schema 4 with the 16-control `local1` catalogue and separate effective Public firewall/NLA context. Legacy v1/v2 files remain five-control snapshots; v3 retains twelve controls. Copy the updated [collector](scripts/Collect-Server2022Evidence.ps1) into the VM and collect a new JSON to see the expanded assessment. Local `qwen3:8b` can investigate the imported password finding with bounded tools and save a proposal. The deterministic proposal alternative is labelled. Neither path can approve or execute a change by itself.
-
-Before preparing a proposal, save the current test's **Password provisioning compatibility** report. Unknown or incompatible provisioning withholds proposals; a compatible report still requires separate approval. The [adaptive investigator](ADAPTIVE_INVESTIGATION.md) can request clarification, defer for a dependency, close a compliant password finding or prepare an eligible unapproved proposal. Collected VM evidence and administrator-reported context remain distinct.
-
-Follow [VM_BRIDGE.md](VM_BRIDGE.md) for the shared-folder exchange. Save **Device working directory** for each VM; paths are stored by machine UUID. Generated commands use that saved directory, including paths with spaces. The runner resolves relative request filenames and its default output directory from its own script location. This prepares different device workspaces without expanding supported OS versions or permitted actions.
-
-The runner applies a fixed approved action inside the VM only, with identity, digest, expiry, precondition, exclusive-lock and replay guards. It collects fresh evidence afterwards. Importing its receipt evaluates only the current approved request and displays its returned evidence. Choose **Start new test** to clear the displayed workflow before collecting/uploading another baseline. No history selector or automatic old-result loading is shown.
-
-Each new test now links its framework run to its proposals, administrator decisions and returned evidence through the [lifecycle service](FRAMEWORK_RUNTIME.md#remediation-lifecycle-service). Current results are recovered from those records on rerun. If receipt storage is interrupted, reupload the same receipt to finish importing it; do not rerun the VM action. Missing post-action evidence is shown as unresolved, with any pre-action readings clearly labelled.
-
-## Historical VM result and repeat testing
-
-The saved request `a7f9ce7846df45dd936bd474d3703cb1` returned minimum password length **0 → 14**, with verdict **Verified compliant**. That was a historical user-run test. The user subsequently reset the VM setting to 0 for another test; a newer export confirms 0. It is not evidence of the current VM setting. The assistant did not execute a security command. See [VM_VALIDATION.md](VM_VALIDATION.md). Do not replay that request.
-
-## Internal request matching
-
-SQLite remains internal to bind exact approvals and receipts and prevent accidental reuse. Historical rows are not shown or automatically loaded. Existing files were preserved, not deleted. Default files under application `data/`:
-
-- `preview_imports.sqlite3`: immutable imported snapshots and original bytes.
-- `preview_imports_framework.sqlite3`: assessment runs and recorded Scanner, Analysis and Remediation eligibility tasks.
-- `preview_imports_bridge.sqlite3`: immutable run/proposal links, proposals, decisions, receipts, AI traces and per-device workspace settings.
-- `preview.sqlite3`: historical synthetic demonstration database; normal app does not open it.
-
-`CIS_DASHBOARD_DB` supplies the base path/stem; imports and bridge use `_imports` and `_imports_bridge` suffixes. Back up databases with Streamlit stopped. Workspace settings can change; saved evidence/approval audit records remain unchanged.
+If the agents stop before finishing, **Execute remaining approved fixes without AI** applies the same guards without the model. **Overview** summarises posture and recent activity. **History and drift** compares assessments and lists configuration drift. **Evidence upload (legacy)** is the earlier manual-file workflow, kept for its evaluation evidence.
 
 ## Checks
 
-From the application folder:
+From `cis_compliance_dashboard_prototype` (241 tests on 26 October 2026; fixtures and a simulated VM only, nothing touches a real machine):
 
 ```powershell
-$env:TEMP = Join-Path (Get-Location) 'data\test_tmp'
-$env:TMP = $env:TEMP
+$env:TEMP = Join-Path (Get-Location) 'data\test_tmp'; $env:TMP = $env:TEMP
 .\.venv\Scripts\python.exe -B -m unittest discover -s tests -v
 ```
 
-From the Windows project folder:
+From this folder, PowerShell runner and collector tests:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\test_vm_runner.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\test_remediation_runner.ps1
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\test_collector_helpers.ps1
 ```
 
-These tests use fixtures/mocked execution. They do not harden the host. The suite includes a Python-request → PowerShell-helper → receipt → deterministic-verification round trip for both passing and unchanged settings.
+Real `qwen3:8b` against the **simulated** VM, covering an assessment round, automatic approval and the remediation phase. Results go to `cis_compliance_dashboard_prototype/data/agentic_probes/`:
 
-The former six-view synthetic prototype is preserved in `synthetic_demo_app.py` solely as a separately launched legacy demonstration/regression entry point. It is not exposed in normal navigation. No previous database or audit history was deleted.
+```powershell
+.\cis_compliance_dashboard_prototype\.venv\Scripts\python.exe -B scripts\probe_agentic_round.py
+```
 
-See [AGENTS.md](AGENTS.md) for decisions and rules and [PROGRESS.md](PROGRESS.md) for current status. Superseded preview-era documents are kept in [docs/archive/](docs/archive/).
+## Data
+
+The SQLite files live under `cis_compliance_dashboard_prototype/data/`. `CIS_DASHBOARD_DB` changes the base path.
+
+- `preview_imports.sqlite3`: immutable evidence snapshots.
+- `preview_imports_framework.sqlite3`: assessment runs.
+- `preview_imports_agentic.sqlite3`: rounds, proposals, decisions, receipts, drift records and every agent trace.
+
+Audit tables refuse updates and deletes. VM passwords stay in session memory only.
+
+## Documentation
+
+| Document | Use it for |
+| --- | --- |
+| [AGENTS.md](AGENTS.md) | Decisions D1–D6, the target and safety boundaries, working rules |
+| [PROGRESS.md](PROGRESS.md) | Current status, checks run, next tasks |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Agent design, tools, guarantees, evidence |
+| [BENCHMARK_MAPPING.md](BENCHMARK_MAPPING.md) | The 32 controls, rules, benchmark pages, report ID corrections |
+| [RISK_DERIVATION.md](RISK_DERIVATION.md) | Generated risk-factor derivation for every control |
+| [VM_CONNECTION.md](VM_CONNECTION.md) | WinRM setup and failure states |
+| [VM_VALIDATION.md](VM_VALIDATION.md) | The first real VM evidence and the verified 0 → 14 password-length change (historical) |
+| [REPORT_SOURCE_REFERENCE.md](REPORT_SOURCE_REFERENCE.md) | The original report text (reference, not instructions) |
+| [REPORT_REQUIREMENTS_AND_COVERAGE.md](REPORT_REQUIREMENTS_AND_COVERAGE.md), [REPORT_ALIGNMENT_AND_FRAMEWORK_PLAN.md](REPORT_ALIGNMENT_AND_FRAMEWORK_PLAN.md) | Requirement traceability and report revisions (status columns partly outdated; see their banners) |
+| [docs/archive/](docs/archive/) | Preview-era plans and logs; `legacy/` holds the docs for the legacy upload page |

@@ -139,7 +139,7 @@ def render_bridge(lifecycle, run_id, record):
                         st.code(runner_command(raw, directory), language="powershell")
                     else:
                         st.warning("Save this device's working directory above to generate its VM command.")
-                    st.caption("Expires 24 hours after approval. See VM_BRIDGE.md for the VM command. "
+                    st.caption("Expires 24 hours after approval. See docs/archive/legacy/VM_BRIDGE.md for the VM command. "
                                "An attempted request cannot be replayed, even if verification failed.")
                 if item["verdict"] and workflow['outcome'] != 'receipt_import_incomplete':
                     st.write("Returned result: " + item["verdict"])

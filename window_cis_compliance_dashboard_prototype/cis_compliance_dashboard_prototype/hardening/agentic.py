@@ -1,25 +1,29 @@
-"""Agentic hardening rounds (report Sections 3.3 and 4.3, decisions D1-D6).
+"""Agentic hardening rounds (report Sections 3.3, 4.3 and 4.6.3; decisions D1-D6).
 
-AI Agent Orchestrator (local LLM) coordinates one round:
-  Scanner Agent (local LLM)   collects over WinRM, judges coverage, may rescan once.
-  Analysis Agent (deterministic, D2)   ranks findings with the risk engine and lists
-                                       candidate library actions and prerequisites.
-  The Orchestrator then submits one plan: which fixes to propose, in what order, and why others wait (D4).
-After the administrator decides, `execute_approved` has the Remediation Agent run the
-approved actions in that order, then the Scanner verifies with a fresh full scan.
-Every model choice is a structured tool call validated here; model prose is never authority.
+Four bounded local-LLM agents. Each chooses its own tool calls and acts on what they return (D6):
+  AI Agent Orchestrator  Assessment phase: delegates the Scanner and Analysis agents, may send the Scanner
+                         back once when Analysis asks, then submits one plan of fixes (D4).
+                         Remediation phase: delegates the Remediation Agent, then a verification scan, then
+                         decides the next step: finish, next round or remediation review (Figure 4.4).
+  Scanner Agent          Collects over WinRM, judges coverage, may rescan once. Also runs verification scans.
+  Analysis Agent         Reads the deterministic risk ranking (D2: it can never change a number), investigates
+                         findings and history, flags findings for attention and triages Unknown/Error gaps.
+  Remediation Agent      Prechecks, executes or skips administrator-approved requests only; stops on uncertainty.
+Every model choice is a structured tool call validated here; model prose is never authority. Reasons are
+fixed codes that code checks against the facts, and code writes every sentence shown to the administrator.
 """
 from dataclasses import asdict
 import json
 import time
 from uuid import uuid4
 
-from .action_library import actions_for
-from .domain import Status, summarise
+from .action_library import LIBRARY, actions_for
+from .domain import Status, comparable, summarise
+from .evidence_import import _time
 from .history import HistoryService
 from .investigation import Coordinator, InvestigationLog, Limits
 from .ollama_client import OllamaClient
-from .remediation import RemediationAgent
+from .remediation import ApprovedActionExecutor, _now, _same_value
 from .risk import BASELINE_VERSION, analyse
 from .winrm_channel import ChannelError
 
@@ -32,22 +36,39 @@ PROMPTS = {
     ORCHESTRATOR: COMMON + 'You are the AI Agent Orchestrator for hardening one registered Windows Server 2022 VM. '
         'You coordinate specialist agents; you never scan, score, approve or execute yourself. '
         '1) Call delegate_scanner. 2) If the Scanner handed off, call delegate_analysis; if it reported a '
-        'collection failure, call submit_plan with empty fixes and skipped. 3) Call submit_plan once with your whole '
-        'decision about the must_decide findings only (never gaps). fixes: findings to fix now, in execution order, '
-        'each {control_id, action_id, reason_code}: action_id from that finding\'s actions and reason_code from its '
-        'fix_codes. A finding with blocked_until_compliant cannot be fixed yet: fix its prerequisite and skip it. '
-        'skipped: every other must_decide finding, each {control_id, reason_code} with reason_code from its '
-        'skip_codes. Every must_decide control appears exactly once. Choose which to fix and their order yourself; '
-        'a plan is not approval: the administrator decides.',
+        'collection failure, call submit_plan with empty fixes and skipped. If the analysis lists rescan_requested, '
+        'you may call delegate_scanner once more and then delegate_analysis again. 3) Call submit_plan once with '
+        'your whole decision about the must_decide findings only (never gaps). fixes: findings to fix now, in '
+        'execution order, each {control_id, action_id, reason_code}: action_id from that finding\'s actions and '
+        'reason_code from its fix_codes. A finding with blocked_until_compliant cannot be fixed yet: fix its '
+        'prerequisite and skip it. skipped: every other must_decide finding, each {control_id, reason_code} with '
+        'reason_code from its skip_codes. Every must_decide control appears exactly once. Choose which to fix and '
+        'their order yourself; a plan is not approval: the administrator decides.',
     SCANNER: COMMON + 'You are the Scanner Agent. Call scan_target first to collect evidence from the VM over WinRM. '
         'Then call read_coverage. If any control is in Error state you may call rescan once: Error can be transient, '
         'while Unknown means no value is recorded (e.g. not applicable) and a rescan will not change it. You may inspect '
-        'observations. Finish with handoff_analysis, or report_failure if scanning failed. You never change settings.',
+        'observations. Finish with your handoff tool, or report_failure if scanning failed. You never change settings.',
+    ANALYSIS: COMMON + 'You are the Analysis Agent. A deterministic risk engine scores findings; you can read but '
+        'never change scores. 1) Call score_findings. 2) Investigate before you judge, at most 2 calls in total: '
+        'inspect_finding for findings you may flag, check_history for findings that show D. 3) Call submit_analysis once. attention: up to '
+        '3 findings the administrator should look at first, each {control_id, attention_code} with a code from that '
+        'finding\'s attention_codes (a finding without attention_codes cannot be flagged). gap_triage: every gap exactly once, each {control_id, triage_code} from its '
+        'triage_codes; choose rescan only if a fresh collection could change it.',
+    REMEDIATION: COMMON + 'You are the Remediation Agent. You act only on requests the administrator approved; you '
+        'never approve, choose values or write commands. 1) Call precheck to observe the VM read-only (list_approved '
+        'is optional). 2) Decide each request once: skip_fix (with a reason_code from its skip_codes) every request '
+        'precheck shows not ready, and execute_fixes with the ready requests in the order you choose (rank order '
+        'unless a prerequisite needs another). After a failed result decide whether to continue; after must_stop '
+        'execute nothing more. 3) Finish with report_results.',
 }
-GAP_HINTS = {
-    '1.2.1': 'Not recorded while the lockout threshold (1.2.2) is 0; expected to resolve after 1.2.2 is fixed.',
-    '1.2.4': 'Not recorded while the lockout threshold (1.2.2) is 0; expected to resolve after 1.2.2 is fixed.',
-}
+REVIEW_PROMPT = COMMON + ('You are the AI Agent Orchestrator after the administrator approved fixes. You never '
+    'execute, approve or retry yourself. 1) Call delegate_remediation. 2) If any fix was executed, call '
+    'delegate_verification so the Scanner Agent rescans the VM. 3) Call submit_review once with next_step finish, '
+    'next_round or remediation_review and a reason_code from next_step_codes for that step.')
+# Real qwen3:8b used every step inspecting findings one by one and never submitted (26 Oct probe): bound it.
+MAX_INVESTIGATIONS = 2
+# Lockout timers are not recorded while the lockout threshold is 0, so these gaps depend on 1.2.2.
+GAP_PREREQUISITE = {'1.2.1': '1.2.2', '1.2.4': '1.2.2'}
 
 
 def tool(name, description, target, **properties):
@@ -57,39 +78,112 @@ def tool(name, description, target, **properties):
 
 
 REASON = {'type': 'string', 'maxLength': 600}
-# The Orchestrator states *why* with a fixed code; code checks the code against the analysis facts and writes
-# the sentence. Free model prose proved inaccurate (e.g. "remove unused services" for an anonymous-access fix).
+# Agents state *why* with a fixed code; code checks the code against the facts and writes the sentence.
+# Free model prose proved inaccurate (e.g. "remove unused services" for an anonymous-access fix).
 FIX_REASONS = {'high_risk': 'High-priority finding', 'unblocks_other': 'Prerequisite that unblocks {waiting}',
                'improves_detection': 'Restores security auditing or logging', 'low_impact': 'Low operational impact'}
 SKIP_REASONS = {'waits_for_prerequisite': 'Waits until {prerequisites} is compliant',
                 'needs_review': 'Operational impact needs administrator review first',
                 'lower_priority': 'Lower priority; deferred to a later round'}
+ATTENTION = {'regression': 'regressed since the previous assessment', 'high_risk': 'high-priority finding',
+             'unblocks_other': 'fixing it unblocks {waiting}', 'manual_fix_needed': 'no library action: needs a manual fix'}
+TRIAGE = {'rescan': 'collection error; Scanner asked to collect again',
+          'resolves_with_prerequisite': 'expected to resolve once {prerequisite} is fixed',
+          'manual_review': 'review manually'}
+REMEDIATION_SKIPS = {'precondition_changed': 'value changed since approval; a new scan and approval are needed',
+                     'prerequisite_not_met': 'prerequisite control is not compliant yet',
+                     'expired': 'approval expired', 'stop_after_failure': 'stopped after an earlier failed result'}
+NEXT_STEP = {
+    'finish': {'all_verified': 'every executed fix is verified compliant',
+               'nothing_fixable': 'no fixable finding remains', 'nothing_executed': 'nothing was executed'},
+    'next_round': {'unblocked_findings': 'the fixes unblocked {unblocked}; run a new round to propose them',
+                   'remaining_findings': 'fixable findings remain ({remaining}); run a new round to review them'},
+    'remediation_review': {'verification_failed': 'verification failed for {failed}; a new proposal and approval are '
+                                                  'required before any further attempt',
+                           'uncertain_outcome': 'the outcome of {uncertain} is uncertain; review the VM state before '
+                                                'any further attempt',
+                           'remediation_incomplete': 'the Remediation Agent did not decide {not_attempted}; execute '
+                                                     'again or without AI while the approval is valid'}}
 DETECTION_CONTROLS = ('17.', '9.2.6', '9.2.7', '9.3.6', '9.3.7')
 
 
-def plan_schema(fields, controls, actions):
-    """Array-of-object argument; enums are filled in once the analysis is known."""
-    properties = {'control_id': {'type': 'string', **({'enum': controls} if controls else {})},
-                  'action_id': {'type': 'string', **({'enum': actions} if actions else {})},
-                  'reason_code': {'type': 'string', 'enum': sorted(FIX_REASONS if 'action_id' in fields else SKIP_REASONS)}}
-    return {'type': 'array', 'maxItems': 40, 'items': {'type': 'object', 'additionalProperties': False,
-            'required': list(fields), 'properties': {k: properties[k] for k in fields}}}
+def coded_list(fields, enums, max_items=40):
+    """Array-of-object argument; `enums` gives a field's allowed values once they are known."""
+    properties = {f: {'type': 'string', **({'enum': enums[f]} if enums.get(f) else {})} for f in fields}
+    return {'type': 'array', 'maxItems': max_items, 'items': {'type': 'object', 'additionalProperties': False,
+            'required': list(fields), 'properties': properties}}
+
+
+def check_entries(entries, keys, label, codes, limit=40):
+    """Shape check for a coded list; the last key holds the reason code."""
+    if type(entries) is not list or len(entries) > limit:
+        raise ValueError(f'{label} must be a list of at most {limit} entries')
+    code_key = keys[-1]
+    for entry in entries:
+        if type(entry) is not dict or set(entry) != set(keys):
+            received = ', '.join(sorted(entry)) if type(entry) is dict else type(entry).__name__
+            raise ValueError(f'Each {label} entry needs exactly {", ".join(keys)}; received {received}')
+        if any(type(entry[k]) is not str or not entry[k].strip() or len(entry[k]) > 40 for k in keys):
+            raise ValueError(f'{label} values must be short non-empty strings')
+        if entry[code_key] not in codes:
+            raise ValueError(f"{entry[code_key][:30]} is not a {label} {code_key}; use one of {', '.join(sorted(codes))}")
+    return entries
+
+
+def gap_prerequisite(result, results):
+    prerequisite = GAP_PREREQUISITE.get(result.control.control_id)
+    holder = next((r for r in results if r.control.control_id == prerequisite), None)
+    return prerequisite if result.status == Status.UNKNOWN and holder is not None and holder.evidence.value == 0 else None
 
 
 def gap_hint(result, results):
     if result.status == Status.ERROR:
         return 'Collection error: ' + (result.detail or 'unknown') + '. A rescan may help.'
-    hint = GAP_HINTS.get(result.control.control_id)
-    lockout = next((r for r in results if r.control.control_id == '1.2.2'), None)
-    if hint and lockout is not None and lockout.evidence.value == 0:
-        return hint
+    prerequisite = gap_prerequisite(result, results)
+    if prerequisite:
+        return (f'Not recorded while the lockout threshold ({prerequisite}) is 0; '
+                f'expected to resolve after {prerequisite} is fixed.')
     return 'No value recorded for this non-policy setting; Windows applies its default. Assessment-only: review manually.'
+
+
+def verdict_kind(verdict):
+    """verified, failed, refused (nothing written) or uncertain (a write may have happened unconfirmed)."""
+    if verdict == 'Verified compliant':
+        return 'verified'
+    if verdict.startswith('Refused'):
+        return 'refused'
+    if verdict.startswith(('Unresolved: outcome uncertain', 'Unresolved: receipt failed',
+                           'Unresolved: verification_unavailable')):
+        return 'uncertain'
+    return 'failed'
+
+
+def risk_analysis(record, previous_records):
+    """Deterministic ranking with candidate actions and gaps (D2). The Analysis Agent reads it; it never edits it."""
+    results = record.assessment.results
+    ranked = analyse(record, previous_records)
+    findings = []
+    for finding in ranked:
+        candidates = [dict(action_id=a.action_id, title=a.title, blocked_by=a.blocked_by(results))
+                      for a in actions_for(finding.control_id)]
+        findings.append(dict(control_id=finding.control_id, title=finding.title, score=finding.score,
+                             level=finding.level, priority=finding.priority, observed=finding.observed,
+                             required=finding.rule, factors=finding.factors, candidate_actions=candidates))
+    scored = {f.control_id for f in ranked}
+    unscored = [r.control.control_id for r in results if r.status == Status.NON_COMPLIANT
+                and r.control.control_id not in scored]
+    gaps = [dict(control_id=r.control.control_id, status=r.status.value, hint=gap_hint(r, results),
+                 prerequisite=gap_prerequisite(r, results))
+            for r in results if r.status in (Status.UNKNOWN, Status.ERROR)]
+    return dict(baseline_version=BASELINE_VERSION, findings=findings, gaps=gaps,
+                unscored_non_compliant=unscored, ranked=[asdict(f) for f in ranked])
 
 
 class _RoleTools:
     """Shared validation for the Coordinator: exact arguments, one target, terminal once."""
     evidence_mode = 'Live (WinRM)'
     proposal_id = None
+    nudge = True  # One reminder if the model answers without a tool call before its terminal decision.
 
     def __init__(self, rounds, role):
         self.rounds, self.agent_role = rounds, role
@@ -98,6 +192,16 @@ class _RoleTools:
         self.framework_run_id = None
         self.scenario, self.system_prompt = 'Agentic hardening round: ' + role, PROMPTS.get(role, COMMON)
         self.terminal_outcome, self.seen = None, set()
+
+    def available(self):
+        """Tools that are valid in the current state. Subclasses narrow this."""
+        return self.names
+
+    def schemas(self):
+        # Offer only tools that are valid now: on laptop hardware a call that code must refuse costs 30-60 s and
+        # can exhaust the budget (26 Oct probes). Code still validates every call, offered or not.
+        allowed = self.available()
+        return [s for s in self._all_schemas() if s['function']['name'] in allowed]
 
     def _args(self, name, arguments, *extra, lists=()):
         if self.terminal_outcome is not None or name not in self.names:
@@ -113,33 +217,55 @@ class _RoleTools:
                 raise ValueError('Argument ' + key + ' must be a short non-empty string')
         return arguments
 
+    def _child(self, role, tools, *, steps, calls, seconds, request=60):
+        """Run a specialist agent within the remaining phase budget."""
+        remaining = self.rounds.remaining()
+        if remaining < 5:
+            raise ValueError('Round deadline reached')
+        child = Coordinator(self.rounds.client_factory(role), tools, limits=Limits(
+            steps=steps, calls=calls, seconds=min(seconds, remaining), request_seconds=min(request, remaining))).run()
+        self.rounds.children[role] = child['run_id']
+        return child, child['events'][-1]['data']
+
+
+# ---------------------------------------------------------------- Scanner Agent
 
 class ScannerTools(_RoleTools):
     names = ('scan_target', 'read_coverage', 'inspect_observation', 'rescan', 'handoff_analysis', 'report_failure')
 
-    def __init__(self, rounds):
+    def __init__(self, rounds, *, verify_run_id=None):
         super().__init__(rounds, SCANNER)
+        self.verify_run_id = verify_run_id
         self.initial_message = 'Collect and validate evidence for target ' + self.target_id + '.'
+        if verify_run_id:  # Same agent and tools, verifying approved fixes against a fresh full scan.
+            self.names = self.names[:4] + ('handoff_verification', 'report_failure')
+            self.scenario = 'Agentic verification scan: ' + SCANNER
+            self.initial_message = (f'Approved fixes from scan {verify_run_id} were executed on target '
+                                    f'{self.target_id}. Collect fresh evidence so they can be verified.')
+        self.handoff = self.names[4]
         self.record, self.failure, self.rescanned = None, None, False
 
-    def schemas(self):
+    def _all_schemas(self):
         t = self.target_id
         controls = {'type': 'string', 'enum': [r.control.control_id for r in self.record.assessment.results]} \
             if self.record else {'type': 'string'}
+        receiver = 'verification' if self.verify_run_id else 'the Analysis Agent'
         return [tool('scan_target', 'Collect all selected controls from the VM over WinRM (read-only).', t),
                 tool('read_coverage', 'Read per-control status and gaps of the current scan.', t),
                 tool('inspect_observation', 'Read one observation with its source.', t, control_id=controls),
                 tool('rescan', 'Collect again once, only when Error results exist.', t, reason=REASON),
-                tool('handoff_analysis', 'Hand the validated scan to the Analysis Agent.', t, reason=REASON),
+                tool(self.handoff, 'Hand the validated scan to ' + receiver + '.', t, reason=REASON),
                 tool('report_failure', 'Stop because collection failed.', t, reason=REASON)]
 
     def _collect(self):
         try:
-            result = self.rounds.scanner.request(self.rounds.target.hostname, self.rounds.target.machine_uuid)
+            result = self.rounds.scanner.request(self.rounds.target.hostname, self.rounds.target.machine_uuid,
+                                                 origin_run_id=self.verify_run_id)
         except ChannelError as exc:
             self.failure = exc.state + ': ' + exc.detail
             return dict(state=exc.state, detail=exc.detail)
         self.framework_run_id = result['framework_run_id']
+        self.rounds.scanned_runs.append(self.framework_run_id)
         self.record = self.rounds.runtime.imports.get(result['evidence_sha256'])
         self.failure = None
         return dict(state='collected', framework_run_id=self.framework_run_id,
@@ -159,7 +285,7 @@ class ScannerTools(_RoleTools):
                 raise ValueError('Control outside the current scan')
             output = dict(control_id=control, status=result.status.value, value=result.evidence.value,
                           source=result.evidence.source, detail=result.detail)
-        elif name in ('read_coverage', 'rescan', 'handoff_analysis', 'report_failure'):
+        elif name in ('read_coverage', 'rescan', 'handoff_analysis', 'handoff_verification', 'report_failure'):
             reasoned = name != 'read_coverage'
             arguments = self._args(name, arguments, *(['reason'] if reasoned else []))
             if name == 'report_failure':
@@ -184,7 +310,7 @@ class ScannerTools(_RoleTools):
             else:
                 if 'read_coverage' not in self.seen:
                     raise ValueError('Read coverage before handing off')
-                self.terminal_outcome = dict(outcome='handoff_analysis', reason=arguments['reason'].strip(),
+                self.terminal_outcome = dict(outcome=name, reason=arguments['reason'].strip(),
                     framework_run_id=self.framework_run_id, evidence_sha256=self.record.assessment.source_sha256,
                     gaps=[r.control.control_id for r in results if r.status in (Status.UNKNOWN, Status.ERROR)])
                 return dict(self.terminal_outcome)
@@ -194,52 +320,393 @@ class ScannerTools(_RoleTools):
         return output
 
 
-class _DeterministicClient:
-    model, provenance = 'none', 'Deterministic risk engine (no model)'
+# ---------------------------------------------------------------- Analysis Agent
 
+class AnalysisTools(_RoleTools):
+    names = ('score_findings', 'inspect_finding', 'check_history', 'submit_analysis')
 
-class AnalysisAgent:
-    """Policy-driven agent: risk ranking and candidate actions. It never calls the model (D2)."""
-    role = ANALYSIS
+    def __init__(self, rounds, record, previous_records, framework_run_id):
+        super().__init__(rounds, ANALYSIS)
+        self.record, self.previous, self.framework_run_id = record, previous_records, framework_run_id
+        self.analysis, self.investigations = None, 0
+        self.initial_message = (f'Analyse scan {framework_run_id} of target {self.target_id}. '
+                                'Start with score_findings.')
 
-    def run(self, record, previous_records):
-        results = record.assessment.results
-        ranked = analyse(record, previous_records)
+    def _facts(self):
+        """Which attention and triage codes are true, from the deterministic analysis only."""
+        findings = {f['control_id']: f for f in self.analysis['findings']}
+        waits = {c: {b for a in f['candidate_actions'] for b in a['blocked_by']} for c, f in findings.items()}
+        prerequisite = {g['control_id']: g['prerequisite'] for g in self.analysis['gaps']}
+        waiting = {c: sorted([o for o, w in waits.items() if c in w] + [g for g, p in prerequisite.items() if p == c])
+                   for c in findings}
+        attention = {c: {'regression': f['factors']['D'] == 5, 'high_risk': f['level'] in ('High', 'Critical'),
+                         'unblocks_other': bool(waiting[c]), 'manual_fix_needed': not f['candidate_actions']}
+                     for c, f in findings.items()}
+        triage = {g['control_id']: {'rescan': g['status'] == Status.ERROR.value,
+                                    'resolves_with_prerequisite': g['prerequisite'] is not None,
+                                    'manual_review': True} for g in self.analysis['gaps']}
+        return waiting, attention, triage, prerequisite
+
+    def available(self):
+        if self.analysis is None:
+            return ('score_findings',)
+        return ('submit_analysis',) if self.investigations >= MAX_INVESTIGATIONS else self.names[1:]
+
+    def _all_schemas(self):
+        t = self.target_id
+        found = [f['control_id'] for f in self.analysis['findings']] if self.analysis else []
+        gaps = [g['control_id'] for g in self.analysis['gaps']] if self.analysis else []
+        every = {'type': 'string', 'enum': [r.control.control_id for r in self.record.assessment.results]}
+        return [tool('score_findings', 'Read the deterministic risk ranking of this scan (you cannot change scores).', t),
+                tool('inspect_finding', 'Read one scored finding: factors, how each was derived, rationale, actions.', t,
+                     control_id={'type': 'string', **({'enum': found} if found else {})}),
+                tool('check_history', 'Read earlier observations of one control on this VM, newest first.', t,
+                     control_id=every),
+                tool('submit_analysis', 'Submit once: findings for administrator attention and a triage code for '
+                     'every gap.', t,
+                     attention=coded_list(('control_id', 'attention_code'),
+                                          dict(control_id=found, attention_code=sorted(ATTENTION)), 3),
+                     gap_triage=coded_list(('control_id', 'triage_code'),
+                                           dict(control_id=gaps, triage_code=sorted(TRIAGE))))]
+
+    def _scores(self):
+        """Compact view: on laptop hardware every extra prompt token costs time (measured 26 Oct probe)."""
+        _, attention, triage, _ = self._facts()
         findings = []
-        for finding in ranked:
-            candidates = [dict(action_id=a.action_id, title=a.title, blocked_by=a.blocked_by(results))
-                          for a in actions_for(finding.control_id)]
-            findings.append(dict(control_id=finding.control_id, title=finding.title, score=finding.score,
-                                 level=finding.level, priority=finding.priority, observed=finding.observed,
-                                 required=finding.rule, factors=finding.factors, candidate_actions=candidates))
-        scored = {f.control_id for f in ranked}
-        unscored = [r.control.control_id for r in results if r.status == Status.NON_COMPLIANT
-                    and r.control.control_id not in scored]
-        gaps = [dict(control_id=r.control.control_id, status=r.status.value, hint=gap_hint(r, results))
-                for r in results if r.status in (Status.UNKNOWN, Status.ERROR)]
-        return dict(baseline_version=BASELINE_VERSION, findings=findings, gaps=gaps,
-                    unscored_non_compliant=unscored, ranked=[asdict(f) for f in ranked])
+        for f in self.analysis['findings']:
+            codes = [c for c, true in attention[f['control_id']].items() if true]
+            findings.append(dict(control_id=f['control_id'], level=f['level'], score=f['score'],
+                                 **({'D': f['factors']['D']} if f['factors']['D'] > 1 else {}),
+                                 **({'attention_codes': codes} if codes else {})))
+        gaps = [dict(control_id=g['control_id'], status=g['status'],
+                     triage_codes=[c for c, true in triage[g['control_id']].items() if true])
+                for g in self.analysis['gaps']]
+        return dict(findings=findings, gaps=gaps)
 
+    def _inspect(self, control):
+        if self.analysis is None:
+            raise ValueError('Call score_findings first')
+        ranked = next((r for r in self.analysis['ranked'] if r['control_id'] == control), None)
+        if ranked is None:
+            raise ValueError(control[:20] + ' is not a scored finding; use check_history for other controls')
+        finding = next(f for f in self.analysis['findings'] if f['control_id'] == control)
+        # I and P are named by their benchmark attribute only; the full rule text is in RISK_DERIVATION.md.
+        return dict(control_id=control, title=ranked['title'], observed=ranked['observed'], required=ranked['rule'],
+                    score=ranked['score'], factors=ranked['factors'],
+                    derivation=dict(I=ranked['factor_reasons']['I'].split(':')[0],
+                                    P=ranked['factor_reasons']['P'].split(':')[0],
+                                    E=ranked['exposure_reason'], D=ranked['drift_reason']),
+                    rationale=ranked['rationale'],
+                    actions=[dict(action_id=a['action_id'], blocked_by=a['blocked_by'])
+                             for a in finding['candidate_actions']])
+
+    def _history(self, control):
+        current = next((r for r in self.record.assessment.results if r.control.control_id == control), None)
+        if current is None:
+            raise ValueError('Control outside the current scan')
+        earlier = []
+        for older in self.previous[:5]:
+            prior = next((r for r in older.assessment.results if r.control.control_id == control), None)
+            if prior is not None:
+                earlier.append(dict(collected_at=older.assessment.collected_at.isoformat(timespec='minutes'),
+                                    value=prior.evidence.value, status=prior.status.value,
+                                    comparable=comparable(prior, current)))
+        return dict(control_id=control, current=dict(value=current.evidence.value, status=current.status.value),
+                    earlier=earlier or 'No earlier assessment of this control on this VM.')
+
+    def _submit(self, arguments):
+        if self.analysis is None:
+            raise ValueError('Call score_findings before submitting')
+        waiting, attention_facts, triage_facts, prerequisite = self._facts()
+        # Every entry is fact-checked; beyond the first 3, flags are dropped rather than failing the decision
+        # (real qwen3:8b tends to flag many findings; attention is advisory and changes no number).
+        attention = check_entries(arguments['attention'], ('control_id', 'attention_code'), 'attention', ATTENTION)
+        dropped = [e['control_id'] for e in attention[3:]]
+        triage = check_entries(arguments['gap_triage'], ('control_id', 'triage_code'), 'gap_triage', TRIAGE)
+        for entries, facts, code_key, label in ((attention, attention_facts, 'attention_code', 'a scored finding'),
+                                                (triage, triage_facts, 'triage_code', 'a gap')):
+            seen = set()
+            for entry in entries:
+                control, code = entry['control_id'], entry[code_key]
+                if control not in facts:
+                    raise ValueError(f'{control[:20]} is not {label}')
+                if control in seen:
+                    raise ValueError(f'{control} appears more than once')
+                seen.add(control)
+                if not facts[control][code]:
+                    allowed = ', '.join(c for c, true in facts[control].items() if true) or 'none'
+                    raise ValueError(f'{code_key} {code} does not fit {control}; true codes: {allowed}')
+        missing = [g for g in triage_facts if g not in {e['control_id'] for e in triage}]
+        if missing:
+            raise ValueError('Every gap needs a triage_code; missing: ' + ', '.join(missing))
+        # New dicts: the logged model arguments stay exactly as the model sent them.
+        attention = [dict(e, reason=ATTENTION[e['attention_code']].format(waiting=', '.join(waiting[e['control_id']])))
+                     for e in attention]
+        triage = [dict(e, reason=TRIAGE[e['triage_code']].format(prerequisite=prerequisite[e['control_id']]))
+                  for e in triage]
+        rescan = [e['control_id'] for e in triage if e['triage_code'] == 'rescan']
+        attention = attention[:3]
+        parts = [f"{len(self.analysis['findings'])} finding(s) scored by the deterministic engine."]
+        if attention:
+            parts.append('For attention: ' + '; '.join(f"{a['control_id']} ({a['reason']})" for a in attention) + '.')
+        if dropped:
+            parts.append('Further flags beyond 3 not shown: ' + ', '.join(dropped) + '.')
+        if triage:
+            parts.append('Gaps: ' + '; '.join(f"{g['control_id']} ({g['reason']})" for g in triage) + '.')
+        self.terminal_outcome = dict(outcome='analysis_complete', reason=' '.join(parts), attention=attention,
+                                     gap_triage=triage, rescan_requested=rescan, framework_run_id=self.framework_run_id)
+        return dict(self.terminal_outcome)
+
+    def call(self, name, arguments):
+        if name == 'score_findings':
+            self._args(name, arguments)
+            if self.analysis is not None:
+                raise ValueError('score_findings runs once')
+            self.analysis = risk_analysis(self.record, self.previous)
+            output = self._scores()
+        elif name in ('inspect_finding', 'check_history'):
+            control = self._args(name, arguments, 'control_id')['control_id']
+            if self.investigations >= MAX_INVESTIGATIONS:
+                raise ValueError(f'Investigation limit ({MAX_INVESTIGATIONS}) reached; call submit_analysis now')
+            output = self._inspect(control) if name == 'inspect_finding' else self._history(control)
+            self.investigations += 1
+            output['investigations_left'] = MAX_INVESTIGATIONS - self.investigations
+        elif name == 'submit_analysis':
+            return self._submit(self._args(name, arguments, lists=('attention', 'gap_triage')))
+        else:
+            raise ValueError('Tool is outside this agent role')
+        self.seen.add(name)
+        return output
+
+
+# ---------------------------------------------------------------- Remediation Agent
+
+class RemediationTools(_RoleTools):
+    """Acts only on approved requests. The executor and the VM runner keep every hard guard (identity, hash,
+    expiry, precondition, single attempt); these tools add the agent's own observe-decide-act loop.
+
+    The model names a request by its control ID (one proposal per control per round, enforced by the store).
+    Writing twelve 32-hex request IDs took a local model longer than its request budget (26 Oct probe)."""
+    names = ('list_approved', 'precheck', 'execute_fixes', 'skip_fix', 'report_results')
+    repeatable = ('precheck',)  # At most twice, e.g. to re-observe after an execution.
+
+    def __init__(self, rounds, framework_run_id):
+        super().__init__(rounds, REMEDIATION)
+        self.framework_run_id = framework_run_id
+        self.executor = ApprovedActionExecutor(self.store, rounds.scanner)
+        self.pending = {r['proposal']['request_id']: r for r in self.store.for_run(framework_run_id)
+                        if r['decision'] == 'approved' and r['verdict'] is None}
+        self.request_for = {r['proposal']['control_id']: i for i, r in self.pending.items()}
+        self.checks, self.facts, self.verdicts, self.skipped, self.stopped = 0, {}, [], [], None
+        self.initial_message = (f'{len(self.pending)} administrator-approved request(s) wait for target '
+                                f'{self.target_id}: {", ".join(self.request_for)}. Start with precheck.')
+
+    def open(self):
+        handled = {v['proposal_id'] for v in self.verdicts} | {s['request_id'] for s in self.skipped}
+        return {i: r for i, r in self.pending.items() if i not in handled}
+
+    def _failure(self):
+        return self.stopped is not None or any(verdict_kind(v['verdict']) in ('failed', 'uncertain')
+                                               for v in self.verdicts)
+
+    def _skip_codes(self, request_id):
+        facts = self.facts.get(request_id, {})
+        return [c for c in REMEDIATION_SKIPS if (self._failure() if c == 'stop_after_failure' else facts.get(c))]
+
+    def available(self):
+        if not self.open() or self.stopped:
+            return ('report_results',)
+        if not self.checks:
+            return ('precheck',) if 'list_approved' in self.seen else ('list_approved', 'precheck')
+        return ('execute_fixes', 'skip_fix') + (('precheck',) if self.checks < 2 else ())
+
+    def _all_schemas(self):
+        t = self.target_id
+        open_controls = [r['proposal']['control_id'] for r in self.open().values()]
+        ids = {'type': 'string', **({'enum': open_controls} if open_controls else {})}
+        return [tool('list_approved', 'List the approved, not yet executed requests in rank order.', t),
+                tool('precheck', 'Observe the VM read-only now: is each request still ready (value unchanged since '
+                     'approval, prerequisites met, not expired)?', t),
+                tool('execute_fixes', 'Execute ready approved requests (by control_id) once each, in the given order; '
+                     'the VM runner verifies each. Stops at an uncertain outcome.', t,
+                     control_ids={'type': 'array', 'minItems': 1, 'maxItems': 40, 'items': ids}),
+                tool('skip_fix', 'Leave one approved request unexecuted, with a reason code from its skip_codes.', t,
+                     control_id=ids, reason_code={'type': 'string', 'enum': sorted(REMEDIATION_SKIPS)}),
+                tool('report_results', 'Finish once every request is executed or skipped.', t)]
+
+    def _row(self, request_id):
+        request = json.loads(self.pending[request_id]['request'])
+        requires = LIBRARY[request['action_id']].requires_compliant
+        minutes = int((_time(request['expires_at']) - _now()).total_seconds() // 60)
+        return dict(control_id=request['control_id'], rank=self.pending[request_id]['proposal']['rank'],
+                    action_id=request['action_id'], change=f"{request['expected_before']!r} -> {request['value']!r}",
+                    expires_in_minutes=max(0, minutes), **({'requires_compliant': list(requires)} if requires else {}))
+
+    def _open_request(self, control_id):
+        """The open approved request for a control, as (request_id, proposal)."""
+        request_id = self.request_for.get(control_id) if type(control_id) is str else None
+        if request_id is None or request_id not in self.open():
+            raise ValueError('Not an open approved request: ' + str(control_id)[:40])
+        return request_id, self.pending[request_id]['proposal']
+
+    def _precheck(self):
+        if not self.open():
+            raise ValueError('No open request to check')
+        if self.checks >= 2:
+            raise ValueError('precheck runs at most twice per task')
+        self.checks += 1
+        try:
+            observed = self.rounds.scanner.observe()
+        except ChannelError as exc:
+            self.facts, self.stopped = {}, 'VM could not be observed'
+            return dict(state=exc.state, detail=exc.detail, must_stop=True)
+        results = observed.results
+        by_id = {r.control.control_id: r for r in results}
+        rows = []
+        for request_id in self.open():
+            request = json.loads(self.pending[request_id]['request'])
+            current = by_id.get(request['control_id'])
+            self.facts[request_id] = dict(
+                precondition_changed=current is None or not _same_value(current.evidence.value, request['expected_before']),
+                prerequisite_not_met=bool(LIBRARY[request['action_id']].blocked_by(results)),
+                expired=_time(request['expires_at']) <= _now())
+            ready = not any(self.facts[request_id].values())
+            rows.append(dict(control_id=request['control_id'], rank=self.pending[request_id]['proposal']['rank'],
+                             ready=ready, **({} if ready else {'skip_codes': self._skip_codes(request_id),
+                                                               'current': None if current is None else current.evidence.value})))
+        return dict(state='observed', requests=rows)
+
+    def _execute_all(self, control_ids):
+        """Validate the whole list first, so a rejected list executes nothing; then run it in the agent's order."""
+        if type(control_ids) is not list or not control_ids or len(set(map(str, control_ids))) != len(control_ids):
+            raise ValueError('control_ids must be a non-empty list without repeats')
+        if self.stopped:
+            raise ValueError('Execution stopped (' + self.stopped + '); call report_results')
+        request_ids = []
+        for control_id in control_ids:
+            request_id, proposal = self._open_request(control_id)
+            facts = self.facts.get(request_id)
+            if facts is None:
+                raise ValueError('Call precheck before executing')
+            if any(facts.values()):
+                raise ValueError(f"{proposal['control_id']} is not ready "
+                                 f"({', '.join(c for c, v in facts.items() if v)}); use skip_fix")
+            request_ids.append(request_id)
+        results = []
+        for request_id in request_ids:
+            if self.stopped:
+                break  # The rest stay open and are reported as not attempted.
+            results.append(self._execute(request_id))
+        return dict(results=results, must_stop=self.stopped is not None)
+
+    def _execute(self, request_id):
+        proposal = self.pending[request_id]['proposal']
+        try:
+            verdict = self.executor.execute(request_id)
+        except ChannelError as exc:  # Identity check failed before the runner was sent: nothing was written.
+            self.stopped = 'VM channel ' + exc.state
+            verdict = 'Refused before execution: VM channel ' + exc.state
+        except ValueError as exc:  # Executor refusal before any VM call, e.g. the approval expired meanwhile.
+            verdict = 'Refused before execution: ' + str(exc)[:200]
+        kind = verdict_kind(verdict)
+        if kind == 'uncertain':
+            self.stopped = 'uncertain outcome'  # Never act again before a person reviews a possible write.
+        self.verdicts.append(dict(proposal_id=request_id, control_id=proposal['control_id'],
+                                  action_id=proposal['action_id'], verdict=verdict))
+        return dict(control_id=proposal['control_id'], verdict=verdict, result=kind)
+
+    def _skip(self, control_id, code):
+        request_id, proposal = self._open_request(control_id)
+        if code not in REMEDIATION_SKIPS:
+            raise ValueError(f"{code[:30]} is not a skip reason_code; use one of {', '.join(sorted(REMEDIATION_SKIPS))}")
+        if code not in self._skip_codes(request_id):
+            raise ValueError(f"reason_code {code} does not fit {proposal['control_id']}"
+                             + ('; call precheck first' if request_id not in self.facts else ''))
+        entry = dict(request_id=request_id, control_id=proposal['control_id'], action_id=proposal['action_id'],
+                     reason_code=code, reason=REMEDIATION_SKIPS[code])
+        # Close the approval for good, so a stale request can never run later; a new round re-proposes it.
+        self.store.record_refusal(request_id, 'skipped', 'skipped by the Remediation Agent (' + entry['reason'] + ')')
+        self.skipped.append(entry)
+        return dict(control_id=entry['control_id'], reason_code=code, reason=entry['reason'])
+
+    def outcome(self, finished):
+        """Written by code from the recorded verdicts; also used when the agent stopped without reporting."""
+        not_attempted = [r['proposal']['control_id'] for r in self.open().values()]
+        parts = []
+        if self.verdicts:
+            parts.append('Executed: ' + '; '.join(f"{v['control_id']} ({v['verdict']})" for v in self.verdicts) + '.')
+        if self.skipped:
+            parts.append('Skipped by the Remediation Agent: '
+                         + '; '.join(f"{s['control_id']} ({s['reason']})" for s in self.skipped) + '.')
+        if not_attempted:
+            parts.append('Not attempted' + (f' ({self.stopped})' if self.stopped else '') + ': '
+                         + ', '.join(not_attempted) + '.')
+        return dict(outcome='remediation_reported' if finished else 'incomplete',
+                    reason=' '.join(parts) or 'Nothing was executed.', verdicts=list(self.verdicts),
+                    skipped=list(self.skipped), not_attempted=not_attempted)
+
+    def call(self, name, arguments):
+        if name in ('list_approved', 'precheck', 'report_results'):
+            self._args(name, arguments)
+            if name == 'list_approved':
+                output = dict(requests=[self._row(i) for i in self.open()])
+            elif name == 'precheck':
+                output = self._precheck()
+            else:
+                if self.open() and self.stopped is None:
+                    raise ValueError('Decide every open request first (execute_fixes or skip_fix): '
+                                     + ', '.join(r['proposal']['control_id'] for r in self.open().values()))
+                self.terminal_outcome = self.outcome(finished=True)
+                return dict(self.terminal_outcome)
+        elif name == 'execute_fixes':
+            output = self._execute_all(self._args(name, arguments, lists=('control_ids',))['control_ids'])
+        elif name == 'skip_fix':
+            arguments = self._args(name, arguments, 'control_id', 'reason_code')
+            output = self._skip(arguments['control_id'], arguments['reason_code'])
+        else:
+            raise ValueError('Tool is outside this agent role')
+        self.seen.add(name)
+        return output
+
+
+# ---------------------------------------------------------------- AI Agent Orchestrator
 
 class OrchestratorTools(_RoleTools):
+    """Assessment phase: Scanner and Analysis delegations, then one plan of fixes."""
     names = ('delegate_scanner', 'delegate_analysis', 'submit_plan')
+    repeatable = ('delegate_scanner', 'delegate_analysis')  # Only after an Analysis rescan request (checked below).
 
     def __init__(self, rounds):
         super().__init__(rounds, ORCHESTRATOR)
         self.initial_message = ('Run one hardening round for target ' + self.target_id
                                 + '. Start by delegating the Scanner Agent.')
-        self.scanner_outcome, self.analysis, self.record, self.proposals = None, None, None, []
+        self.scanner_outcome, self.analysis, self.analysis_outcome, self.record = None, None, None, None
+        self.proposals, self.scans, self.ignored_skips = [], 0, []
 
-    def schemas(self):
+    def _rescan_allowed(self):
+        return self.scans == 1 and bool(self.analysis_outcome and self.analysis_outcome['rescan_requested'])
+
+    def available(self):
+        handed_off = bool(self.scanner_outcome and self.scanner_outcome['outcome'] == 'handoff_analysis')
+        names = ['delegate_scanner'] if not self.scans or self._rescan_allowed() else []
+        if handed_off and self.analysis is None:
+            names.append('delegate_analysis')
+        if self.scanner_outcome and (self.analysis is not None or not handed_off):
+            names.append('submit_plan')
+        return names
+
+    def _all_schemas(self):
         t = self.target_id
         decisions = self._decisions() if self.analysis else {}
         controls, actions = list(decisions), sorted({a for d in decisions.values() for a in d['usable']})
         return [tool('delegate_scanner', 'Delegate collection and coverage review to the Scanner Agent.', t),
-                tool('delegate_analysis', 'Delegate deterministic risk analysis of the Scanner handoff.', t),
+                tool('delegate_analysis', 'Delegate risk analysis of the Scanner handoff to the Analysis Agent.', t),
                 tool('submit_plan', 'Submit the whole decision once: fixes in execution order, and every other '
                      'must_decide finding in skipped with a reason code.', t,
-                     fixes=plan_schema(('control_id', 'action_id', 'reason_code'), controls, actions),
-                     skipped=plan_schema(('control_id', 'reason_code'), controls, actions))]
+                     fixes=coded_list(('control_id', 'action_id', 'reason_code'),
+                                      dict(control_id=controls, action_id=actions, reason_code=sorted(FIX_REASONS))),
+                     skipped=coded_list(('control_id', 'reason_code'),
+                                        dict(control_id=controls, reason_code=sorted(SKIP_REASONS))))]
 
     def _decisions(self):
         """Findings the Orchestrator must decide: those with at least one library action."""
@@ -252,20 +719,6 @@ class OrchestratorTools(_RoleTools):
                     finding=finding, usable=[a.action_id for a in actions if not a.blocked_by(results)],
                     waits_for=sorted({c for a in actions for c in a.blocked_by(results)}))
         return decisions
-
-    @staticmethod
-    def _entries(entries, keys, label, codes):
-        if type(entries) is not list or len(entries) > 40:
-            raise ValueError(label + ' must be a list')
-        for entry in entries:
-            if type(entry) is not dict or set(entry) != set(keys):
-                received = ', '.join(sorted(entry)) if type(entry) is dict else type(entry).__name__
-                raise ValueError(f'Each {label} entry needs exactly {", ".join(keys)}; received {received}')
-            if any(type(entry[k]) is not str or not entry[k].strip() or len(entry[k]) > 40 for k in keys):
-                raise ValueError(f'{label} values must be short non-empty strings')
-            if entry['reason_code'] not in codes:
-                raise ValueError(f"{entry['reason_code'][:30]} is not a {label} reason_code; use one of {', '.join(sorted(codes))}")
-        return entries
 
     @staticmethod
     def _facts(control, decisions):
@@ -297,8 +750,12 @@ class OrchestratorTools(_RoleTools):
 
     def _validate_plan(self, fixes, skipped):
         decisions = self._decisions() if self.analysis else {}
-        fixes = self._entries(fixes, ('control_id', 'action_id', 'reason_code'), 'fixes', FIX_REASONS)
-        skipped = self._entries(skipped, ('control_id', 'reason_code'), 'skipped', SKIP_REASONS)
+        fixes = check_entries(fixes, ('control_id', 'action_id', 'reason_code'), 'fixes', FIX_REASONS)
+        skipped = check_entries(skipped, ('control_id', 'reason_code'), 'skipped', SKIP_REASONS)
+        # Skipping a control that has nothing to decide (a gap) is a no-op: it is ignored and recorded rather than
+        # failing the whole plan (real qwen3:8b did this in 2 of 4 probes). A fix for such a control is still refused.
+        self.ignored_skips = [e['control_id'] for e in skipped if e['control_id'] not in decisions]
+        skipped = [e for e in skipped if e['control_id'] in decisions]
         seen = set()
         for entry in fixes + skipped:
             control = entry['control_id']
@@ -338,6 +795,11 @@ class OrchestratorTools(_RoleTools):
             parts.append('No library action (manual review): ' + ', '.join(no_action) + '.')
         if self.analysis['gaps']:
             parts.append(f"{len(self.analysis['gaps'])} Unknown/Error gap(s) not scored.")
+        if self.analysis_outcome['attention']:
+            parts.append('Analysis Agent flags for attention: ' + '; '.join(
+                f"{a['control_id']} ({a['reason']})" for a in self.analysis_outcome['attention']) + '.')
+        if self.ignored_skips:
+            parts.append('Ignored skip entries for controls with nothing to decide: ' + ', '.join(self.ignored_skips) + '.')
         parts.append('Nothing has been approved or executed.')
         state = ('awaiting_approval' if self.proposals else
                  'no_fix_proposed' if self.analysis['findings'] else 'no_findings')
@@ -346,15 +808,21 @@ class OrchestratorTools(_RoleTools):
     def call(self, name, arguments):
         if name == 'delegate_scanner':
             self._args(name, arguments)
-            if self.scanner_outcome is not None:
-                raise ValueError('The Scanner runs once per round')
+            if self.scans and not self._rescan_allowed():
+                raise ValueError('The Scanner runs once per round, and once more only when the Analysis Agent '
+                                 'requests a rescan')
             return self._delegate_scanner()
         if name == 'delegate_analysis':
+            # The model may name the scan it hands over (it did in 3 of 3 probes); it must be the current one.
+            if type(arguments) is dict and 'framework_run_id' in arguments:
+                if arguments['framework_run_id'] != self.framework_run_id:
+                    raise ValueError('framework_run_id must be the current scan ' + str(self.framework_run_id))
+                arguments = {k: v for k, v in arguments.items() if k != 'framework_run_id'}
             self._args(name, arguments)
             if not self.scanner_outcome or self.scanner_outcome['outcome'] != 'handoff_analysis':
                 raise ValueError('A Scanner handoff is required before analysis')
             if self.analysis is not None:
-                raise ValueError('Analysis already completed for this round')
+                raise ValueError('Analysis already completed for this scan')
             return self._delegate_analysis()
         if name == 'submit_plan':
             arguments = self._args(name, arguments, lists=('fixes', 'skipped'))
@@ -378,33 +846,29 @@ class OrchestratorTools(_RoleTools):
         raise ValueError('Tool is outside this agent role')
 
     def _delegate_scanner(self):
-        remaining = self.rounds.remaining()
-        if remaining < 5:
-            raise ValueError('Round deadline reached')
         tools = ScannerTools(self.rounds)
-        child = Coordinator(self.rounds.client_factory(SCANNER), tools, limits=Limits(
-            steps=6, calls=8, seconds=min(150, remaining), request_seconds=min(60, remaining))).run()
-        self.rounds.children[SCANNER] = child['run_id']
-        self.scanner_outcome = tools.terminal_outcome or dict(outcome='incomplete', reason=child['events'][-1]['data']['summary'])
-        if self.scanner_outcome['outcome'] == 'handoff_analysis':
-            self.framework_run_id = self.scanner_outcome['framework_run_id']
-            self.record = tools.record
-        elif tools.record is not None:
-            self.framework_run_id = tools.framework_run_id  # Evidence exists even without a handoff.
-        return dict(agent=SCANNER, child_run_id=child['run_id'], status=child['events'][-1]['data']['status'],
-                    handoff=self.scanner_outcome)
+        child, finished = self._child(SCANNER, tools, steps=6, calls=8, seconds=150)
+        self.scans += 1
+        outcome = tools.terminal_outcome or dict(outcome='incomplete', reason=finished['summary'])
+        if outcome['outcome'] == 'handoff_analysis':
+            self.scanner_outcome, self.framework_run_id, self.record = outcome, outcome['framework_run_id'], tools.record
+            self.analysis = self.analysis_outcome = None  # A new scan needs a new analysis.
+        elif self.scanner_outcome is None:
+            self.scanner_outcome = outcome
+            if tools.record is not None:
+                self.framework_run_id = tools.framework_run_id  # Evidence exists even without a handoff.
+        # A failed second scan keeps the first scan and its analysis.
+        return dict(agent=SCANNER, child_run_id=child['run_id'], status=finished['status'], handoff=outcome)
 
     def _delegate_analysis(self):
         previous = self.rounds.previous_records(self.framework_run_id)
-        self.analysis = AnalysisAgent().run(self.record, previous)
-        trace = _AnalysisTrace(self.rounds, self.framework_run_id)
-        log = InvestigationLog(self.store)
-        run_id = log.start(trace, _DeterministicClient(), Limits(steps=1, calls=1, seconds=1, request_seconds=1))
-        log.append(run_id, 'tool', dict(name='analyse_findings', arguments={}, result=self.analysis))
-        log.append(run_id, 'finished', dict(status='Completed', summary='Deterministic risk ranking completed.',
-            duration_seconds=0, tool_calls=1, proposal_id=None,
-            outcome=dict(outcome='analysis_complete', findings=len(self.analysis['findings']))))
-        self.rounds.children[ANALYSIS] = run_id
+        tools = AnalysisTools(self.rounds, self.record, previous, self.framework_run_id)
+        child, finished = self._child(ANALYSIS, tools, steps=6, calls=10, seconds=220, request=180)
+        # Scores are deterministic (D2): if the agent stopped early, code still computes the same ranking.
+        self.analysis = tools.analysis or risk_analysis(self.record, previous)
+        self.analysis_outcome = tools.terminal_outcome or dict(
+            outcome='incomplete', reason='Analysis Agent stopped without a decision: ' + finished['summary'],
+            attention=[], gap_triage=[], rescan_requested=[])
         must_decide = []
         decisions = self._decisions()
         for control, decision in decisions.items():
@@ -415,35 +879,168 @@ class OrchestratorTools(_RoleTools):
                 entry['blocked_until_compliant'] = decision['waits_for']
             must_decide.append(entry)
         no_action = [f['control_id'] for f in self.analysis['findings'] if not f['candidate_actions']]
-        return dict(agent=ANALYSIS, must_decide=must_decide,
+        return dict(agent=ANALYSIS, status=finished['status'], must_decide=must_decide,
                     no_action=no_action + self.analysis['unscored_non_compliant'],
-                    gaps=[g['control_id'] for g in self.analysis['gaps']])
+                    gaps=[g['control_id'] for g in self.analysis['gaps']],
+                    attention=[dict(control_id=a['control_id'], attention_code=a['attention_code'])
+                               for a in self.analysis_outcome['attention']],
+                    rescan_requested=self.analysis_outcome['rescan_requested'])
 
 
-class _AnalysisTrace:
-    evidence_mode = 'Live (WinRM)'
+class OrchestratorReviewTools(_RoleTools):
+    """Remediation phase: Remediation Agent, verification by the Scanner Agent, then the next-step decision."""
+    names = ('delegate_remediation', 'delegate_verification', 'submit_review')
 
     def __init__(self, rounds, framework_run_id):
-        self.assessment_id, self.target_id = 'agentic-' + rounds.session_id, rounds.target_id
-        self.scenario, self.framework_run_id = 'Agentic hardening round: ' + ANALYSIS, framework_run_id
-        self.agent_role, self.team_id = ANALYSIS, rounds.round_id
+        super().__init__(rounds, ORCHESTRATOR)
+        self.framework_run_id, self.system_prompt = framework_run_id, REVIEW_PROMPT
+        self.scenario = 'Agentic remediation phase: ' + ORCHESTRATOR
+        self.initial_message = (f'The administrator approved fixes from scan {framework_run_id} of target '
+                                f'{self.target_id}. Start by delegating the Remediation Agent.')
+        self.remediation = self.verification = None
 
+    def available(self):
+        if self.remediation is None:
+            return ('delegate_remediation',)
+        if self._executed() and self.verification is None:
+            return ('delegate_verification',)
+        return ('submit_review',)
+
+    def _all_schemas(self):
+        t = self.target_id
+        return [tool('delegate_remediation', 'Delegate the approved fixes to the Remediation Agent.', t),
+                tool('delegate_verification', 'Delegate a verification rescan of the VM to the Scanner Agent.', t),
+                tool('submit_review', 'Decide the next step once, with a reason code that fits the results.', t,
+                     next_step={'type': 'string', 'enum': sorted(NEXT_STEP)},
+                     reason_code={'type': 'string', 'enum': sorted({c for codes in NEXT_STEP.values() for c in codes})})]
+
+    def _executed(self):
+        return [v for v in self.remediation['verdicts'] if verdict_kind(v['verdict']) != 'refused']
+
+    def _scan_facts(self, run_id):
+        runtime = self.rounds.runtime
+        before = runtime.imports.get(runtime.get(self.framework_run_id).evidence_sha256).assessment.results
+        after = runtime.imports.get(runtime.get(run_id).evidence_sha256).assessment.results
+
+        def fixable(results):
+            return {r.control.control_id for r in results if r.status == Status.NON_COMPLIANT and any(
+                a.eligible(r) and not a.blocked_by(results) for a in actions_for(r.control.control_id))}
+        now = fixable(after)
+        regressions = [c['control_id'] for c in self.rounds.history.compare(self.framework_run_id, run_id)
+                       if c['change'] == 'Regression']
+        return dict(framework_run_id=run_id, status={r.control.control_id: r.status.value for r in after},
+                    remaining=sorted(now), unblocked=sorted(now - fixable(before)), regressions=regressions)
+
+    def _facts(self):
+        """Which next-step codes are true, from verdicts and the verification scan (never from model text)."""
+        scan = self.verification if self.verification and self.verification['framework_run_id'] else None
+        failed, uncertain = [], []
+        for v in self._executed():
+            kind = verdict_kind(v['verdict'])
+            if (scan and scan['status'].get(v['control_id']) == Status.COMPLIANT.value) or (not scan and kind == 'verified'):
+                continue  # Observed compliant by the independent rescan, or by the receipt when no rescan exists.
+            (uncertain if kind == 'uncertain' else failed).append(v['control_id'])
+        remaining, unblocked = (scan['remaining'], scan['unblocked']) if scan else ([], [])
+        not_attempted = self.remediation['not_attempted']
+        clean = not failed and not uncertain and not not_attempted
+        codes = {'finish': {'all_verified': bool(self._executed()) and clean,
+                            'nothing_fixable': scan is not None and not remaining and clean,
+                            'nothing_executed': not self._executed() and not not_attempted},
+                 'next_round': {'unblocked_findings': clean and bool(unblocked),
+                                'remaining_findings': clean and bool(remaining)},
+                 'remediation_review': {'verification_failed': bool(failed), 'uncertain_outcome': bool(uncertain),
+                                        'remediation_incomplete': bool(not_attempted)}}
+        return dict(failed=failed, uncertain=uncertain, remaining=remaining, unblocked=unblocked,
+                    not_attempted=not_attempted,
+                    codes={step: [c for c, true in d.items() if true] for step, d in codes.items()})
+
+    def call(self, name, arguments):
+        if name == 'delegate_remediation':
+            self._args(name, arguments)
+            if self.remediation is not None:
+                raise ValueError('The Remediation Agent runs once per phase')
+            tools = RemediationTools(self.rounds, self.framework_run_id)
+            if not tools.pending:
+                raise ValueError('No approved, unexecuted fixes for this round')
+            child, finished = self._child(REMEDIATION, tools, steps=12, calls=16, seconds=360, request=150)
+            self.remediation = tools.terminal_outcome or tools.outcome(finished=False)
+            output = dict(agent=REMEDIATION, status=finished['status'],
+                          executed=[dict(control_id=v['control_id'], result=verdict_kind(v['verdict']))
+                                    for v in self.remediation['verdicts']],
+                          skipped=[dict(control_id=s['control_id'], reason_code=s['reason_code'])
+                                   for s in self.remediation['skipped']],
+                          not_attempted=self.remediation['not_attempted'])
+            if not self._executed():
+                output['next_step_codes'] = self._facts()['codes']
+            return output
+        if name == 'delegate_verification':
+            self._args(name, arguments)
+            if self.remediation is None:
+                raise ValueError('Delegate the Remediation Agent first')
+            if not self._executed():
+                raise ValueError('Nothing was executed, so there is nothing to verify')
+            if self.verification is not None:
+                raise ValueError('Verification runs once per phase')
+            tools = ScannerTools(self.rounds, verify_run_id=self.framework_run_id)
+            child, finished = self._child(SCANNER, tools, steps=6, calls=8, seconds=150)
+            if tools.record is not None:  # Collected evidence counts even if the agent did not hand off.
+                self.verification = self._scan_facts(tools.framework_run_id)
+            else:
+                self.verification = dict(framework_run_id=None, reason=tools.failure or finished['summary'])
+            facts = self._facts()
+            return dict(agent=SCANNER, status=finished['status'],
+                        verification_run_id=self.verification['framework_run_id'],
+                        regressions=self.verification.get('regressions', []), failed=facts['failed'],
+                        uncertain=facts['uncertain'], unblocked=facts['unblocked'], remaining=facts['remaining'],
+                        next_step_codes=facts['codes'])
+        if name == 'submit_review':
+            arguments = self._args(name, arguments, 'next_step', 'reason_code')
+            if self.remediation is None:
+                raise ValueError('Delegate the Remediation Agent first')
+            if self._executed() and self.verification is None:
+                raise ValueError('Fixes were executed: delegate verification before deciding')
+            step, code = arguments['next_step'], arguments['reason_code']
+            if step not in NEXT_STEP:
+                raise ValueError(f"next_step must be one of {', '.join(sorted(NEXT_STEP))}")
+            facts = self._facts()
+            if code not in facts['codes'][step]:
+                true = '; '.join(f"{s}: {', '.join(c)}" for s, c in facts['codes'].items() if c)
+                raise ValueError(f'reason_code {code[:30]} does not fit {step} for these results; true codes: {true}')
+            sentence = NEXT_STEP[step][code].format(**{k: ', '.join(facts[k]) for k in
+                                                       ('failed', 'uncertain', 'unblocked', 'remaining', 'not_attempted')})
+            parts = [self.remediation['reason']]
+            if self.verification and self.verification['framework_run_id']:
+                regressions = self.verification['regressions']
+                parts.append('Verification rescan by the Scanner Agent: '
+                             + (f"regressions in {', '.join(regressions)}." if regressions else 'no regressions.'))
+            elif self.verification:
+                parts.append('Verification rescan unavailable: ' + self.verification['reason'][:200] + '.')
+            parts.append('Next step (' + step.replace('_', ' ') + '): ' + sentence + '.')
+            self.terminal_outcome = dict(outcome=step, reason_code=code, reason=' '.join(parts),
+                                         framework_run_id=self.framework_run_id,
+                                         verification_run_id=self.verification and self.verification['framework_run_id'])
+            return dict(self.terminal_outcome)
+        raise ValueError('Tool is outside this agent role')
+
+
+# ---------------------------------------------------------------- Rounds
 
 class AgenticHardening:
-    """One administrator-started round, plus approved execution and verification afterwards."""
+    """One administrator-started assessment round, then an agentic remediation phase after approval."""
 
-    def __init__(self, runtime, store, scanner, *, client_factory=None, seconds=300):
-        if type(seconds) is not int or not 30 <= seconds <= 300:
-            raise ValueError('Round budget must be 30-300 seconds')
+    def __init__(self, runtime, store, scanner, *, client_factory=None, seconds=600):
+        # Default 10 minutes per phase (NFR06), the measured need on the RTX 3050 laptop.
+        if type(seconds) is not int or not 30 <= seconds <= 600:
+            raise ValueError('Round budget must be 30-600 seconds')
         if store.imports.path.resolve() != runtime.imports.path.resolve():
             raise ValueError('Remediation store and framework must share one evidence store')
         self.runtime, self.store, self.scanner, self.target = runtime, store, scanner, scanner.target
         self.target_id = 'windows:' + scanner.target.machine_uuid.lower()
         # The Orchestrator writes the whole plan in one answer, so it needs more output room.
-        self.client_factory = client_factory or (lambda role: OllamaClient(1024 if role == ORCHESTRATOR else 384))
+        self.client_factory = client_factory or (lambda role: OllamaClient({ORCHESTRATOR: 1024, ANALYSIS: 768}.get(role, 512)))
         self.seconds, self.deadline = seconds, None
         self.session_id = self.round_id = None
-        self.children = {}
+        self.children, self.scanned_runs = {}, []
         self.history = HistoryService(runtime, store)
 
     def remaining(self):
@@ -453,47 +1050,81 @@ class AgenticHardening:
         """Earlier runs for the same target, newest first, for drift (D) comparison."""
         return self.history.previous_records(framework_run_id, limit)
 
-    def run_round(self, session_id=None):
+    def _start(self, session_id):
         self.session_id, self.round_id = session_id or uuid4().hex, uuid4().hex
-        self.children, self.deadline = {}, time.monotonic() + self.seconds
+        self.children, self.scanned_runs, self.deadline = {}, [], time.monotonic() + self.seconds
+
+    def run_round(self, session_id=None):
+        self._start(session_id)
         tools = OrchestratorTools(self)
         result = Coordinator(self.client_factory(ORCHESTRATOR), tools, limits=Limits(
-            steps=12, calls=16, seconds=self.seconds, request_seconds=120)).run()
+            steps=12, calls=16, seconds=self.seconds, request_seconds=240)).run()
         outcome = tools.terminal_outcome or dict(outcome='incomplete', proposals=list(tools.proposals),
             reason='The Orchestrator stopped without finishing the round: ' + result['events'][-1]['data']['summary'])
-        if tools.framework_run_id:
-            self.history.record_drift(tools.framework_run_id)
+        for run_id in self.scanned_runs:
+            self.history.record_drift(run_id)
         self.store.add_round(self.session_id, 'assessment', tools.framework_run_id, round_id=self.round_id,
-                             orchestrator_run_id=result['run_id'], children=dict(self.children), outcome=outcome)
+                             orchestrator_run_id=result['run_id'], children=dict(self.children), outcome=outcome,
+                             analysis=tools.analysis, analysis_outcome=tools.analysis_outcome)
         return dict(session_id=self.session_id, round_id=self.round_id, framework_run_id=tools.framework_run_id,
                     outcome=outcome, orchestrator_run_id=result['run_id'])
 
-    def execute_approved(self, session_id):
-        """Remediation Agent runs approved fixes in Orchestrator order; Scanner then verifies."""
+    def execute_approved(self, session_id, *, deterministic=False):
+        """Remediation phase for the latest assessed round. The Orchestrator delegates the Remediation Agent and a
+        verification scan. `deterministic` is the administrator-chosen fallback without AI (report 4.1.2)."""
         rounds = [r for r in self.store.rounds(session_id) if r['kind'] == 'assessment' and r['framework_run_id']]
         if not rounds:
             raise ValueError('No assessed round to remediate')
         run_id = rounds[-1]['framework_run_id']
-        agent = RemediationAgent(self.store, self.scanner)
-        verdicts = []
+        if not any(r['decision'] == 'approved' and r['verdict'] is None for r in self.store.for_run(run_id)):
+            raise ValueError('No approved, unexecuted fixes in the latest round')
+        self._start(session_id)
+        orchestrator_run_id, verification = None, None
+        if deterministic:
+            verdicts = self._execute_without_ai(run_id)
+            outcome = dict(outcome='fallback', reason='Executed without AI at the administrator\'s request, in the '
+                           'Orchestrator\'s rank order, with the same approval and precondition guards.')
+        else:
+            tools = OrchestratorReviewTools(self, run_id)
+            result = Coordinator(self.client_factory(ORCHESTRATOR), tools, limits=Limits(
+                steps=8, calls=10, seconds=self.seconds, request_seconds=180)).run()
+            orchestrator_run_id = result['run_id']
+            verdicts = list((tools.remediation or {}).get('verdicts', []))
+            verification = tools.verification and tools.verification['framework_run_id']
+            outcome = tools.terminal_outcome or dict(outcome='incomplete', reason=(
+                (tools.remediation or {}).get('reason', 'Nothing was executed.') + ' The Orchestrator stopped '
+                'without deciding the next step: ' + result['events'][-1]['data']['summary']))
+        if verification is None and any(verdict_kind(v['verdict']) != 'refused' for v in verdicts):
+            # A possible write must never stay unobserved: code runs the verification scan itself.
+            try:
+                verification = self.scanner.request(self.target.hostname, self.target.machine_uuid,
+                                                    origin_run_id=run_id)['framework_run_id']
+                outcome['reason'] += ' Verification rescan run by code.'
+            except ChannelError as exc:
+                verdicts.append(dict(proposal_id=None, control_id=None, action_id=None,
+                                     verdict='Verification scan unavailable: ' + exc.detail))
+        for scanned in self.scanned_runs + ([verification] if verification not in self.scanned_runs else []):
+            if scanned:
+                self.history.record_drift(scanned)
+        self.store.add_round(session_id, 'verification_scan', verification, round_id=self.round_id,
+                             remediated_run_id=run_id, verdicts=verdicts, outcome=outcome,
+                             orchestrator_run_id=orchestrator_run_id, children=dict(self.children))
+        return dict(verdicts=verdicts, verification_run_id=verification, outcome=outcome, round_id=self.round_id)
+
+    def _execute_without_ai(self, run_id):
+        executor, verdicts = ApprovedActionExecutor(self.store, self.scanner), []
         for record in self.store.for_run(run_id):
             if record['decision'] == 'approved' and record['verdict'] is None:
                 proposal = record['proposal']
+                try:
+                    verdict = executor.execute(proposal['request_id'])
+                except (ValueError, ChannelError) as exc:
+                    verdict = 'Refused before execution: ' + str(exc)[:200]
                 verdicts.append(dict(proposal_id=proposal['request_id'], control_id=proposal['control_id'],
-                                     action_id=proposal['action_id'], verdict=agent.execute(proposal['request_id'])))
-        if not verdicts:
-            raise ValueError('No approved, unexecuted fixes in the latest round')
-        verification = None
-        try:
-            scan = self.scanner.request(self.target.hostname, self.target.machine_uuid, origin_run_id=run_id)
-            verification = scan['framework_run_id']
-            self.history.record_drift(verification)
-        except ChannelError as exc:
-            verdicts.append(dict(proposal_id=None, control_id=None, action_id=None,
-                                 verdict='Verification scan unavailable: ' + exc.detail))
-        self.store.add_round(session_id, 'verification_scan', verification, remediated_run_id=run_id,
-                             verdicts=verdicts)
-        return dict(verdicts=verdicts, verification_run_id=verification)
+                                     action_id=proposal['action_id'], verdict=verdict))
+                if verdict_kind(verdict) == 'uncertain':
+                    break  # Never continue after a possible unconfirmed write.
+        return verdicts
 
     def changes(self, before_run_id, after_run_id):
         """Per-control change between two runs (improvement, regression, unchanged...)."""

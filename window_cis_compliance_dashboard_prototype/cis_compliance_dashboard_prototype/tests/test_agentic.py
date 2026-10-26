@@ -10,10 +10,11 @@ import tempfile
 import unittest
 
 from hardening.action_library import LIBRARY
-from hardening.agentic import ANALYSIS, ORCHESTRATOR, SCANNER, AgenticHardening
+from hardening.agentic import (ANALYSIS, ORCHESTRATOR, PROMPTS, REMEDIATION, REVIEW_PROMPT, SCANNER,
+                               AgenticHardening)
 from hardening.framework import AssessmentOrchestrator
 from hardening.import_storage import ImportedEvidenceStore
-from hardening.remediation import RUNNER, RemediationAgent, RemediationStore
+from hardening.remediation import RUNNER, ApprovedActionExecutor, RemediationStore
 from hardening.risk import analyse
 from hardening.winrm_channel import IDENTITY_SCRIPT, LiveScanner
 from test_investigation import MockClient
@@ -98,10 +99,95 @@ def call(name, target_id, **arguments):
     return {'tool_calls': [{'function': {'name': name, 'arguments': {'target_id': target_id, **arguments}}}]}
 
 
-def clients(target_id, orchestrator, scanner=None):
-    scanner = scanner or [call('scan_target', target_id), call('read_coverage', target_id),
-                          call('handoff_analysis', target_id, reason='Coverage read; four gaps are policy Unknowns.')]
-    return {ORCHESTRATOR: MockClient(orchestrator), SCANNER: MockClient(scanner)}.__getitem__
+class Responsive:
+    """Test double that picks its next call from the tool results it has seen. Not a model."""
+    model, provenance = 'mock-model', 'Mock model (test only)'
+
+    def __init__(self, policy):
+        self.policy = policy
+
+    def chat(self, messages, tools, *, timeout):
+        seen = [(m['tool_name'], json.loads(m['content'])) for m in messages if m['role'] == 'tool']
+        name, arguments = self.policy(seen, [t['function']['name'] for t in tools])
+        return call(name, tools[0]['function']['parameters']['properties']['target_id']['enum'][0], **arguments)
+
+
+def scanner_policy(seen, names):
+    done = [n for n, _ in seen]
+    if 'scan_target' not in done:
+        return 'scan_target', {}
+    if 'read_coverage' not in done:
+        return 'read_coverage', {}
+    return names[4], dict(reason='Coverage read.')  # handoff_analysis, or handoff_verification when verifying.
+
+
+def analysis_policy(seen, names):
+    if not seen:
+        return 'score_findings', {}
+    return 'submit_analysis', dict(attention=[], gap_triage=[
+        dict(control_id=g['control_id'], triage_code='manual_review') for g in seen[0][1]['gaps']])
+
+
+def remediation_policy(seen, names):
+    done = [n for n, _ in seen]
+    if 'list_approved' not in done:
+        return 'list_approved', {}
+    if 'precheck' not in done:
+        return 'precheck', {}
+    rows = next(r for n, r in seen if n == 'precheck').get('requests', [])
+    skipped = {r.get('control_id') for n, r in seen if n == 'skip_fix'}
+    waiting = [row for row in rows if not row['ready'] and row['control_id'] not in skipped]
+    if waiting:
+        return 'skip_fix', dict(control_id=waiting[0]['control_id'], reason_code=waiting[0]['skip_codes'][0])
+    ready = [row['control_id'] for row in rows if row['ready']]
+    executed = any(n == 'execute_fixes' and 'results' in r for n, r in seen)  # A refused list executed nothing.
+    if ready and not executed and not any(r.get('must_stop') for _, r in seen):
+        return 'execute_fixes', dict(control_ids=ready)
+    return 'report_results', {}
+
+
+def review_policy(seen, names):
+    done = [n for n, _ in seen]
+    if 'delegate_remediation' not in done:
+        return 'delegate_remediation', {}
+    if 'next_step_codes' not in seen[-1][1] and 'delegate_verification' not in done:
+        return 'delegate_verification', {}
+    codes = next(r['next_step_codes'] for _, r in reversed(seen) if 'next_step_codes' in r)
+    step = next(s for s in ('remediation_review', 'next_round', 'finish') if codes[s])
+    return 'submit_review', dict(next_step=step, reason_code=codes[step][0])
+
+
+class PhasedOrchestrator:
+    """Scripted plan for the assessment phase; scripted or responsive decisions for the remediation phase."""
+    model, provenance = 'mock-model', 'Mock model (test only)'
+
+    def __init__(self, plan, review=None):
+        self.plan = MockClient(plan)
+        self.review = MockClient(review) if review is not None else Responsive(review_policy)
+
+    def chat(self, messages, tools, *, timeout):
+        client = self.review if messages[0]['content'] == REVIEW_PROMPT else self.plan
+        return client.chat(messages, tools, timeout=timeout)
+
+
+def clients(target_id, orchestrator, scanner=None, analysis=None, remediation=None, review=None):
+    """One client per role: a given client, a scripted list where a test pins the behaviour, otherwise responsive."""
+    def role(given, policy):
+        return given if hasattr(given, 'chat') else MockClient(given) if given else Responsive(policy)
+    team = {ORCHESTRATOR: PhasedOrchestrator(orchestrator, review), SCANNER: role(scanner, scanner_policy),
+            ANALYSIS: role(analysis, analysis_policy), REMEDIATION: role(remediation, remediation_policy)}
+    return team.__getitem__
+
+
+class TeamDouble:
+    """Routes plain client calls to role doubles by system prompt (the page builds clients without a role)."""
+
+    def __init__(self, factory):
+        self.factory = factory
+        self.roles = {prompt: role for role, prompt in PROMPTS.items()} | {REVIEW_PROMPT: ORCHESTRATOR}
+
+    def chat(self, messages, tools, *, timeout):
+        return self.factory(self.roles[messages[0]['content']]).chat(messages, tools, timeout=timeout)
 
 
 class AgenticTestCase(unittest.TestCase):
@@ -111,20 +197,31 @@ class AgenticTestCase(unittest.TestCase):
         self.runtime = AssessmentOrchestrator(imports)
         self.store = RemediationStore(Path(folder.name) / 'agentic.sqlite3', imports)
 
-    def hardening(self, vm, orchestrator, scanner=None):
+    def hardening(self, vm, orchestrator, scanner=None, **agents):
         scanner_channel = LiveScanner(self.runtime, target(), session_factory=vm)
         self.target_id = 'windows:' + target().machine_uuid
         return AgenticHardening(self.runtime, self.store, scanner_channel,
-                                client_factory=clients(self.target_id, orchestrator, scanner))
+                                client_factory=clients(self.target_id, orchestrator, scanner, **agents))
 
-    def standard_round(self, vm):
+    def trace(self, hardening, round_id, role):
+        return [t for t in hardening.traces(round_id) if t['agent_role'] == role]
+
+    def calls(self, trace):
+        return [(e['kind'], e['data']['name']) for e in trace['events'] if e['kind'] in ('tool', 'tool_rejected')]
+
+    def standard_round(self, vm, **agents):
         t = 'windows:' + target().machine_uuid
         return self.hardening(vm, [call('delegate_scanner', t), call('delegate_analysis', t), plan(t,
             fixes=[('1.2.2', 'REM-1.2.2', 'high_risk'), ('1.1.1', 'REM-1.1.1', 'low_impact')],
-            skipped=[('2.3.10.3', 'needs_review'), ('1.1.3', 'lower_priority'), ('18.10.57.3.9.4', 'needs_review')])])
+            skipped=[('2.3.10.3', 'needs_review'), ('1.1.3', 'lower_priority'), ('18.10.57.3.9.4', 'needs_review')])],
+            **agents)
 
-    def rejected(self, hardening, round_id):
-        trace = next(t for t in hardening.traces(round_id) if t['agent_role'] == ORCHESTRATOR)
+    def approve_all(self, framework_run_id):
+        for record in self.store.for_run(framework_run_id):
+            self.store.decide(record['proposal']['request_id'], approve=True, operator='admin01')
+
+    def rejected(self, hardening, round_id, role=ORCHESTRATOR):
+        trace = next(t for t in hardening.traces(round_id) if t['agent_role'] == role)
         return [e['data']['error'] for e in trace['events'] if e['kind'] == 'tool_rejected']
 
 
@@ -160,6 +257,17 @@ class AgenticRoundTests(AgenticTestCase):
         self.assertEqual(changes['1.2.2'], 'Improvement')
         self.assertEqual(changes['1.2.1'], 'Unknown -> Compliant')
         self.assertEqual(changes['1.1.1'], 'Unchanged')
+        # Remediation phase: the Orchestrator delegated the Remediation Agent and a verification scan, then decided.
+        phase = {t['agent_role']: t for t in hardening.traces(executed['round_id'])}
+        self.assertEqual(set(phase), {ORCHESTRATOR, REMEDIATION, SCANNER})
+        self.assertEqual(self.calls(phase[REMEDIATION]), [('tool', 'list_approved'), ('tool', 'precheck'),
+                                                          ('tool', 'execute_fixes'), ('tool', 'report_results')])
+        self.assertEqual(self.calls(phase[ORCHESTRATOR]), [('tool', 'delegate_remediation'),
+                                                           ('tool', 'delegate_verification'), ('tool', 'submit_review')])
+        self.assertEqual(executed['outcome']['outcome'], 'next_round')
+        self.assertEqual(executed['outcome']['reason'], 'Executed: 1.2.2 (Verified compliant). Verification rescan by '
+                         'the Scanner Agent: no regressions. Next step (next round): fixable findings remain (1.1.1, '
+                         '1.1.3, 18.10.57.3.9.4, 2.3.10.3); run a new round to review them.')
         with self.assertRaises(ValueError):
             hardening.execute_approved(result['session_id'])  # Nothing approved and unexecuted remains.
 
@@ -248,7 +356,8 @@ class AgenticRoundTests(AgenticTestCase):
         hardening = self.standard_round(FakeVm())
         trace = next(t for t in AgenticHardening.traces(hardening, result['round_id']) if t['agent_role'] == ORCHESTRATOR)
         analysis = next(e['data']['result'] for e in trace['events'] if e['data'].get('name') == 'delegate_analysis')
-        self.assertEqual(set(analysis), {'agent', 'must_decide', 'no_action', 'gaps'})
+        self.assertEqual(set(analysis), {'agent', 'status', 'must_decide', 'no_action', 'gaps', 'attention',
+                                         'rescan_requested'})
         self.assertEqual(analysis['must_decide'][0], dict(control_id='1.2.2', level='High', score=69, actions=['REM-1.2.2'],
             fix_codes=['high_risk', 'low_impact'], skip_codes=['needs_review', 'lower_priority']))
         moderate = next(d for d in analysis['must_decide'] if d['control_id'] == '1.1.3')
@@ -298,6 +407,28 @@ class OrchestratorAccountabilityTests(AgenticTestCase):
         self.assertEqual(self.rejected(hardening, result['round_id']),
                          ['submit_plan needs exactly: fixes, skipped, target_id; received: fixes, reason, target_id'])
         self.assertEqual(result['outcome']['outcome'], 'no_fix_proposed')  # One correction, then success.
+
+    def test_skipping_a_gap_is_ignored_and_recorded_but_fixing_one_is_refused(self):
+        t = 'windows:' + target().machine_uuid
+        hardening = self.hardening(FakeVm(), [call('delegate_scanner', t), call('delegate_analysis', t),
+                                              plan(t, skipped=DEFER_ALL + [('1.2.1', 'waits_for_prerequisite')])])
+        result = hardening.run_round()
+        self.assertEqual(self.rejected(hardening, result['round_id']), [])
+        self.assertEqual(result['outcome']['outcome'], 'no_fix_proposed')
+        self.assertIn('Ignored skip entries for controls with nothing to decide: 1.2.1.', result['outcome']['reason'])
+        self.assertNotIn('1.2.1', [s['control_id'] for s in result['outcome']['skipped']])
+
+    def test_an_agent_that_answers_without_a_tool_call_gets_one_reminder(self):
+        t = 'windows:' + target().machine_uuid
+        silent = {'content': '', 'tool_calls': []}
+        analysis = [silent, call('score_findings', t), silent, silent]  # Second silence after the nudge ends it.
+        hardening = self.hardening(FakeVm(), [call('delegate_scanner', t), call('delegate_analysis', t),
+                                              plan(t, skipped=DEFER_ALL)], analysis=analysis)
+        result = hardening.run_round()
+        trace = self.trace(hardening, result['round_id'], ANALYSIS)[0]
+        self.assertEqual([e['data']['available'] for e in trace['events'] if e['kind'] == 'nudge'], [['score_findings']])
+        self.assertEqual(self.calls(trace), [('tool', 'score_findings')])
+        self.assertEqual(result['outcome']['outcome'], 'no_fix_proposed')  # Ranking survives the silent agent.
 
 
 class ExpandedControlRoundTests(AgenticTestCase):
@@ -361,7 +492,244 @@ class NotConfiguredPolicyTests(AgenticTestCase):
         self.assertEqual((off['9.3.1'].factors['E'], off['9.3.1'].score, off['9.3.1'].level), (4, 80, 'Critical'))
 
 
-class RemediationAgentTests(AgenticTestCase):
+class AnalysisAgentTests(AgenticTestCase):
+    """The Analysis Agent chooses what to investigate and what to flag; it can never change a number (D2)."""
+
+    def test_agent_investigates_flags_and_triages_with_checked_codes(self):
+        t = 'windows:' + target().machine_uuid
+        analysis = [call('score_findings', t), call('inspect_finding', t, control_id='1.2.2'),
+                    call('check_history', t, control_id='1.2.2'),
+                    call('submit_analysis', t, attention=[dict(control_id='1.2.2', attention_code='unblocks_other'),
+                                                          dict(control_id='9.3.1', attention_code='manual_fix_needed')],
+                         gap_triage=[dict(control_id='1.2.1', triage_code='resolves_with_prerequisite'),
+                                     dict(control_id='1.2.4', triage_code='resolves_with_prerequisite')])]
+        hardening = self.hardening(FakeVm(), [call('delegate_scanner', t), call('delegate_analysis', t),
+                                              plan(t, skipped=DEFER_ALL)], analysis=analysis)
+        result = hardening.run_round()
+        trace = self.trace(hardening, result['round_id'], ANALYSIS)[0]
+        self.assertEqual(self.calls(trace), [('tool', 'score_findings'), ('tool', 'inspect_finding'),
+                                             ('tool', 'check_history'), ('tool', 'submit_analysis')])
+        self.assertIn('Analysis Agent flags for attention: 1.2.2 (fixing it unblocks 1.2.1, 1.2.4); '
+                      '9.3.1 (no library action: needs a manual fix).', result['outcome']['reason'])
+        stored = self.store.rounds(result['session_id'])[0]
+        self.assertEqual([g['reason'] for g in stored['analysis_outcome']['gap_triage']],
+                         ['expected to resolve once 1.2.2 is fixed'] * 2)
+        self.assertEqual((stored['analysis']['ranked'][0]['control_id'], stored['analysis']['ranked'][0]['score']),
+                         ('1.2.2', 69))
+
+    def test_codes_must_fit_facts_and_the_ranking_survives_a_failed_agent(self):
+        from hardening.agentic import AnalysisTools
+        self.assertEqual(AnalysisTools.names, ('score_findings', 'inspect_finding', 'check_history', 'submit_analysis'))
+        t = 'windows:' + target().machine_uuid
+        analysis = [call('score_findings', t),
+                    call('submit_analysis', t, attention=[dict(control_id='1.1.3', attention_code='high_risk')],
+                         gap_triage=[]),
+                    call('submit_analysis', t, attention=[], gap_triage=[dict(control_id='1.2.1', triage_code='rescan')])]
+        hardening = self.hardening(FakeVm(), [call('delegate_scanner', t), call('delegate_analysis', t),
+            plan(t, fixes=[('1.2.2', 'REM-1.2.2', 'high_risk')], skipped=DEFER_ALL[1:])], analysis=analysis)
+        result = hardening.run_round()
+        self.assertEqual(self.rejected(hardening, result['round_id'], ANALYSIS), [
+            'attention_code high_risk does not fit 1.1.3; true codes: none',
+            'triage_code rescan does not fit 1.2.1; true codes: resolves_with_prerequisite, manual_review'])
+        stored = self.store.rounds(result['session_id'])[0]
+        self.assertEqual(stored['analysis_outcome']['outcome'], 'incomplete')
+        self.assertEqual(result['outcome']['outcome'], 'awaiting_approval')  # Deterministic ranking still available.
+        self.assertEqual(self.store.for_run(result['framework_run_id'])[0]['proposal']['risk_score'], 69)
+
+    def test_investigation_is_bounded_so_the_agent_must_decide(self):
+        t = 'windows:' + target().machine_uuid
+        offered = []
+
+        class Recording(MockClient):
+            def chat(self, messages, tools, *, timeout):
+                offered.append([s['function']['name'] for s in tools])
+                return super().chat(messages, tools, timeout=timeout)
+        analysis = [call('score_findings', t)] + [call('inspect_finding', t, control_id=c)
+                                                  for c in ('1.2.2', '1.1.1', '2.3.10.3')]
+        analysis.append(call('submit_analysis', t, attention=[], gap_triage=[
+            dict(control_id='1.2.1', triage_code='manual_review'), dict(control_id='1.2.4', triage_code='manual_review')]))
+        hardening = self.hardening(FakeVm(), [call('delegate_scanner', t), call('delegate_analysis', t),
+                                              plan(t, skipped=DEFER_ALL)], analysis=Recording(analysis))
+        result = hardening.run_round()
+        trace = self.trace(hardening, result['round_id'], ANALYSIS)[0]
+        inspections = [e['data']['result']['investigations_left'] for e in trace['events']
+                       if e['kind'] == 'tool' and e['data']['name'] == 'inspect_finding']
+        self.assertEqual(inspections, [1, 0])
+        # Only valid tools are offered; a call to a hidden one is still refused by code.
+        self.assertEqual(offered, [['score_findings'], ['inspect_finding', 'check_history', 'submit_analysis'],
+                                   ['inspect_finding', 'check_history', 'submit_analysis'], ['submit_analysis'],
+                                   ['submit_analysis']])
+        self.assertEqual(self.rejected(hardening, result['round_id'], ANALYSIS),
+                         ['Investigation limit (2) reached; call submit_analysis now'])
+        self.assertEqual(self.store.rounds(result['session_id'])[0]['analysis_outcome']['outcome'], 'analysis_complete')
+
+    def test_flags_beyond_three_are_checked_then_dropped_not_fatal(self):
+        t = 'windows:' + target().machine_uuid
+        flags = [('1.2.2', 'high_risk'), ('9.3.1', 'manual_fix_needed'), ('1.1.1', 'high_risk'), ('2.3.10.3', 'high_risk')]
+        analysis = [call('score_findings', t), call('submit_analysis', t,
+                    attention=[dict(control_id=c, attention_code=a) for c, a in flags],
+                    gap_triage=[dict(control_id=g, triage_code='manual_review') for g in ('1.2.1', '1.2.4')])]
+        hardening = self.hardening(FakeVm(), [call('delegate_scanner', t), call('delegate_analysis', t),
+                                              plan(t, skipped=DEFER_ALL)], analysis=analysis)
+        result = hardening.run_round()
+        stored = self.store.rounds(result['session_id'])[0]['analysis_outcome']
+        self.assertEqual([a['control_id'] for a in stored['attention']], ['1.2.2', '9.3.1', '1.1.1'])
+        self.assertIn('Further flags beyond 3 not shown: 2.3.10.3.', stored['reason'])
+
+    def test_delegate_analysis_may_name_the_current_scan_only(self):
+        t = 'windows:' + target().machine_uuid
+
+        class Naming:
+            model, provenance = 'mock-model', 'Mock model (test only)'
+            steps = []
+
+            def chat(self, messages, tools, *, timeout):
+                self.steps.append(1)
+                if len(self.steps) == 1:
+                    return call('delegate_scanner', t)
+                if len(self.steps) == 2:
+                    return call('delegate_analysis', t, framework_run_id='f' * 32)
+                if len(self.steps) == 3:
+                    handoff = next(json.loads(m['content'])['handoff'] for m in messages
+                                   if m['role'] == 'tool' and 'handoff' in m['content'])
+                    return call('delegate_analysis', t, framework_run_id=handoff['framework_run_id'])
+                return plan(t, skipped=DEFER_ALL)
+        hardening = self.hardening(FakeVm(), [])
+        base, naming = hardening.client_factory, Naming()
+        hardening.client_factory = lambda role: naming if role == ORCHESTRATOR else base(role)
+        result = hardening.run_round()
+        self.assertEqual(self.rejected(hardening, result['round_id']),
+                         ['framework_run_id must be the current scan ' + result['framework_run_id']])
+        self.assertEqual(result['outcome']['outcome'], 'no_fix_proposed')
+
+    def test_rescan_request_sends_the_scanner_back_once(self):
+        t = 'windows:' + target().machine_uuid
+        def triage(code):
+            return [dict(control_id='1.1.5', triage_code=code), dict(control_id='1.2.1', triage_code='manual_review'),
+                    dict(control_id='1.2.4', triage_code='manual_review')]
+        analysis = [call('score_findings', t), call('submit_analysis', t, attention=[], gap_triage=triage('rescan')),
+                    call('score_findings', t), call('submit_analysis', t, attention=[], gap_triage=triage('manual_review'))]
+        orchestrator = [call('delegate_scanner', t), call('delegate_analysis', t), call('delegate_scanner', t),
+                        call('delegate_analysis', t), call('delegate_scanner', t), plan(t, skipped=DEFER_ALL)]
+        hardening = self.hardening(FakeVm(error_controls=('1.1.5',)), orchestrator, analysis=analysis)
+        result = hardening.run_round()
+        self.assertEqual(len(self.trace(hardening, result['round_id'], SCANNER)), 2)
+        self.assertEqual(len(self.trace(hardening, result['round_id'], ANALYSIS)), 2)
+        self.assertEqual(self.rejected(hardening, result['round_id']), [
+            'The Scanner runs once per round, and once more only when the Analysis Agent requests a rescan'])
+        self.assertEqual(len(hardening.scanned_runs), 2)
+        self.assertEqual(result['framework_run_id'], hardening.scanned_runs[-1])  # The plan uses the fresh scan.
+        self.assertEqual(result['outcome']['outcome'], 'no_fix_proposed')
+
+
+class RemediationPhaseTests(AgenticTestCase):
+    """Remediation Agent decisions and the Orchestrator's next-step decision after verification."""
+
+    def test_agent_skips_a_changed_request_and_executes_the_ready_one(self):
+        vm = FakeVm()
+        hardening = self.standard_round(vm)
+        result = hardening.run_round()
+        self.approve_all(result['framework_run_id'])
+        vm.values['1.1.1'] = 5  # Someone changed password history after approval.
+        executed = hardening.execute_approved(result['session_id'])
+        self.assertEqual(vm.writes, ['1.2.2'])
+        self.assertEqual([v['control_id'] for v in executed['verdicts']], ['1.2.2'])
+        self.assertIn('Skipped by the Remediation Agent: 1.1.1 (value changed since approval; a new scan and approval '
+                      'are needed).', executed['outcome']['reason'])
+        skipped = self.store.for_run(result['framework_run_id'])[1]
+        self.assertTrue(skipped['verdict'].startswith('Refused before execution: skipped by the Remediation Agent'))
+        self.assertEqual(executed['outcome']['outcome'], 'next_round')
+
+    def test_agent_cannot_act_before_precheck_or_on_unapproved_requests_then_fallback_runs(self):
+        def impatient(seen, names):
+            if not seen:
+                return 'list_approved', {}
+            ids = [r['control_id'] for r in seen[0][1]['requests']]
+            return 'execute_fixes', dict(control_ids=[ids[0] if len(seen) == 1 else 'f' * 32])
+        vm = FakeVm()
+        hardening = self.standard_round(vm, remediation=Responsive(impatient))
+        result = hardening.run_round()
+        first = self.store.for_run(result['framework_run_id'])[0]['proposal']['request_id']
+        self.store.decide(first, approve=True, operator='admin01')
+        executed = hardening.execute_approved(result['session_id'])
+        self.assertEqual(self.rejected(hardening, executed['round_id'], REMEDIATION),
+                         ['Call precheck before executing', 'Not an open approved request: ' + 'f' * 32])
+        self.assertEqual(vm.writes, [])
+        self.assertEqual((executed['outcome']['outcome'], executed['outcome']['reason_code']),
+                         ('remediation_review', 'remediation_incomplete'))
+        fallback = hardening.execute_approved(result['session_id'], deterministic=True)
+        self.assertEqual(([v['verdict'] for v in fallback['verdicts']], fallback['outcome']['outcome']),
+                         (['Verified compliant'], 'fallback'))
+        self.assertIsNotNone(fallback['verification_run_id'])
+
+    def test_uncertain_outcome_stops_the_agent_and_forces_review(self):
+        vm = FakeVm()
+        hardening = self.standard_round(vm)
+        result = hardening.run_round()
+        self.approve_all(result['framework_run_id'])
+        original = vm.run
+
+        def drop(script, parameters=None):
+            if script == RUNNER.read_text(encoding='utf-8-sig'):
+                raise ConnectionError('Connection reset')
+            return original(script, parameters)
+        vm.run = drop
+        executed = hardening.execute_approved(result['session_id'])
+        self.assertEqual([v['control_id'] for v in executed['verdicts']], ['1.2.2'])  # 1.1.1 never attempted.
+        self.assertEqual((executed['outcome']['outcome'], executed['outcome']['reason_code']),
+                         ('remediation_review', 'uncertain_outcome'))
+        self.assertIn('Not attempted (uncertain outcome): 1.1.1.', executed['outcome']['reason'])
+        self.assertIsNotNone(executed['verification_run_id'])  # The VM state was observed again.
+        self.assertEqual(vm.writes, [])
+
+    def test_next_step_codes_are_checked_and_unblocked_findings_lead_to_a_new_round(self):
+        state = dict(LAB_STATE, **{'1.2.1': 5})  # Duration non-compliant and blocked while the threshold is 0.
+        t = 'windows:' + target().machine_uuid
+        hardening = self.hardening(FakeVm(state), [call('delegate_scanner', t), call('delegate_analysis', t),
+            plan(t, fixes=[('1.2.2', 'REM-1.2.2', 'unblocks_other')],
+                 skipped=[('1.2.1', 'waits_for_prerequisite'), ('2.3.10.3', 'lower_priority'),
+                          ('1.1.1', 'lower_priority'), ('1.1.3', 'lower_priority'), ('18.10.57.3.9.4', 'needs_review')])],
+            review=[call('delegate_remediation', t), call('delegate_verification', t),
+                    call('submit_review', t, next_step='finish', reason_code='nothing_fixable'),
+                    call('submit_review', t, next_step='next_round', reason_code='unblocked_findings')])
+        result = hardening.run_round()
+        self.approve_all(result['framework_run_id'])
+        executed = hardening.execute_approved(result['session_id'])
+        self.assertEqual(self.rejected(hardening, executed['round_id']), [
+            'reason_code nothing_fixable does not fit finish for these results; true codes: finish: all_verified; '
+            'next_round: unblocked_findings, remaining_findings'])
+        self.assertEqual(executed['outcome']['outcome'], 'next_round')
+        self.assertTrue(executed['outcome']['reason'].endswith('the fixes unblocked 1.2.1; run a new round to propose them.'))
+
+    def test_orchestrator_unavailable_executes_nothing(self):
+        vm = FakeVm()
+        hardening = self.standard_round(vm, review=[ConnectionError('Ollama down')])
+        result = hardening.run_round()
+        self.approve_all(result['framework_run_id'])
+        executed = hardening.execute_approved(result['session_id'])
+        self.assertEqual((executed['outcome']['outcome'], executed['verdicts'], vm.writes), ('incomplete', [], []))
+        self.assertEqual(self.store.rounds(result['session_id'])[-1]['outcome']['outcome'], 'incomplete')
+
+    def test_a_list_with_one_unready_request_executes_nothing(self):
+        def hasty(seen, names):
+            done = [n for n, _ in seen]
+            if 'precheck' not in done:
+                return ('list_approved' if not done else 'precheck'), {}
+            if 'execute_fixes' not in done:  # Includes 1.1.1, whose value changed: the whole list is refused.
+                return 'execute_fixes', dict(control_ids=[r['control_id'] for r in seen[-1][1]['requests']])
+            return remediation_policy(seen, names)
+        vm = FakeVm()
+        hardening = self.standard_round(vm, remediation=Responsive(hasty))
+        result = hardening.run_round()
+        self.approve_all(result['framework_run_id'])
+        vm.values['1.1.1'] = 5
+        executed = hardening.execute_approved(result['session_id'])
+        rejected = self.rejected(hardening, executed['round_id'], REMEDIATION)
+        self.assertEqual(rejected, ['1.1.1 is not ready (precondition_changed); use skip_fix'])
+        self.assertEqual(vm.writes, ['1.2.2'])  # After the refusal the agent skipped 1.1.1 and executed 1.2.2.
+
+
+class ApprovedActionExecutorTests(AgenticTestCase):
     def proposed(self, vm):
         hardening = self.standard_round(vm)
         result = hardening.run_round()
@@ -370,7 +738,7 @@ class RemediationAgentTests(AgenticTestCase):
     def test_unapproved_or_rejected_proposals_cannot_execute(self):
         vm = FakeVm()
         hardening, _, proposal = self.proposed(vm)
-        agent = RemediationAgent(self.store, hardening.scanner)
+        agent = ApprovedActionExecutor(self.store, hardening.scanner)
         with self.assertRaises(ValueError):
             agent.execute(proposal)
         self.store.decide(proposal, approve=False, operator='admin01')
@@ -385,22 +753,22 @@ class RemediationAgentTests(AgenticTestCase):
         hardening, _, proposal = self.proposed(vm)
         self.store.decide(proposal, approve=True, operator='admin01')
         vm.values['1.2.2'] = 3  # Someone changed the VM after the scan.
-        verdict = RemediationAgent(self.store, hardening.scanner).execute(proposal)
+        verdict = ApprovedActionExecutor(self.store, hardening.scanner).execute(proposal)
         self.assertTrue(verdict.startswith('Refused before execution: Configuration changed'))
         self.assertEqual(vm.writes, [])
         with self.assertRaises(ValueError):
-            RemediationAgent(self.store, hardening.scanner).execute(proposal)
+            ApprovedActionExecutor(self.store, hardening.scanner).execute(proposal)
 
     def test_execution_failure_is_unresolved_and_expired_approval_refused(self):
         vm = FakeVm(fail_action=True)
         hardening, _, proposal = self.proposed(vm)
         self.store.decide(proposal, approve=True, operator='admin01')
-        self.assertEqual(RemediationAgent(self.store, hardening.scanner).execute(proposal), 'Unresolved: execution_failed')
+        self.assertEqual(ApprovedActionExecutor(self.store, hardening.scanner).execute(proposal), 'Unresolved: execution_failed')
         second = self.store.for_run(self.store.get(proposal)['proposal']['framework_run_id'])[1]['proposal']['request_id']
         self.store.decide(second, approve=True, operator='admin01',
                           now=datetime.now(timezone.utc) - timedelta(hours=2))
         with self.assertRaises(ValueError):
-            RemediationAgent(self.store, hardening.scanner).execute(second)
+            ApprovedActionExecutor(self.store, hardening.scanner).execute(second)
 
     def test_channel_loss_during_execution_is_uncertain_not_retried(self):
         vm = FakeVm()
@@ -413,10 +781,10 @@ class RemediationAgentTests(AgenticTestCase):
                 raise ConnectionError('Connection reset')
             return original(script, parameters)
         vm.run = drop
-        verdict = RemediationAgent(self.store, hardening.scanner).execute(proposal)
+        verdict = ApprovedActionExecutor(self.store, hardening.scanner).execute(proposal)
         self.assertIn('outcome uncertain', verdict)
         with self.assertRaises(ValueError):
-            RemediationAgent(self.store, hardening.scanner).execute(proposal)
+            ApprovedActionExecutor(self.store, hardening.scanner).execute(proposal)
 
 
 class RiskEngineTests(AgenticTestCase):

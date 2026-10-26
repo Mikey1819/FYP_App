@@ -87,7 +87,7 @@ def render_scan_queue(database_path, hostname, machine_uuid, *, origin_run_id=No
     with st.expander('Fallback: shared-folder scan queue (manual VM worker)'):
         st.caption('Start Watch-ScanRequests.ps1 as Administrator inside the VM, using the shared scan_queue folder. '
                    'The worker accepts only read-only collection jobs and stops after its configured time limit. '
-                   'See SCANNER_CONNECTION.md for the one-time setup command.')
+                   'See docs/archive/legacy/SCANNER_CONNECTION.md for the one-time setup command.')
         st.caption('Host queue: ' + os.environ.get('CIS_SCAN_EXCHANGE', str(DEFAULT_EXCHANGE)))
         st.caption('Collector SHA-256: ' + hashlib.sha256(COLLECTOR.read_bytes()).hexdigest())
         try:

@@ -1,6 +1,6 @@
 # Agent connection to the lab VM (PowerShell Remoting)
 
-The Scanner Agent reaches the VM itself over WinRM. Nobody copies scripts in or JSON out. It sends only the repository's fixed collector ([scripts/Collect-Server2022Evidence.ps1](scripts/Collect-Server2022Evidence.ps1)) with typed parameters. Model text is never sent to the VM. The Remediation Agent will reuse this channel for approved actions.
+The Scanner Agent reaches the VM itself over WinRM. Nobody copies scripts in or JSON out. It sends only the repository's fixed collector ([scripts/Collect-Server2022Evidence.ps1](scripts/Collect-Server2022Evidence.ps1)) with typed parameters. Model text is never sent to the VM. The Remediation Agent uses the same channel for its read-only precheck and for approved actions.
 
 ```text
 Laptop: Streamlit + agents (Python, pypsrp)  --NTLM-encrypted WinRM-->  127.0.0.1:55985
@@ -35,7 +35,7 @@ Restoring `Clean_Server2022_Before_Hardening` undoes this setup. Run it again af
 2. Enter computer name `WIN-VFT30DUDRHQ` and UUID `e5d10741-f200-4292-a099-e6be76032f4e`.
 3. In **Scanner live connection — PowerShell Remoting (WinRM)**, keep host `127.0.0.1` and port `55985`, then enter the Administrator password. Choose **Connect and check identity**. The agent checks the hostname, machine UUID and admin token before doing anything else.
 4. Choose **Scan VM now**. A new assessment opens with no upload.
-5. When **Run multi-agent hardening review** runs while connected, the Scanner Agent's `request_recollection` tool collects again over WinRM and opens the result as a new assessment.
+5. On **Agentic hardening**, **Start agentic round** has the Orchestrator delegate the Scanner Agent, which collects over this channel. After you approve fixes, **Execute … with the Remediation Agent** uses it for the precheck, the approved actions and the verification rescan.
 
 The password stays in the Streamlit session's memory only. It is never written to SQLite, logs, prompts or traces.
 
@@ -53,6 +53,6 @@ The password stays in the Streamlit session's memory only. It is never written t
 
 - Evidence is still labelled `Imported` in storage, because the importer and storage enforce that mode. Relabelling it `Live` for channel-collected runs is a follow-up.
 - Hardening can cut this channel. Future firewall controls (for example disabling local firewall rule merging), WinRM service policies and network logon rights can break remoting. The Remediation Agent must refuse, or flag, any action that would disconnect its own channel before verification.
-- On the **Agentic hardening** page, the Remediation Agent also uses this channel. It runs [Invoke-RemediationAction.ps1](scripts/Invoke-RemediationAction.ps1) for approved library actions, as described in [ARCHITECTURE.md](ARCHITECTURE.md). The legacy upload page still uses the manual file exchange ([VM_BRIDGE.md](VM_BRIDGE.md)).
+- The Remediation Agent runs [Invoke-RemediationAction.ps1](scripts/Invoke-RemediationAction.ps1) over this channel for approved library actions, as described in [ARCHITECTURE.md](ARCHITECTURE.md). Its precheck runs the same read-only collector without storing a new assessment. The legacy upload page still uses the manual file exchange ([archived VM_BRIDGE.md](docs/archive/legacy/VM_BRIDGE.md)).
 - Nothing needs to be copied into the VM for the agentic page: the collector and runner are sent over the channel on every call.
-- The shared-folder worker ([SCANNER_CONNECTION.md](SCANNER_CONNECTION.md)) remains a fallback.
+- The shared-folder worker ([archived SCANNER_CONNECTION.md](docs/archive/legacy/SCANNER_CONNECTION.md)) is a legacy fallback only: it needs a person inside the VM, so it does not satisfy D6.

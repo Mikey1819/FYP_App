@@ -1,6 +1,6 @@
-# Reviewed Server 2022 standalone preview subset
+# Benchmark mapping: CIS Server 2022 Stand-alone v2.0.0 (32 controls)
 
-Reviewed 19 October 2026, Asia/Kuala_Lumpur. This records source review, not a successful VM assessment or CIS certification. The original synthetic demo-v1 catalogue and historical scores remain unchanged.
+This is the authoritative record of which controls are assessed, against which benchmark text, and with which rule. Sections are dated and were added as the catalogue grew from 5 (19 October) to 32 controls (26 October). It records source review, not a successful VM assessment or CIS certification. The original synthetic demo-v1 catalogue and historical scores remain unchanged.
 
 ## Edition decision (26 October 2026)
 
@@ -32,10 +32,10 @@ Important distinctions:
 
 - Demo lockout range is 1-10; the reviewed standalone range is **1-5**. Keep these catalogues separate rather than rewriting old evidence/scores.
 - Public firewall is one explicitly selected profile/control, not a claim about all profiles, the active network profile, service health or internet exposure. The original demo uses Domain profile.
-- Firewall/NLA observations follow the policy registry locations documented in the benchmark. An absent value is **Unknown / manual review needed**, not an inferred pass from an OS default. A wrong registry type or failed read is Error. A DWORD other than 1 is non-compliant for the selected policy comparison. Actual effective protection may differ and must be discussed separately.
+- Firewall/NLA observations follow the policy registry locations documented in the benchmark. An absent value ("Not configured") is **Non-Compliant** under decision D5 (see the 26 October section below; this line originally said Unknown), never an inferred pass from an OS default. A wrong registry type or failed read is Error. A DWORD other than 1 is non-compliant for the selected policy comparison. Actual effective protection may differ and is recorded separately as effective context.
 - Account policy export describes local-account policy on this standalone target. It is not proof of every existing password's length or the treatment of built-in Administrator lockout (a separate control).
 - Guest identity uses SID RID 501, not the display name. Missing/ambiguous identity is an error.
-- No live risk arithmetic is added yet: synthetic exposure/risk factors cannot be silently reused for a real server. No real remediation implementation is included.
+- Synthetic exposure/risk factors are never reused for a real server. Live risk scores are derived by rule from benchmark attributes ([RISK_DERIVATION.md](RISK_DERIVATION.md)); remediation uses the pre-approved library in [ARCHITECTURE.md](ARCHITECTURE.md). (When this section was first written, on 19 October, neither existed.)
 
 ## Account-policy expansion, 24 October 2026
 
@@ -130,7 +130,7 @@ The PDF's Group Policy paths include a Policies segment used in its editor examp
 
 The single-file PowerShell collector performs local CIM reads, a bounded `secedit /export`, and read-only 64-bit registry access. It writes temporary export/log files and a new JSON file, removes only its known temporary files and refuses output overwrite. It does not configure security policy, enable RDP/WinRM, or execute model-generated commands.
 
-The offline importer requires explicitly selected hostname/UUID; checks supported OS/build/role, schema, catalogue/hash/profile, all required unique records (five for schema 1/2, twelve for schema 3, sixteen for schema 4), sources, timestamps and exact scalar types. Imported files are user-supplied observations, not cryptographically authenticated attestation. Hashes identify bytes and do not prove collection authenticity. The CLI evaluates without writing the dashboard database.
+The offline importer requires explicitly selected hostname/UUID; checks supported OS/build/role, schema, catalogue/hash/profile, all required unique records (five for schema 1/2, twelve for schema 3, sixteen for schema 4, thirty-two for schema 5), sources, timestamps and exact scalar types. Imported files are user-supplied observations, not cryptographically authenticated attestation. Hashes identify bytes and do not prove collection authenticity. The CLI evaluates without writing the dashboard database.
 
 Fixture tests cover parser/comparison/error/target boundaries. Separate imported-evidence dashboard/storage integration is fixture-tested. The first user-run VM export is received and validated, with collector-reported duration 0.342834s; see VM_VALIDATION.md. Independent manual agreement remains pending.
 

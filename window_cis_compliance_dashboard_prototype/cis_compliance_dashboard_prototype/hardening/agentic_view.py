@@ -5,7 +5,7 @@ import sqlite3
 import streamlit as st
 
 from .action_library import LIBRARY
-from .agentic import ANALYSIS, ORCHESTRATOR, SCANNER, AgenticHardening, explain_finding
+from .agentic import ANALYSIS, ORCHESTRATOR, REMEDIATION, SCANNER, AgenticHardening, explain_finding
 from .framework import AssessmentOrchestrator
 from .import_storage import ImportedEvidenceStore
 from .remediation import RemediationStore
@@ -30,16 +30,20 @@ def _services(database_path, target):
     return runtime, store, AgenticHardening(runtime, store, LiveScanner(runtime, target))
 
 
-def _analysis(hardening, round_id):
-    for trace in hardening.traces(round_id):
+def _analysis(hardening, assessment_round):
+    if assessment_round.get('analysis'):
+        return assessment_round['analysis']
+    for trace in hardening.traces(assessment_round['round_id']):  # Rounds stored before the Analysis Agent loop.
         if trace['agent_role'] == ANALYSIS:
             return next(e['data']['result'] for e in trace['events'] if e['kind'] == 'tool')
     return None
 
 
-def _show_timeline(hardening, assessment_round):
-    traces = hardening.traces(assessment_round['round_id'])
-    order = {ORCHESTRATOR: 0, SCANNER: 1, ANALYSIS: 2}
+def _show_timeline(hardening, agent_round):
+    traces = hardening.traces(agent_round['round_id'])
+    if not traces:
+        return
+    order = {ORCHESTRATOR: 0, SCANNER: 1, ANALYSIS: 2, REMEDIATION: 3}
     rows = []
     for trace in sorted(traces, key=lambda t: order.get(t['agent_role'], 9)):
         finished = next((e['data'] for e in reversed(trace['events']) if e['kind'] == 'finished'), {})
@@ -74,9 +78,22 @@ def _show_assessment(runtime, run_id):
         st.dataframe(rows, hide_index=True)
 
 
-def _show_risk(analysis, round_id):
+def _show_analysis_decisions(outcome):
+    """The Analysis Agent's own choices: codes it picked, checked against the analysis, sentences written by code."""
+    if not outcome:
+        return
+    if outcome['outcome'] != 'analysis_complete':
+        st.warning(outcome['reason'] + ' The deterministic ranking below is unaffected.')
+        return
+    if outcome['attention']:
+        st.markdown('**Analysis Agent: look at these first**')
+        st.dataframe([{'Control': a['control_id'], 'Why': a['reason']} for a in outcome['attention']], hide_index=True)
+
+
+def _show_risk(analysis, round_id, outcome=None):
     st.caption('Deterministic risk engine: R = 6I + 5E + 4P + 3L + 2D. Baselines: ' + analysis['baseline_version'] + '. '
                'The AI never computes or changes these numbers.')
+    _show_analysis_decisions(outcome)
     if not analysis['ranked']:
         st.success('No scored non-compliant findings.')
     for finding in analysis['ranked']:
@@ -108,7 +125,9 @@ def _show_risk(analysis, round_id):
                 st.text(st.session_state[key])
     if analysis['gaps']:
         st.markdown('**Gaps (not scored, no fix)**')
-        st.dataframe([{'Control': g['control_id'], 'Status': g['status'], 'Interpretation': g['hint']}
+        triage = {t['control_id']: t['reason'] for t in (outcome or {}).get('gap_triage', [])}
+        st.dataframe([{'Control': g['control_id'], 'Status': g['status'], 'Interpretation': g['hint'],
+                       'Analysis Agent triage': triage.get(g['control_id'], '—')}
                       for g in analysis['gaps']], hide_index=True)
 
 
@@ -145,7 +164,8 @@ def _show_proposals(store, run_id, round_id):
 def render_agentic(database_path: Path):
     st.title('Agentic hardening')
     st.caption('Scanner Agent → Analysis Agent → AI Orchestrator proposes fixes → you approve → '
-               'Remediation Agent executes → Scanner verifies. Target: the registered standalone Server 2022 VM.')
+               'Remediation Agent prechecks and executes → Scanner Agent verifies → Orchestrator decides the next step. '
+               'Target: the registered standalone Server 2022 VM.')
     with st.expander('1. Connect to the VM', expanded=SESSION not in st.session_state):
         left, right = st.columns(2)
         hostname = left.text_input('VM computer name', key='agentic_host')
@@ -170,7 +190,7 @@ def render_agentic(database_path: Path):
         label = 'Start agentic round' if latest is None else 'Run next round (rescan, re-rank, re-propose)'
         if not open_items:
             if st.button(label, type='primary', key='agentic_run'):
-                with st.spinner('AI Orchestrator coordinating the Scanner and Analysis agents (up to 5 minutes)…'):
+                with st.spinner('AI Orchestrator coordinating the Scanner and Analysis agents (up to 10 minutes)…'):
                     result = hardening.run_round(session_id)
                 st.session_state[SESSION] = result['session_id']
                 st.rerun()
@@ -191,23 +211,39 @@ def render_agentic(database_path: Path):
             return
         st.subheader('3. Assessment')
         _show_assessment(runtime, latest['framework_run_id'])
-        analysis = _analysis(hardening, latest['round_id'])
+        analysis = _analysis(hardening, latest)
         if analysis:
             st.subheader('4. Risk ranking (Analysis Agent)')
-            _show_risk(analysis, latest['round_id'])
+            _show_risk(analysis, latest['round_id'], latest.get('analysis_outcome'))
         st.subheader('5. Proposed fixes — your decision')
         _show_proposals(store, latest['framework_run_id'], latest['round_id'])
         pending = [r for r in store.for_run(latest['framework_run_id']) if r['decision'] == 'approved' and r['verdict'] is None]
-        if pending and st.button(f'Execute {len(pending)} approved fix(es) in the VM', type='primary', key='agentic_execute'):
-            with st.spinner('Remediation Agent executing approved actions; Scanner verifying…'):
-                hardening.execute_approved(session_id)
-            st.rerun()
         verification = next((r for r in reversed(rounds) if r['kind'] == 'verification_scan'
                              and r.get('remediated_run_id') == latest['framework_run_id']), None)
+        if pending and st.button(f'Execute {len(pending)} approved fix(es) with the Remediation Agent', type='primary',
+                                 key='agentic_execute'):
+            with st.spinner('Orchestrator delegating the Remediation Agent, then the Scanner Agent to verify '
+                            '(up to 10 minutes)…'):
+                hardening.execute_approved(session_id)
+            st.rerun()
+        stopped = verification and ((verification.get('outcome') or {}).get('outcome') == 'incomplete' or
+                                    (verification.get('outcome') or {}).get('reason_code') == 'remediation_incomplete')
+        if pending and stopped:
+            st.caption('The agents stopped before finishing. You may execute the remaining approved fixes without AI; '
+                       'the same approval, expiry and precondition guards apply, and the result is still verified.')
+            if st.button('Execute remaining approved fixes without AI (fallback)', key='agentic_execute_fallback'):
+                with st.spinner('Executing approved fixes in rank order; Scanner verifying…'):
+                    hardening.execute_approved(session_id, deterministic=True)
+                st.rerun()
         if verification:
-            st.subheader('6. Verification')
+            st.subheader('6. Remediation and verification')
+            outcome = verification.get('outcome')
+            if outcome:
+                show = {'finish': st.success, 'next_round': st.info, 'fallback': st.info}.get(outcome['outcome'], st.warning)
+                show(outcome['reason'])
+            _show_timeline(hardening, verification)
             st.dataframe([{'Control': v['control_id'], 'Action': v['action_id'], 'Verdict': v['verdict']}
-                          for v in verification['verdicts']], hide_index=True)
+                          for v in verification['verdicts']] or [{'Verdict': 'Nothing was executed'}], hide_index=True)
             if verification['framework_run_id']:
                 changed = [c for c in hardening.changes(latest['framework_run_id'], verification['framework_run_id'])
                            if c['change'] != 'Unchanged']
