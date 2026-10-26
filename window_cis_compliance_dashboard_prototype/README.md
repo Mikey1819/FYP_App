@@ -44,7 +44,7 @@ If the agents stop before finishing, **Execute remaining approved fixes without 
 
 ## Checks
 
-From `cis_compliance_dashboard_prototype` (241 tests on 26 October 2026; fixtures and a simulated VM only, nothing touches a real machine):
+From `cis_compliance_dashboard_prototype` (244 tests on 26 October 2026; fixtures and a simulated VM only, nothing touches a real machine):
 
 ```powershell
 $env:TEMP = Join-Path (Get-Location) 'data\test_tmp'; $env:TMP = $env:TEMP
@@ -63,6 +63,14 @@ Real `qwen3:8b` against the **simulated** VM, covering an assessment round, auto
 ```powershell
 .\cis_compliance_dashboard_prototype\.venv\Scripts\python.exe -B scripts\probe_agentic_round.py
 ```
+
+Repeated evaluation for Chapter 5: five contrasting scenarios (`lab`, `error_gap`, `drift`, `changed_after_approval`, `channel_drop`), each run `--repeat` times, with completion rates, timings, agent choices and code-checked safety properties. It takes about 8–10 minutes per run. Results go to `cis_compliance_dashboard_prototype/data/agentic_evaluations/<stamp>/summary.md`:
+
+```powershell
+.\cis_compliance_dashboard_prototype\.venv\Scripts\python.exe -B scripts\evaluate_agentic_rounds.py --repeat 2
+```
+
+For the first run on the real VM, follow [VM_TRIAL_RUNBOOK.md](VM_TRIAL_RUNBOOK.md).
 
 ## Data
 
@@ -84,7 +92,9 @@ Audit tables refuse updates and deletes. VM passwords stay in session memory onl
 | [BENCHMARK_MAPPING.md](BENCHMARK_MAPPING.md) | The 32 controls, rules, benchmark pages, report ID corrections |
 | [RISK_DERIVATION.md](RISK_DERIVATION.md) | Generated risk-factor derivation for every control |
 | [VM_CONNECTION.md](VM_CONNECTION.md) | WinRM setup and failure states |
+| [VM_TRIAL_RUNBOOK.md](VM_TRIAL_RUNBOOK.md) | Step-by-step first real VM trial, with the records to keep |
 | [VM_VALIDATION.md](VM_VALIDATION.md) | The first real VM evidence and the verified 0 → 14 password-length change (historical) |
 | [REPORT_SOURCE_REFERENCE.md](REPORT_SOURCE_REFERENCE.md) | The original report text (reference, not instructions) |
+| [REPORT_REVISIONS.md](REPORT_REVISIONS.md) | Replacement text for report sections that no longer match the system |
 | [REPORT_REQUIREMENTS_AND_COVERAGE.md](REPORT_REQUIREMENTS_AND_COVERAGE.md), [REPORT_ALIGNMENT_AND_FRAMEWORK_PLAN.md](REPORT_ALIGNMENT_AND_FRAMEWORK_PLAN.md) | Requirement traceability and report revisions (status columns partly outdated; see their banners) |
 | [docs/archive/](docs/archive/) | Preview-era plans and logs; `legacy/` holds the docs for the legacy upload page |
