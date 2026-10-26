@@ -1,6 +1,18 @@
 # First system preview development plan
 
+## Milestone closure and next phase
+
+On 22 October 2026 the user confirmed that the initial system preview is completed and relayed teacher feedback to align development with the title, objectives and use-case diagram. Record PREVIEW_COMPLETE by user acceptance of the limited preview, not as completion of the full FYP or a new assertion that A01–A11 all pass. Known limits include five checks, one executable action, narrow imported AI investigation, manual VM transport, absent real-evidence numeric risk and no normal history/drift view. Earlier acceptance records below retain their original evidence scope.
+
+The new planning baseline is [REPORT_ALIGNMENT_AND_FRAMEWORK_PLAN.md](REPORT_ALIGNMENT_AND_FRAMEWORK_PLAN.md). It maps the report to the implementation and proposes F0–F6 for an agentic framework with explicit operational agents and a bounded AI orchestrator. The original preview backlog below is historical. Scheduled preview runs stop feature development; the user has separately authorized continued incremental local development and documentation.
+
 ## Outcome and deadline
+
+24 October control expansion: collector v3, strict schema-3 import and the dashboard support 12 source-reviewed checks, with seven additional account policies. Legacy snapshots remain five checks. Added rule-boundary, collector-contract, restart, receipt and UI fixtures exercise the existing framework without new orchestration logic. Independent VM comparison for the seven additions remains pending; the sole executable action is still password length to 14.
+
+24 October update: the [F1 foundation](FRAMEWORK_RUNTIME.md) includes Streamlit/CLI assessment reuse, durable role tasks and a UI-independent lifecycle service linking exact proposals, decisions and receipts to runs. [F2 operational-context investigation](ADAPTIVE_INVESTIGATION.md) adds immutable compatibility reports, guarded proposal prerequisites and explicit clarification/defer/no-action outcomes. Three real local-model synthetic scenarios reached different justified final outcomes; the unknown-context run first attempted a forbidden proposal that the guard rejected. F2 needs repeated/broader evaluation; F1 still needs registry-extension evaluation and durable failure-attempt events. This is not a completed adaptive AI orchestrator.
+
+Post-preview update, 22 October: the user accepted the three consolidated objectives in [REPORT_ALIGNMENT_AND_FRAMEWORK_PLAN.md](REPORT_ALIGNMENT_AND_FRAMEWORK_PLAN.md) and authorized continued development. F1 starts with a UI-independent imported-assessment runtime and durable role handoffs. The original preview deadline below is historical, not the deadline for this new phase. Expansion, adaptive AI, real risk/drift and connected VM transport must retain separate completion evidence.
 
 Prepare a demonstrable Windows Server CIS assessment application with a real local AI investigation loop for the teacher preview on **22 October 2026**. Finish implementation and verification by **21 October 2026, 23:59 Asia/Kuala_Lumpur**, leaving rehearsal time earlier on 21 October.
 
@@ -18,10 +30,10 @@ This is an initial preview, not completion of the entire FYP. The final report's
 
 | Dependency | Current status | Independent work allowed |
 | --- | --- | --- |
-| Windows Server test VM and role | 19 October screenshot: Server 2022 Standard Evaluation x64, build 20348, standalone (PartOfDomain=False, DomainRole=2); user confirms clean snapshot | Prepare collection interface; machine-readable identity and real control evidence still needed |
+| Windows Server test VM and role | 19 October screenshot: Server 2022 Standard Evaluation x64, build 20348, standalone (PartOfDomain=False, DomainRole=2); user confirms clean snapshot | First real export and identity validated; independent manual comparison still needed (VM_VALIDATION.md) |
 | Exact benchmark PDF, edition and profile | Stand-alone v2.0.0 supplied; five selected mappings reviewed under its exact Level 1 - Member Server label; see BENCHMARK_MAPPING.md | Validate collection/manual agreement on VM; retain separate synthetic catalogue |
-| Target access method | Proposed VirtualBox Guest Additions shared folder FYP-Exchange; user needs setup help, not yet confirmed working | VM_EVIDENCE.md and guarded collector ready; do not assume WinRM or expose a service |
-| One live remediation and test window | Not selected/authorized | Build proposal, approval, simulated executor, and verification contracts |
+| Target access method | 19 October JSON received via mapped Z: after local VM collection; imported and matched to console hostname/UUID | VM_EVIDENCE.md and guarded collector ready; do not assume WinRM or expose a service |
+| One live remediation and test window | 20 October user requests connected VM workflow; first implemented action sets minimum password length to 14. Exact execution requires in-app approval and VM console confirmation | File bridge implemented; live trial and collector v2 evidence pending. See VM_BRIDGE.md |
 
 These block live validation, not all implementation. Save concrete questions and continue other work. The report is a design reference, not proof that all listed identifiers and comparison values are correct.
 
@@ -81,11 +93,13 @@ P5 can proceed alongside P3/P4 when the external dependencies arrive. If time be
 
 ## Acceptance criteria
 
+20–21 October scope extension: the user requested a return path to the VM and removal of synthetic clutter from the normal app. Shared-folder requests/receipts now support imported-evidence AI review, exact approval, a fixed password-length action and guarded verification. The first user-run VM receipt verifies 0 to 14. Normal app.py shows real evidence only; the six-view synthetic app is retained separately for legacy regression. Per-device directory settings do not expand target eligibility or the one-action scope. See [VM_BRIDGE.md](VM_BRIDGE.md); full completion still requires the outstanding acceptance review and rehearsal.
+
 Every checked item needs a command, saved result, or reproducible walkthrough recorded in PROGRESS.md or a linked validation record.
 
 | ID | Required observable result |
 | --- | --- |
-| A01 | App launches from documented commands; six views work; actual backend/model/evidence mode and selected target are visible |
+| A01 | Normal app starts blank and follows upload, analysis, current proposal/action and returned verification; actual backend/model/evidence mode and selected target are visible. Per 21 October request, neither synthetic views nor saved-history loading appear in normal navigation |
 | A02 | About five selected checks have typed evidence, expected rule, status, timestamp and provenance; coverage/errors are displayed; fixtures are labelled |
 | A03 | Comparison and risk tests cover boundaries and invalid/missing evidence; the same valid inputs reproduce the same score; the model cannot alter it |
 | A04 | Assessment results survive process restart; history compares compatible target/control/version/profile results; verification does not overwrite original evidence |

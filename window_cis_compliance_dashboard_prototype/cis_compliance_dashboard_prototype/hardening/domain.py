@@ -24,6 +24,7 @@ class Operator(str, Enum):
     EQUALS = "equals"
     AT_LEAST = "at_least"
     BETWEEN = "between"
+    HAS_FLAGS = "has_flags"  # Audit policy: 1=Success, 2=Failure; "include Success" passes 1 and 3.
 
 
 Scalar = bool | int | str
@@ -41,6 +42,8 @@ class Rule:
             valid = type(self.expected) in (bool, int, str)
         elif self.operator == Operator.AT_LEAST:
             valid = type(self.expected) is int
+        elif self.operator == Operator.HAS_FLAGS:
+            valid = type(self.expected) is int and self.expected > 0
         else:
             valid = (
                 type(self.expected) is tuple
@@ -60,6 +63,8 @@ class Rule:
             return observed == self.expected
         if self.operator == Operator.AT_LEAST:
             return observed >= self.expected
+        if self.operator == Operator.HAS_FLAGS:
+            return observed & self.expected == self.expected
         lower, upper = self.expected
         return lower <= observed <= upper
 

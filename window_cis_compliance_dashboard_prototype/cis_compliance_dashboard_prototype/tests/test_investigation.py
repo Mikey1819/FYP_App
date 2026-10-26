@@ -4,12 +4,12 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from window_cis_compliance_dashboard_prototype.cis_compliance_dashboard_prototype.hardening.demo import CURRENT_RESULTS
-from window_cis_compliance_dashboard_prototype.cis_compliance_dashboard_prototype.hardening.demo_storage import load_demo
-from window_cis_compliance_dashboard_prototype.cis_compliance_dashboard_prototype.hardening.investigation import Coordinator, InvestigationLog, Limits
-from window_cis_compliance_dashboard_prototype.cis_compliance_dashboard_prototype.hardening.investigation_tools import InvestigationTools
-from window_cis_compliance_dashboard_prototype.cis_compliance_dashboard_prototype.hardening.storage import AssessmentStore
-from window_cis_compliance_dashboard_prototype.cis_compliance_dashboard_prototype.hardening.workflow import WorkflowStore
+from hardening.demo import CURRENT_RESULTS
+from hardening.demo_storage import load_demo
+from hardening.investigation import Coordinator, InvestigationLog, Limits
+from hardening.investigation_tools import InvestigationTools
+from hardening.storage import AssessmentStore
+from hardening.workflow import WorkflowStore
 
 
 ARGS = {"target_id": "DEMO-SERVER-2022", "control_id": "DEMO-NLA"}
