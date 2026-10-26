@@ -23,7 +23,7 @@ APP = Path(__file__).resolve().parents[1]
 RUNNER = APP.parent / 'scripts' / 'Invoke-RemediationAction.ps1'
 APPROVAL_LIFETIME = timedelta(hours=1)
 CLOCK_SKEW = timedelta(minutes=5)
-TABLES = ('rem_proposals', 'rem_decisions', 'rem_receipts', 'agentic_rounds',
+TABLES = ('rem_proposals', 'rem_decisions', 'rem_receipts', 'agentic_rounds', 'drift_records',
           'investigation_runs', 'investigation_events')
 
 
@@ -47,6 +47,9 @@ class RemediationStore:
             db.execute('CREATE TABLE IF NOT EXISTS rem_receipts (id TEXT PRIMARY KEY, payload BLOB NOT NULL, verdict TEXT NOT NULL)')
             db.execute('''CREATE TABLE IF NOT EXISTS agentic_rounds (id TEXT PRIMARY KEY, session_id TEXT NOT NULL,
                 created_at TEXT NOT NULL, payload TEXT NOT NULL)''')
+            # ConfigurationDrift (report Section 4.5): one record per detected change between consecutive runs.
+            db.execute('''CREATE TABLE IF NOT EXISTS drift_records (id TEXT PRIMARY KEY, target_id TEXT NOT NULL,
+                current_run_id TEXT NOT NULL, control_id TEXT NOT NULL, payload TEXT NOT NULL)''')
             db.execute('''CREATE TABLE IF NOT EXISTS investigation_runs (run_id TEXT PRIMARY KEY, assessment_id TEXT NOT NULL,
                 created_at TEXT NOT NULL, payload TEXT NOT NULL)''')
             db.execute('''CREATE TABLE IF NOT EXISTS investigation_events (sequence INTEGER PRIMARY KEY AUTOINCREMENT,

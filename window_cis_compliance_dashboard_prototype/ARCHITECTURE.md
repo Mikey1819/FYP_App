@@ -44,9 +44,19 @@ Optional FR17 explanation: **Explain with local AI** on a ranked finding (`expla
 
 `R = 6I + 5E + 4P + 3L + 2D`, from 20 to 100. Low is below 40, Moderate 40–59, High 60–79, Critical 80 and above. Ties are ordered by control ID.
 
-- **I, P, L:** per-control baselines in `risk.BASELINES`, version `draft-2026-10-26`. **The researcher still needs to review them** before the evaluation chapter. `1.2.2` uses the report's own example (I4 P3 L3), which reproduces its 62 (no history) and 70 (confirmed regression) examples.
+- **I, P, L:** derived by rule, never assigned. Each control records attributes from its benchmark entry: a consequence category, a privilege scope, and its profile level plus assessment status. Fixed rules based on report Table 4.15 map these to I, P and L. The full rule tables, the derivation for all 32 controls and the stated limitations are in [RISK_DERIVATION.md](RISK_DERIVATION.md), which is generated from the code. L = 4 for every selected control, because all are Level 1 and Automated. Example: `1.2.2` = I4, E3, P4, L4, D1 = **69**, or **77** after a confirmed regression. This replaces the report's illustrative 62/70, which assumed P3 and L3.
 - **E:** set by the control's exposure surface (Table 4.14b): network logon 3, anonymous network 4, firewall 4, RDP 4, local secret 2, detection (audit/logging) 2. Add 1 when the collected *effective* Public firewall is disabled. A NAT lab never claims internet exposure.
 - **D:** from the newest compatible earlier run of the same target (Table 4.14e): 1 when there is no history, 3 when the control was already non-compliant, 5 when it regressed.
+
+## History and configuration drift
+
+[history.py](cis_compliance_dashboard_prototype/hardening/history.py) covers report FR12/FR13, UC07 and Section 4.6.4.
+
+- After every agentic round and every verification scan, each control is compared with the same VM's previous assessment.
+- Each change is stored once as an immutable ConfigurationDrift record: previous run, current run, control, before/after value and kind (Regression, Improvement, Changed, or a status transition such as `Unknown -> Compliant`). Unchanged controls are not recorded.
+- Two results are comparable only when the control's benchmark citation (edition, section, pages), profile, rule and collection method are identical. The catalogue scope label (5/12/16/32 controls) is ignored.
+- The same comparability rule feeds the risk factor D.
+- The **History and drift** page lists assessments, drift records (with regressions flagged) and a comparison of any two runs.
 
 ## Pre-approved remediation library
 
