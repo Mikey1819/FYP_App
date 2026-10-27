@@ -756,6 +756,11 @@ class RemediationPhaseTests(AgenticTestCase):
         self.assertIn('Not attempted (uncertain outcome): 1.1.1.', executed['outcome']['reason'])
         self.assertIsNotNone(executed['verification_run_id'])  # The VM state was observed again.
         self.assertEqual(vm.writes, [])
+        verification = self.store.rounds(result['session_id'])[-1]
+        events = next(t for t in hardening.traces(verification['round_id']) if t['agent_role'] == REMEDIATION)['events']
+        stopped = next(e['data']['result'] for e in events if e['kind'] == 'tool' and e['data']['name'] == 'execute_fixes')
+        self.assertTrue(stopped['must_stop'])
+        self.assertIn('target_id only', stopped['next'])  # Real qwen3:8b otherwise copied the results along.
 
     def test_next_step_codes_are_checked_and_unblocked_findings_lead_to_a_new_round(self):
         state = dict(LAB_STATE, **{'1.2.1': 5})  # Duration non-compliant and blocked while the threshold is 0.
