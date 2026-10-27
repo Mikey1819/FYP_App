@@ -1,6 +1,6 @@
 # VM assessment and approved action exchange
 
-> **Archived 26 October 2026.** Describes the legacy **Evidence upload** page (manual file exchange and the earlier agent team), not the current agentic framework. Current design: [ARCHITECTURE.md](../../../ARCHITECTURE.md); current status: [PROGRESS.md](../../../PROGRESS.md).
+> **Archived 26 October 2026.** Describes the legacy **Evidence upload** page (manual file exchange and the earlier agent team), which was removed on 27 October 2026; its code is in commit `81b9d52` and earlier. Current design: [ARCHITECTURE.md](../../../ARCHITECTURE.md); current status: [PROGRESS.md](../../../PROGRESS.md).
 
 Streamlit and local Qwen3 run on the laptop; the collector and guarded executor run inside the lab VM. Files cross the existing VirtualBox shared folder. This is a manual file-mediated connection, not a background remote service or a one-click remote scan.
 

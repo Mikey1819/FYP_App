@@ -12,7 +12,19 @@ Full run-by-run history up to 26 October 2026: [docs/archive/PROGRESS_LOG_2026-1
 | Orchestrator | Assessment phase: delegates Scanner and Analysis, may send the Scanner back once on a rescan request, then makes one `submit_plan`. **Remediation phase (new):** delegates the Remediation Agent and a verification rescan, then decides `finish` / `next_round` / `remediation_review`. |
 | Remediation Agent | **LLM tool loop (new).** It prechecks the VM read-only, then executes (as a list, in its chosen order) or skips each *approved* request, and stops after an uncertain outcome. 21 library actions. **Real VM remediation has not been run yet.** |
 | Evaluation | Real `qwen3:8b`, simulated VM, 5 scenarios × 2: **10/10 runs completed both phases, 100% agent completion, 0 safety failures**, every phase within NFR06 (see below). Real VM: pending. |
-| Legacy | The upload/manual-exchange page (`legacy_app.py`) and its modules are kept. Their docs moved to [docs/archive/legacy/](docs/archive/legacy/). |
+| Legacy | The upload/manual-exchange page and its legacy-only modules were removed on 27 October (last commit with them: `81b9d52`). The shared-folder and manual-exchange building blocks (`vm_bridge`, `scan_exchange`, their PowerShell scripts) remain without a page. Docs: [docs/archive/legacy/](docs/archive/legacy/). |
+
+## 27 October 2026: legacy page retired; larger evaluation started
+
+- **Analysis schema fix (`81b9d52`):** `submit_analysis` offers only findings with a true attention code, and only codes that are true for some finding. This addresses the audit controls being called `manual_fix_needed`.
+- **Legacy retired:** the **Evidence upload** page and its legacy-only code were removed:
+  - Modules: `agent_team`, `agent_team_view`, `import_view`, `lifecycle`, `vm_investigation`, `investigation_tools`, `vm_bridge_view`, `demo_context`, `legacy_app.py`, `synthetic_demo_app.py`. Their tests and probe scripts went too.
+  - The database path moved to [hardening/databases.py](cis_compliance_dashboard_prototype/hardening/databases.py), with the same file names, so existing data still opens.
+  - The Coordinator lost its synthetic-preview default prompt; every agent now supplies its own.
+  - `test_investigation.py` was rewritten as Coordinator contract tests on a minimal tool double. It covers terminal decisions, repeatable calls, the nudge, limits, outages and no stored thinking.
+  - `demo.py`, `demo_storage.py`, `storage.py` and `workflow.py` stay as fixture support for the core tests.
+  - Python suite: **191 passed**. The drop from 245 is the removed modules' own tests.
+- **Evaluation:** the 20-run evaluation (5 scenarios × 4) on `81b9d52` was relaunched as a detached process, because the previous session's background run was cut off after 1 run. That one finished run had failed at the first model request with an Ollama error, before any agent acted, so it reflects the environment rather than agent behaviour, and it was discarded. Results will be in `data/agentic_evaluations/20261027_121023/`.
 
 ## 26 October 2026, late evening: repeatable evaluation, VM runbook, report revisions
 
@@ -132,4 +144,4 @@ PowerShell script tests were **not re-run**: the `-ExecutionPolicy Bypass` comma
 4. Optional: more evaluation repetitions (`--repeat 4`, overnight) for a larger sample; an Analysis prompt tweak so audit controls are not called `manual_fix_needed` (rerun the evaluation afterwards).
 5. Firewall policy actions: design a channel-safety precheck before adding them to the library.
 6. Independent manual comparison of the 16 new controls in the VM (gpedit/auditpol).
-7. Retire the legacy orchestration code (`agent_team.py`, `investigation.py`'s preview prompt, `vm_investigation.py`, `framework.py`/`lifecycle.py` paths) once the agentic page covers their evaluation evidence.
+7. Optional: remove the remaining shared-folder/manual-exchange building blocks (`vm_bridge` except `encode`, `scan_exchange` except the collector path, `vm_paths`, the shared-folder part of `scan_view`, and their PowerShell scripts and tests). They have no page since 27 October.
