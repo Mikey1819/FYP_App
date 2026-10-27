@@ -599,6 +599,26 @@ class AnalysisAgentTests(AgenticTestCase):
         self.assertEqual([a['control_id'] for a in stored['attention']], ['1.2.2', '9.3.1', '1.1.1'])
         self.assertIn('Further flags beyond 3 not shown: 2.3.10.3.', stored['reason'])
 
+    def test_only_findings_with_a_true_attention_code_are_offered_for_flagging(self):
+        t = 'windows:' + target().machine_uuid
+        offered = []
+
+        class Recording(MockClient):
+            def chat(self, messages, tools, *, timeout):
+                submit = next((s for s in tools if s['function']['name'] == 'submit_analysis'), None)
+                if submit:
+                    offered.append(submit['function']['parameters']['properties']['attention']['items']['properties'])
+                return super().chat(messages, tools, timeout=timeout)
+        analysis = Recording([call('score_findings', t), call('submit_analysis', t, attention=[], gap_triage=[
+            dict(control_id=g, triage_code='manual_review') for g in ('1.2.1', '1.2.4')])])
+        self.hardening(FakeVm(), [call('delegate_scanner', t), call('delegate_analysis', t),
+                                  plan(t, skipped=DEFER_ALL)], analysis=analysis).run_round()
+        controls, codes = offered[0]['control_id']['enum'], offered[0]['attention_code']['enum']
+        self.assertIn('1.2.2', controls)     # High and unblocks 1.2.1/1.2.4.
+        self.assertIn('9.3.1', controls)     # No library action.
+        self.assertNotIn('1.1.3', controls)  # Moderate with an action and nothing waiting: no true code.
+        self.assertNotIn('regression', codes)  # No history in this test, so no finding regressed.
+
     def test_a_flag_that_does_not_fit_is_discarded_and_recorded_never_shown(self):
         t = 'windows:' + target().machine_uuid
         flags = [('1.1.3', 'high_risk'), ('1.2.2', 'unblocks_other'), ('17.1.1', 'manual_fix_needed')]
