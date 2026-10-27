@@ -60,7 +60,7 @@ PROMPTS = {
         'is optional). 2) Decide each request once: skip_fix (with a reason_code from its skip_codes) every request '
         'precheck shows not ready, and execute_fixes with the ready requests in the order you choose (rank order '
         'unless a prerequisite needs another). After a failed result decide whether to continue; after must_stop '
-        'execute nothing more. 3) Finish with report_results.',
+        'execute nothing more. 3) Finish with report_results (target_id only: code records every result).',
 }
 REVIEW_PROMPT = COMMON + ('You are the AI Agent Orchestrator after the administrator approved fixes. You never '
     'execute, approve or retry yourself. 1) Call delegate_remediation. 2) If any fix was executed, call '
@@ -564,7 +564,8 @@ class RemediationTools(_RoleTools):
                      control_ids={'type': 'array', 'minItems': 1, 'maxItems': 40, 'items': ids}),
                 tool('skip_fix', 'Leave one approved request unexecuted, with a reason code from its skip_codes.', t,
                      control_id=ids, reason_code={'type': 'string', 'enum': sorted(REMEDIATION_SKIPS)}),
-                tool('report_results', 'Finish once every request is executed or skipped.', t)]
+                tool('report_results', 'Finish once every request is executed or skipped, or after must_stop. Takes '
+                     'target_id only: code writes the report from the recorded results.', t)]
 
     def _row(self, request_id):
         request = json.loads(self.pending[request_id]['request'])
@@ -629,7 +630,10 @@ class RemediationTools(_RoleTools):
             if self.stopped:
                 break  # The rest stay open and are reported as not attempted.
             results.append(self._execute(request_id))
-        return dict(results=results, must_stop=self.stopped is not None)
+        # Real qwen3:8b copied these results into report_results after an uncertain outcome (27 Oct evaluation).
+        return dict(results=results, must_stop=self.stopped is not None,
+                    **({'next': 'report_results with target_id only; these results are already recorded'}
+                       if self.stopped else {}))
 
     def _execute(self, request_id):
         proposal = self.pending[request_id]['proposal']
