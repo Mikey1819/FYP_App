@@ -6,7 +6,7 @@ The existing human-approved VM bridge still owns the execution exchange.
 from dataclasses import asdict
 
 from .actions import ACTION_REGISTRY
-from .domain import Status, summarise
+from .domain import EvidenceMode, Status, summarise
 from .evidence_import import load_evidence
 
 
@@ -17,14 +17,16 @@ class ScannerAgent:
     def run(self, record):
         # Re-evaluate the stored source with the reviewed catalogue, rather than
         # accepting an externally supplied status or result snapshot as truth.
+        mode = record.assessment.results[0].evidence.mode
         assessment = load_evidence(record.raw, expected_hostname=record.assessment.hostname,
-            expected_machine_uuid=record.assessment.target_id.removeprefix("windows:"))
+            expected_machine_uuid=record.assessment.target_id.removeprefix("windows:"), mode=mode)
         if assessment != record.assessment:
             raise ValueError("Stored assessment differs from its validated source")
         return {"summary": asdict(summarise(assessment.results)),
                 "controls": [{"control_id": r.control.control_id, "status": r.status.value}
                              for r in assessment.results],
-                "collection": "Imported file; no live scan performed"}
+                "collection": ("Collected live over WinRM by the Scanner Agent" if mode == EvidenceMode.LIVE
+                               else "Imported file; no live scan performed")}
 
 
 class AnalysisAgent:

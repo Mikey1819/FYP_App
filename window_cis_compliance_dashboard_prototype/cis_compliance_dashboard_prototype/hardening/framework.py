@@ -14,6 +14,7 @@ from uuid import uuid4, uuid5, NAMESPACE_URL
 import re
 
 from .agents import ScannerAgent, AnalysisAgent, RemediationAgent
+from .domain import EvidenceMode
 from .import_storage import ImportedEvidenceStore
 
 
@@ -95,12 +96,12 @@ class AssessmentOrchestrator:
             db.close()
 
     def start(self, raw: bytes, *, expected_hostname: str, expected_machine_uuid: str,
-              collection_request_id: str | None = None) -> AssessmentRun:
+              collection_request_id: str | None = None, mode: EvidenceMode = EvidenceMode.IMPORTED) -> AssessmentRun:
         if collection_request_id is not None and (type(collection_request_id) is not str or
                 not re.fullmatch(r'[a-f0-9]{32}', collection_request_id)):
             raise ValueError('Invalid collection request ID')
         record, _ = self.imports.save(raw, expected_hostname=expected_hostname,
-                                     expected_machine_uuid=expected_machine_uuid)
+                                     expected_machine_uuid=expected_machine_uuid, mode=mode)
         run_id = (uuid5(NAMESPACE_URL, 'cis-collection:' + collection_request_id).hex
                   if collection_request_id else uuid4().hex)
         with self._connection() as db:

@@ -91,6 +91,7 @@ class AgenticPageTests(unittest.TestCase):
         verdicts = [row for frame in app.dataframe for row in frame.value.to_dict('records') if 'Verdict' in row]
         self.assertEqual([v['Verdict'] for v in verdicts], ['Verified compliant'])
         self.assertIn('Run next round (rescan, re-rank, re-propose)', [b.label for b in app.button])
+        self.assertIn('7. Round report', [h.value for h in app.subheader])
 
         overview = AppTest.from_function(overview_page, default_timeout=60).run()
         self.assertEqual(len(overview.exception), 0, [e.value for e in overview.exception])

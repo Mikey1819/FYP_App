@@ -122,7 +122,11 @@ class ImportedAssessment:
 
 
 def load_evidence(raw: bytes, *, expected_hostname: str, expected_machine_uuid: str,
-                  now: datetime | None = None) -> ImportedAssessment:
+                  now: datetime | None = None, mode: EvidenceMode = EvidenceMode.IMPORTED) -> ImportedAssessment:
+    """`mode` records how the export arrived: Imported (file) or Live (the Scanner Agent's own WinRM channel).
+    The export itself is the same collector contract either way, so its own `evidence_mode` field stays Imported."""
+    if mode not in (EvidenceMode.IMPORTED, EvidenceMode.LIVE):
+        raise ValueError("Evidence mode must be Imported or Live")
     if type(raw) is not bytes or not 0 < len(raw) <= MAX_BYTES:
         raise ValueError("Evidence file must contain at most 64 KiB")
     try:
@@ -214,6 +218,6 @@ def load_evidence(raw: bytes, *, expected_hostname: str, expected_machine_uuid: 
         row = by_id[control.control_id]
         error = f"Collector reported {row['error']}" if row["state"] == "error" else None
         evidence = Evidence(target_id, control.control_id, row["value"], _time(row["collected_at"]),
-                            EvidenceMode.IMPORTED, row["source"], error)
+                            mode, row["source"], error)
         results.append(assess(assessment_id, control, evidence))
     return ImportedAssessment(tuple(results), target_id, hostname, digest, completed)

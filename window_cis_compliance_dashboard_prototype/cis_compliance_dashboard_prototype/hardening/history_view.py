@@ -38,6 +38,7 @@ def render_history(database_path: Path):
 
         st.subheader('Assessment history')
         st.dataframe([{'Assessed (UTC)': r['created_at'][:19].replace('T', ' '), 'Run': r['run_id'][:8],
+                       'Evidence': {'Live': 'Live (WinRM)', 'Imported': 'Imported file'}[r['evidence']],
                        'Controls': r['controls'], 'Compliant': r['compliant'], 'Non-compliant': r['non_compliant'],
                        'Unknown': r['unknown'], 'Error': r['error'],
                        'Compliance of evaluated': '—' if r['compliance_percent'] is None

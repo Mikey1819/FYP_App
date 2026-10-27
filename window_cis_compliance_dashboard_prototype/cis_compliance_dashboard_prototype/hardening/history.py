@@ -39,6 +39,7 @@ class HistoryService:
             record = self.runtime.imports.get(digest)
             summary = summarise(record.assessment.results)
             history.append(dict(run_id=run_id, created_at=created, target_id=target, hostname=record.assessment.hostname,
+                                evidence=record.assessment.results[0].evidence.mode.value,
                                 controls=summary.selected, compliant=summary.compliant,
                                 non_compliant=summary.non_compliant, unknown=summary.unknown, error=summary.errors,
                                 compliance_percent=summary.compliance_percent))

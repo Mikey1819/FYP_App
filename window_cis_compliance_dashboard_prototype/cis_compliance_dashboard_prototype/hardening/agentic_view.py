@@ -9,6 +9,7 @@ from .agentic import ANALYSIS, ORCHESTRATOR, REMEDIATION, SCANNER, AgenticHarden
 from .framework import AssessmentOrchestrator
 from .import_storage import ImportedEvidenceStore
 from .remediation import RemediationStore
+from .round_report import round_analysis, round_report, shown
 from .scan_view import render_connection
 from .winrm_channel import ChannelError, LiveScanner
 
@@ -16,27 +17,11 @@ SESSION = 'agentic_session'
 LEVEL_ICON = {'Critical': '🟥', 'High': '🟧', 'Moderate': '🟨', 'Low': '🟩'}
 
 
-def shown(value, status):
-    """Display value; an absent policy that fails (decision D5) reads as Not configured."""
-    if value is None:
-        return 'Not configured' if status == 'Non-Compliant' else '—'
-    return repr(value)
-
-
 def _services(database_path, target):
     imports = ImportedEvidenceStore(database_path)
     runtime = AssessmentOrchestrator(imports)
     store = RemediationStore(database_path.with_name(database_path.stem + '_agentic.sqlite3'), imports)
     return runtime, store, AgenticHardening(runtime, store, LiveScanner(runtime, target))
-
-
-def _analysis(hardening, assessment_round):
-    if assessment_round.get('analysis'):
-        return assessment_round['analysis']
-    for trace in hardening.traces(assessment_round['round_id']):  # Rounds stored before the Analysis Agent loop.
-        if trace['agent_role'] == ANALYSIS:
-            return next(e['data']['result'] for e in trace['events'] if e['kind'] == 'tool')
-    return None
 
 
 def _show_timeline(hardening, agent_round):
@@ -211,7 +196,7 @@ def render_agentic(database_path: Path):
             return
         st.subheader('3. Assessment')
         _show_assessment(runtime, latest['framework_run_id'])
-        analysis = _analysis(hardening, latest)
+        analysis = round_analysis(hardening, latest)
         if analysis:
             st.subheader('4. Risk ranking (Analysis Agent)')
             _show_risk(analysis, latest['round_id'], latest.get('analysis_outcome'))
@@ -249,6 +234,12 @@ def render_agentic(database_path: Path):
                            if c['change'] != 'Unchanged']
                 st.caption('Configuration changes since this round’s scan (fresh full rescan by the Scanner):')
                 st.dataframe(changed or [{'change': 'No changes detected'}], hide_index=True)
+        st.subheader('7. Round report')
+        st.download_button('Download round report (HTML)', round_report(hardening, rounds, latest),
+                           file_name='cis-round-' + target.hostname + '-' + latest['created_at'][:16].replace(':', '')
+                           + '.html', mime='text/html', key='agentic_report')
+        st.caption('Self-contained page with the assessment, risk ranking, plan, your decisions and the verification. '
+                   'Open it in a browser and print to PDF for your records.')
     except ChannelError as exc:
         st.error('VM channel (' + exc.state + '): ' + exc.detail)
     except (ValueError, OSError, sqlite3.Error) as exc:

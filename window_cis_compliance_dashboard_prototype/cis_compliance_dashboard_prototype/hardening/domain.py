@@ -191,7 +191,9 @@ def comparable(previous: AssessmentResult | None, current: AssessmentResult) -> 
         and same_measurement(previous.control, current.control)
         and previous.evidence.source == current.evidence.source
         and previous.evidence.target_id == current.evidence.target_id
-        and previous.evidence.mode == current.evidence.mode
+        # Imported and Live evidence come from the same collector and contract; only the transport differs.
+        and (previous.evidence.mode == current.evidence.mode
+             or {previous.evidence.mode, current.evidence.mode} == {EvidenceMode.IMPORTED, EvidenceMode.LIVE})
         and previous.evidence.collected_at < current.evidence.collected_at
         and previous.status in VALID_STATUSES
         and current.status in VALID_STATUSES

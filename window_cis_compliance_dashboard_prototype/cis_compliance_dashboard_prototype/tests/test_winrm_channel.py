@@ -4,6 +4,7 @@ import json
 import tempfile
 import unittest
 
+from hardening.domain import EvidenceMode
 from hardening.framework import AssessmentOrchestrator
 from hardening.import_storage import ImportedEvidenceStore
 from hardening.scan_exchange import COLLECTOR
@@ -63,6 +64,24 @@ class LiveScannerTests(unittest.TestCase):
         run = self.runtime.get(result['framework_run_id'])
         self.assertEqual(run.evidence_sha256, result['evidence_sha256'])
         self.assertTrue(run.tasks, 'Scan must produce an assessed framework run')
+
+    def test_channel_evidence_is_stored_as_live_and_a_file_as_imported(self):
+        result = self.scanner(FakeSession()).request('FIXTURE-SERVER', MACHINE_UUID)
+        run = self.runtime.get(result['framework_run_id'])
+        record = self.runtime.imports.get(run.evidence_sha256)
+        self.assertEqual({r.evidence.mode for r in record.assessment.results}, {EvidenceMode.LIVE})
+        self.assertEqual(run.tasks[0]['output']['collection'], 'Collected live over WinRM by the Scanner Agent')
+        precheck = self.scanner(FakeSession()).observe()
+        self.assertEqual({r.evidence.mode for r in precheck.results}, {EvidenceMode.LIVE})
+        upload = full_fixture()
+        upload['target']['hostname'] = 'fixture-server'  # Other bytes: identical bytes are the same evidence.
+        uploaded = self.runtime.start(encode(upload), expected_hostname='FIXTURE-SERVER',
+                                      expected_machine_uuid=MACHINE_UUID)
+        self.assertEqual(self.runtime.imports.get(uploaded.evidence_sha256).assessment.results[0].evidence.mode,
+                         EvidenceMode.IMPORTED)
+        with self.assertRaisesRegex(ValueError, 'Imported or Live'):
+            self.runtime.imports.save(encode(full_fixture()), expected_hostname='FIXTURE-SERVER',
+                                      expected_machine_uuid=MACHINE_UUID, mode=EvidenceMode.SYNTHETIC)
 
     def test_each_scan_is_a_separate_run(self):
         scanner = self.scanner(FakeSession())

@@ -62,6 +62,10 @@ class HistoryTests(AgenticTestCase):
         self.assertEqual(changes['17.1.1'], 'New in this catalogue')
         older = self.runtime.imports.get(old.evidence_sha256)
         current = self.runtime.imports.get(self.runtime.get(new).evidence_sha256)
+        # An uploaded file (Imported) and a channel scan (Live) use the same collector, so they stay comparable.
+        self.assertEqual((older.assessment.results[0].evidence.mode.value, current.assessment.results[0].evidence.mode.value),
+                         ('Imported', 'Live'))
+        self.assertEqual([r['evidence'] for r in HistoryService(self.runtime, self.store).runs()], ['Imported', 'Live'])
         finding = next(f for f in analyse(current, [older]) if f.control_id == '1.2.2')
         self.assertEqual(finding.factors['D'], 5)
 

@@ -10,7 +10,7 @@ import tempfile
 import unittest
 
 from hardening.action_library import LIBRARY
-from hardening.agentic import (ANALYSIS, ORCHESTRATOR, PROMPTS, REMEDIATION, REVIEW_PROMPT, SCANNER,
+from hardening.agentic import (ANALYSIS, ATTENTION, ORCHESTRATOR, PROMPTS, REMEDIATION, REVIEW_PROMPT, SCANNER,
                                AgenticHardening)
 from hardening.framework import AssessmentOrchestrator
 from hardening.import_storage import ImportedEvidenceStore
@@ -124,7 +124,7 @@ def scanner_policy(seen, names):
 def analysis_policy(seen, names):
     if not seen:
         return 'score_findings', {}
-    return 'submit_analysis', dict(attention=[], gap_triage=[
+    return 'submit_analysis', dict(gap_triage=[
         dict(control_id=g['control_id'], triage_code='manual_review') for g in seen[0][1]['gaps']])
 
 
@@ -319,7 +319,8 @@ class AgenticRoundTests(AgenticTestCase):
         self.assertEqual(result['outcome']['outcome'], 'awaiting_approval')
         proposals = self.store.for_run(result['framework_run_id'])
         self.assertEqual([p['proposal']['control_id'] for p in proposals], ['1.2.2'])
-        self.assertEqual(proposals[0]['proposal']['reason'], 'Prerequisite that unblocks 1.2.1 (unblocks_other)')
+        # 1.2.1 is a finding blocked by 1.2.2; 1.2.4 is still a gap expected to resolve with it.
+        self.assertEqual(proposals[0]['proposal']['reason'], 'Prerequisite that unblocks 1.2.1, 1.2.4 (unblocks_other)')
         self.assertEqual(result['outcome']['skipped'][0], dict(control_id='1.2.1', reason_code='waits_for_prerequisite',
                                                                reason='Waits until 1.2.2 is compliant'))
 
@@ -373,6 +374,19 @@ class AgenticRoundTests(AgenticTestCase):
         result = hardening.run_round()
         self.assertEqual(len(self.trace(hardening, result['round_id'], SCANNER)), 2)
         self.assertEqual(result['outcome']['outcome'], 'no_fix_proposed')
+        delegations = [e['data']['result'] for e in self.trace(hardening, result['round_id'], ORCHESTRATOR)[0]['events']
+                       if e['kind'] == 'tool' and e['data']['name'] == 'delegate_scanner']
+        # The Orchestrator is told it may retry a stalled Scanner, and only then.
+        self.assertEqual([d.get('retry_allowed') for d in delegations], [True, None])
+
+    def test_a_fix_that_resolves_gaps_may_be_given_unblocks_other(self):
+        t = 'windows:' + target().machine_uuid
+        hardening = self.hardening(FakeVm(), [call('delegate_scanner', t), call('delegate_analysis', t),
+            plan(t, fixes=[('1.2.2', 'REM-1.2.2', 'unblocks_other')], skipped=DEFER_ALL[1:])])
+        result = hardening.run_round()
+        self.assertEqual(result['outcome']['outcome'], 'awaiting_approval')
+        self.assertEqual(self.store.for_run(result['framework_run_id'])[0]['proposal']['reason'],
+                         'Prerequisite that unblocks 1.2.1, 1.2.4 (unblocks_other)')
 
     def test_models_receive_compact_views(self):
         result = self.standard_round(FakeVm()).run_round()
@@ -382,7 +396,7 @@ class AgenticRoundTests(AgenticTestCase):
         self.assertEqual(set(analysis), {'agent', 'status', 'must_decide', 'no_action', 'gaps', 'attention',
                                          'rescan_requested'})
         self.assertEqual(analysis['must_decide'][0], dict(control_id='1.2.2', level='High', score=69, actions=['REM-1.2.2'],
-            fix_codes=['high_risk', 'low_impact'], skip_codes=['needs_review', 'lower_priority']))
+            fix_codes=['high_risk', 'unblocks_other', 'low_impact'], skip_codes=['needs_review', 'lower_priority']))
         moderate = next(d for d in analysis['must_decide'] if d['control_id'] == '1.1.3')
         self.assertEqual(moderate['fix_codes'], ['low_impact'])  # Only codes that are true for this finding.
 
@@ -522,8 +536,7 @@ class AnalysisAgentTests(AgenticTestCase):
         t = 'windows:' + target().machine_uuid
         analysis = [call('score_findings', t), call('inspect_finding', t, control_id='1.2.2'),
                     call('check_history', t, control_id='1.2.2'),
-                    call('submit_analysis', t, attention=[dict(control_id='1.2.2', attention_code='unblocks_other'),
-                                                          dict(control_id='9.3.1', attention_code='manual_fix_needed')],
+                    call('submit_analysis', t, unblocks_other=['1.2.2'], manual_fix_needed=['9.3.1'],
                          gap_triage=[dict(control_id='1.2.1', triage_code='resolves_with_prerequisite'),
                                      dict(control_id='1.2.4', triage_code='resolves_with_prerequisite')])]
         hardening = self.hardening(FakeVm(), [call('delegate_scanner', t), call('delegate_analysis', t),
@@ -545,9 +558,9 @@ class AnalysisAgentTests(AgenticTestCase):
         self.assertEqual(AnalysisTools.names, ('score_findings', 'inspect_finding', 'check_history', 'submit_analysis'))
         t = 'windows:' + target().machine_uuid
         analysis = [call('score_findings', t),
-                    call('submit_analysis', t, attention=[dict(control_id='1.1.3', attention_code='high_risk')],
+                    call('submit_analysis', t, high_risk=['1.1.3'],
                          gap_triage=[]),
-                    call('submit_analysis', t, attention=[], gap_triage=[dict(control_id='1.2.1', triage_code='rescan')])]
+                    call('submit_analysis', t, gap_triage=[dict(control_id='1.2.1', triage_code='rescan')])]
         hardening = self.hardening(FakeVm(), [call('delegate_scanner', t), call('delegate_analysis', t),
             plan(t, fixes=[('1.2.2', 'REM-1.2.2', 'high_risk')], skipped=DEFER_ALL[1:])], analysis=analysis)
         result = hardening.run_round()
@@ -569,7 +582,7 @@ class AnalysisAgentTests(AgenticTestCase):
                 return super().chat(messages, tools, timeout=timeout)
         analysis = [call('score_findings', t)] + [call('inspect_finding', t, control_id=c)
                                                   for c in ('1.2.2', '1.1.1', '2.3.10.3')]
-        analysis.append(call('submit_analysis', t, attention=[], gap_triage=[
+        analysis.append(call('submit_analysis', t, gap_triage=[
             dict(control_id='1.2.1', triage_code='manual_review'), dict(control_id='1.2.4', triage_code='manual_review')]))
         hardening = self.hardening(FakeVm(), [call('delegate_scanner', t), call('delegate_analysis', t),
                                               plan(t, skipped=DEFER_ALL)], analysis=Recording(analysis))
@@ -588,15 +601,15 @@ class AnalysisAgentTests(AgenticTestCase):
 
     def test_flags_beyond_three_are_checked_then_dropped_not_fatal(self):
         t = 'windows:' + target().machine_uuid
-        flags = [('1.2.2', 'high_risk'), ('9.3.1', 'manual_fix_needed'), ('1.1.1', 'high_risk'), ('2.3.10.3', 'high_risk')]
-        analysis = [call('score_findings', t), call('submit_analysis', t,
-                    attention=[dict(control_id=c, attention_code=a) for c, a in flags],
+        analysis = [call('score_findings', t), call('submit_analysis', t, manual_fix_needed=['9.3.1'],
+                    high_risk=['1.2.2', '1.1.1', '2.3.10.3'],
                     gap_triage=[dict(control_id=g, triage_code='manual_review') for g in ('1.2.1', '1.2.4')])]
         hardening = self.hardening(FakeVm(), [call('delegate_scanner', t), call('delegate_analysis', t),
                                               plan(t, skipped=DEFER_ALL)], analysis=analysis)
         result = hardening.run_round()
         stored = self.store.rounds(result['session_id'])[0]['analysis_outcome']
-        self.assertEqual([a['control_id'] for a in stored['attention']], ['1.2.2', '9.3.1', '1.1.1'])
+        # Kept in code order, most specific first (regression, unblocks_other, manual_fix_needed, high_risk).
+        self.assertEqual([a['control_id'] for a in stored['attention']], ['9.3.1', '1.2.2', '1.1.1'])
         self.assertIn('Further flags beyond 3 not shown: 2.3.10.3.', stored['reason'])
 
     def test_only_findings_with_a_true_attention_code_are_offered_for_flagging(self):
@@ -607,23 +620,24 @@ class AnalysisAgentTests(AgenticTestCase):
             def chat(self, messages, tools, *, timeout):
                 submit = next((s for s in tools if s['function']['name'] == 'submit_analysis'), None)
                 if submit:
-                    offered.append(submit['function']['parameters']['properties']['attention']['items']['properties'])
+                    offered.append(submit['function']['parameters']['properties'])
                 return super().chat(messages, tools, timeout=timeout)
-        analysis = Recording([call('score_findings', t), call('submit_analysis', t, attention=[], gap_triage=[
+        analysis = Recording([call('score_findings', t), call('submit_analysis', t, gap_triage=[
             dict(control_id=g, triage_code='manual_review') for g in ('1.2.1', '1.2.4')])])
         self.hardening(FakeVm(), [call('delegate_scanner', t), call('delegate_analysis', t),
                                   plan(t, skipped=DEFER_ALL)], analysis=analysis).run_round()
-        controls, codes = offered[0]['control_id']['enum'], offered[0]['attention_code']['enum']
-        self.assertIn('1.2.2', controls)     # High and unblocks 1.2.1/1.2.4.
-        self.assertIn('9.3.1', controls)     # No library action.
-        self.assertNotIn('1.1.3', controls)  # Moderate with an action and nothing waiting: no true code.
-        self.assertNotIn('regression', codes)  # No history in this test, so no finding regressed.
+        enums = {code: offered[-1][code]['items']['enum'] for code in ATTENTION if code in offered[-1]}
+        self.assertNotIn('regression', enums)  # No history in this test, so no finding regressed.
+        self.assertIn('1.2.2', enums['high_risk'])
+        self.assertEqual(enums['unblocks_other'], ['1.2.2'])  # 1.2.1 and 1.2.4 wait for it.
+        self.assertIn('9.3.1', enums['manual_fix_needed'])  # No library action.
+        self.assertNotIn('17.1.1', enums['manual_fix_needed'])  # Audit controls have one: no false pairing offered.
+        self.assertFalse(any('1.1.3' in controls for controls in enums.values()))  # No true code at all.
 
     def test_a_flag_that_does_not_fit_is_discarded_and_recorded_never_shown(self):
         t = 'windows:' + target().machine_uuid
-        flags = [('1.1.3', 'high_risk'), ('1.2.2', 'unblocks_other'), ('17.1.1', 'manual_fix_needed')]
-        analysis = [call('score_findings', t), call('submit_analysis', t,
-                    attention=[dict(control_id=c, attention_code=a) for c, a in flags],
+        analysis = [call('score_findings', t), call('submit_analysis', t, regression=['1.2.2'], high_risk=['1.1.3', '1.2.2'],
+                    unblocks_other=['1.2.2'], manual_fix_needed=['17.1.1'],
                     gap_triage=[dict(control_id=g, triage_code='manual_review') for g in ('1.2.1', '1.2.4')])]
         hardening = self.hardening(FakeVm(), [call('delegate_scanner', t), call('delegate_analysis', t),
                                               plan(t, skipped=DEFER_ALL)], analysis=analysis)
@@ -631,7 +645,9 @@ class AnalysisAgentTests(AgenticTestCase):
         stored = self.store.rounds(result['session_id'])[0]['analysis_outcome']
         self.assertEqual(stored['outcome'], 'analysis_complete')
         self.assertEqual([a['control_id'] for a in stored['attention']], ['1.2.2'])  # Only the fitting flag.
-        self.assertEqual(stored['discarded_flags'], [['1.1.3', 'high_risk'], ['17.1.1', 'manual_fix_needed']])
+        # Including a code that was not offered (nothing regressed); attention never fails the decision.
+        self.assertEqual(stored['discarded_flags'], [['1.2.2', 'regression'], ['17.1.1', 'manual_fix_needed'],
+                                                     ['1.1.3', 'high_risk']])
         self.assertIn('Analysis Agent flags for attention: 1.2.2 (fixing it unblocks 1.2.1, 1.2.4).',
                       result['outcome']['reason'])
 
@@ -666,8 +682,8 @@ class AnalysisAgentTests(AgenticTestCase):
         def triage(code):
             return [dict(control_id='1.1.5', triage_code=code), dict(control_id='1.2.1', triage_code='manual_review'),
                     dict(control_id='1.2.4', triage_code='manual_review')]
-        analysis = [call('score_findings', t), call('submit_analysis', t, attention=[], gap_triage=triage('rescan')),
-                    call('score_findings', t), call('submit_analysis', t, attention=[], gap_triage=triage('manual_review'))]
+        analysis = [call('score_findings', t), call('submit_analysis', t, gap_triage=triage('rescan')),
+                    call('score_findings', t), call('submit_analysis', t, gap_triage=triage('manual_review'))]
         orchestrator = [call('delegate_scanner', t), call('delegate_analysis', t), call('delegate_scanner', t),
                         call('delegate_analysis', t), call('delegate_scanner', t), plan(t, skipped=DEFER_ALL)]
         hardening = self.hardening(FakeVm(error_controls=('1.1.5',)), orchestrator, analysis=analysis)

@@ -9,6 +9,7 @@ import hashlib
 import json
 from uuid import uuid4
 
+from .domain import EvidenceMode
 from .evidence_import import load_evidence
 from .scan_exchange import COLLECTOR
 
@@ -148,7 +149,7 @@ class LiveScanner:
         """Read-only collection that is evaluated but not stored (Remediation Agent precheck)."""
         try:
             return load_evidence(self._collect().encode('utf-8'), expected_hostname=self.target.hostname,
-                                 expected_machine_uuid=self.target.machine_uuid)
+                                 expected_machine_uuid=self.target.machine_uuid, mode=EvidenceMode.LIVE)
         except ValueError as exc:
             raise ChannelError('collection_failed', 'Evidence failed validation: ' + str(exc)[:200]) from None
 
@@ -159,7 +160,8 @@ class LiveScanner:
         output = [self._collect()]
         request_id = uuid4().hex
         run = self.runtime.start(output[0].encode('utf-8'), expected_hostname=self.target.hostname,
-                                 expected_machine_uuid=self.target.machine_uuid, collection_request_id=request_id)
+                                 expected_machine_uuid=self.target.machine_uuid, collection_request_id=request_id,
+                                 mode=EvidenceMode.LIVE)
         run = self.runtime.complete_assessment(run.run_id)
         return dict(request_id=request_id, state='assessment_ready', channel=self.channel,
                     framework_run_id=run.run_id, evidence_sha256=run.evidence_sha256,
