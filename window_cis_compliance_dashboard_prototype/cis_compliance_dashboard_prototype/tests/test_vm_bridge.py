@@ -12,12 +12,9 @@ import unittest
 
 from hardening.evidence_import import CONTEXT_SOURCES, load_evidence, effective_context
 from hardening.import_storage import ImportedEvidenceStore
-from hardening.investigation import Coordinator
 from hardening.vm_bridge import BridgeStore, encode
-from hardening.vm_investigation import VmInvestigationTools
 from hardening.vm_paths import workspace_path, runner_command
 from test_evidence_import import export_fixture, MACHINE_UUID, NOW, load
-from test_investigation import MockClient
 
 
 class ContextTests(unittest.TestCase):
@@ -145,26 +142,6 @@ class BridgeTests(unittest.TestCase):
                                         expected_machine_uuid=MACHINE_UUID, now=NOW)
             with self.assertRaises(ValueError):
                 self.store.propose(saved.assessment.source_sha256)
-
-    def test_imported_ai_proposal_requires_evidence_and_cannot_approve(self):
-        tools = VmInvestigationTools(self.store, self.digest,
-            operational_context=dict(compatibility='compatible', source='Synthetic fixture'))
-        arguments = dict(target_id=tools.target_id, control_id="1.1.4")
-        with self.assertRaises(ValueError):
-            tools.call("submit_remediation_proposal", {**arguments, "reason": "skip checks"})
-        with self.assertRaises(ValueError):
-            tools.call("approve", arguments)
-        names = ['get_finding_evidence', 'get_operational_context', 'get_supported_remediation',
-                 'submit_remediation_proposal']
-        responses = [{"tool_calls": [{"function": {"name": name, "arguments":
-                     {**arguments, **({"reason": "Reviewed imported finding"} if name == names[-1] else {})}}}]}
-                     for name in names]
-        client = MockClient(responses + [{"content": "Awaiting human review."}])
-        run = Coordinator(client, tools).run()
-        self.assertEqual(run["evidence_mode"], "Imported")
-        self.assertEqual(run["events"][-1]["data"]["status"], "Completed")
-        self.assertIsNone(self.store.get(tools.proposal_id)["decision"])
-        self.assertIn("imported Windows Server", client.received[0][0]["content"])
 
     def test_per_device_workspaces_survive_restart_without_altering_approval(self):
         identifier, raw = self.approved()

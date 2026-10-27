@@ -1,6 +1,6 @@
 # F2: operational-context investigation
 
-> **Archived 26 October 2026.** Describes the legacy **Evidence upload** page (manual file exchange and the earlier agent team), not the current agentic framework. Current design: [ARCHITECTURE.md](../../../ARCHITECTURE.md); current status: [PROGRESS.md](../../../PROGRESS.md).
+> **Archived 26 October 2026.** Describes the legacy **Evidence upload** page (manual file exchange and the earlier agent team), which was removed on 27 October 2026; its code is in commit `81b9d52` and earlier. Current design: [ARCHITECTURE.md](../../../ARCHITECTURE.md); current status: [PROGRESS.md](../../../PROGRESS.md).
 
 This implementation adds bounded, evidence-dependent decisions for the existing imported minimum-password-length finding. It does not expand the five-control catalogue, add a new executable action, or complete the full multi-role adaptive orchestrator. [FRAMEWORK_RUNTIME.md](FRAMEWORK_RUNTIME.md) describes the underlying assessment and approval lifecycle.
 

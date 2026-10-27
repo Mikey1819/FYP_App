@@ -1,6 +1,6 @@
 # First read-only evidence from the VirtualBox lab
 
-> **Archived 26 October 2026.** Describes the legacy **Evidence upload** page (manual file exchange and the earlier agent team), not the current agentic framework. Current design: [ARCHITECTURE.md](../../../ARCHITECTURE.md); current status: [PROGRESS.md](../../../PROGRESS.md).
+> **Archived 26 October 2026.** Describes the legacy **Evidence upload** page (manual file exchange and the earlier agent team), which was removed on 27 October 2026; its code is in commit `81b9d52` and earlier. Current design: [ARCHITECTURE.md](../../../ARCHITECTURE.md); current status: [PROGRESS.md](../../../PROGRESS.md).
 
 Historical VM validation covers the original five controls; see [VM_VALIDATION.md](../../../VM_VALIDATION.md). Collector v4 now assesses 16 controls in [BENCHMARK_MAPPING.md](../../../BENCHMARK_MAPPING.md), retaining effective firewall/NLA context. Its eleven added checks still need independent VM comparison. Legacy v1/v2 files retain five checks; v3 retains twelve. Follow [VM_BRIDGE.md](VM_BRIDGE.md) for the approved password-length request/receipt flow.
 

@@ -1,6 +1,6 @@
 # AI hardening agent team
 
-> **Archived 26 October 2026.** Describes the legacy **Evidence upload** page (manual file exchange and the earlier agent team), not the current agentic framework. Current design: [ARCHITECTURE.md](../../../ARCHITECTURE.md); current status: [PROGRESS.md](../../../PROGRESS.md).
+> **Archived 26 October 2026.** Describes the legacy **Evidence upload** page (manual file exchange and the earlier agent team), which was removed on 27 October 2026; its code is in commit `81b9d52` and earlier. Current design: [ARCHITECTURE.md](../../../ARCHITECTURE.md); current status: [PROGRESS.md](../../../PROGRESS.md).
 
 The normal dashboard now offers **Run multi-agent hardening review** after uploading and assessing VM evidence. Four isolated model conversations use the existing local qwen3:8b model. Separate model downloads or processes are not required for separate agent responsibilities.
 

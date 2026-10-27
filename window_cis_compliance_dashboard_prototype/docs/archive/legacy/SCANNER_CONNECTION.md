@@ -1,6 +1,6 @@
 # Scanner connection to the lab VM
 
-> **Archived 26 October 2026.** Describes the legacy **Evidence upload** page (manual file exchange and the earlier agent team), not the current agentic framework. Current design: [ARCHITECTURE.md](../../../ARCHITECTURE.md); current status: [PROGRESS.md](../../../PROGRESS.md).
+> **Archived 26 October 2026.** Describes the legacy **Evidence upload** page (manual file exchange and the earlier agent team), which was removed on 27 October 2026; its code is in commit `81b9d52` and earlier. Current design: [ARCHITECTURE.md](../../../ARCHITECTURE.md); current status: [PROGRESS.md](../../../PROGRESS.md).
 
 > **Fallback only (26 October 2026).** The Scanner Agent's primary channel is PowerShell Remoting: see [VM_CONNECTION.md](../../../VM_CONNECTION.md). This shared-folder worker needs a person to start it inside the VM, so by itself it does not make the Scanner an agent.
 

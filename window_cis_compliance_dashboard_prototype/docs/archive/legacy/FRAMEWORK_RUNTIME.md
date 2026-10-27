@@ -1,6 +1,6 @@
 # Imported-assessment framework foundation
 
-> **Archived 26 October 2026.** Describes the legacy **Evidence upload** page (manual file exchange and the earlier agent team), not the current agentic framework. Current design: [ARCHITECTURE.md](../../../ARCHITECTURE.md); current status: [PROGRESS.md](../../../PROGRESS.md).
+> **Archived 26 October 2026.** Describes the legacy **Evidence upload** page (manual file exchange and the earlier agent team), which was removed on 27 October 2026; its code is in commit `81b9d52` and earlier. Current design: [ARCHITECTURE.md](../../../ARCHITECTURE.md); current status: [PROGRESS.md](../../../PROGRESS.md).
 
 Implementation status: 23 October 2026, Asia/Kuala_Lumpur (UTC+08:00). F1 now includes the assessment runtime and a durable service linking each run to exact proposals, decisions and returned verification. The full adaptive AI orchestrator remains unfinished. See [the framework plan](../../../REPORT_ALIGNMENT_AND_FRAMEWORK_PLAN.md) for the final target and [progress](../../../PROGRESS.md) for exact validation results.
 

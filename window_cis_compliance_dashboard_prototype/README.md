@@ -40,11 +40,11 @@ For a fresh checkout, create a virtual environment and install `requirements.txt
 4. **Execute approved fixes with the Remediation Agent.** The Orchestrator delegates the Remediation Agent and then a verification rescan, and states the next step.
 5. **Run next round** to rescan, re-rank and propose again, for example once a fixed prerequisite has unblocked another finding.
 
-If the agents stop before finishing, **Execute remaining approved fixes without AI** applies the same guards without the model. **Overview** summarises posture and recent activity. **History and drift** compares assessments and lists configuration drift. **Evidence upload (legacy)** is the earlier manual-file workflow, kept for its evaluation evidence.
+If the agents stop before finishing, **Execute remaining approved fixes without AI** applies the same guards without the model. **Overview** summarises posture and recent activity. **History and drift** compares assessments and lists configuration drift. The earlier manual-file upload page was retired on 27 October 2026; its documents are in `docs/archive/legacy/` and its code is in the git history.
 
 ## Checks
 
-From `cis_compliance_dashboard_prototype` (244 tests on 26 October 2026; fixtures and a simulated VM only, nothing touches a real machine):
+From `cis_compliance_dashboard_prototype` (191 tests on 27 October 2026, after the legacy page was retired; fixtures and a simulated VM only, nothing touches a real machine):
 
 ```powershell
 $env:TEMP = Join-Path (Get-Location) 'data\test_tmp'; $env:TMP = $env:TEMP

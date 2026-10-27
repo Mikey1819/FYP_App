@@ -4,13 +4,11 @@ import json
 import tempfile
 import unittest
 
-from hardening.agent_team import SCANNER
 from hardening.framework import AssessmentOrchestrator
 from hardening.import_storage import ImportedEvidenceStore
 from hardening.scan_exchange import COLLECTOR
 from hardening.vm_bridge import encode
 from hardening.winrm_channel import IDENTITY_SCRIPT, ChannelError, LiveScanner, WinRmTarget
-import test_agent_team
 from test_evidence_import import MACHINE_UUID
 from test_full_controls import full_fixture
 
@@ -116,32 +114,6 @@ class LiveScannerTests(unittest.TestCase):
     def test_target_requires_credentials(self):
         with self.assertRaises(ValueError):
             target(password='')
-
-
-class LiveScannerAgentTests(unittest.TestCase):
-    """Scanner Agent recollection over the live channel; reuses the team fixtures."""
-    setUp = test_agent_team.AgentTeamTests.setUp
-    team = test_agent_team.AgentTeamTests.team
-
-    def test_scanner_recollects_live_into_a_new_assessment_and_stops_team(self):
-        team, _ = self.team('missing')
-        team.collection_exchange = LiveScanner(self.runtime, target(), session_factory=FakeSession())
-        run = team.run()
-        outcome = run['events'][-1]['data']['outcome']
-        self.assertEqual(outcome['outcome'], 'evidence_recollected')
-        recollected = outcome['collection_request']
-        self.assertEqual(recollected['state'], 'assessment_ready')
-        self.assertNotEqual(recollected['framework_run_id'], team.framework_run_id)
-        self.assertEqual(set(team.children), {SCANNER})
-        self.assertFalse(self.lifecycle.get(team.framework_run_id)['attempts'])
-
-    def test_live_failure_leaves_team_awaiting_evidence(self):
-        team, _ = self.team('missing')
-        team.collection_exchange = LiveScanner(self.runtime, target(),
-                                               session_factory=FakeSession(fail=ConnectionError('refused')))
-        outcome = team.run()['events'][-1]['data']['outcome']
-        self.assertEqual(outcome['outcome'], 'awaiting_evidence')
-        self.assertEqual(outcome['collection_request']['state'], 'unreachable')
 
 
 if __name__ == '__main__':

@@ -17,15 +17,15 @@ APP = Path(__file__).resolve().parents[1] / 'app.py'
 
 
 def agentic_page():
-    import legacy_app
+    from hardening.databases import imports_database
     from hardening.agentic_view import render_agentic
-    render_agentic(legacy_app.imports_database())
+    render_agentic(imports_database())
 
 
 def overview_page():
-    import legacy_app
+    from hardening.databases import imports_database
     from hardening.overview_view import render_overview
-    render_overview(legacy_app.imports_database())
+    render_overview(imports_database())
 
 
 class ScriptedModel:
