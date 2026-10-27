@@ -357,6 +357,11 @@ class AnalysisTools(_RoleTools):
         t = self.target_id
         found = [f['control_id'] for f in self.analysis['findings']] if self.analysis else []
         gaps = [g['control_id'] for g in self.analysis['gaps']] if self.analysis else []
+        # Only findings with at least one true attention code may be flagged, and only with codes that are true
+        # for some finding: real qwen3:8b called audit controls manual_fix_needed when any finding was allowed.
+        facts = self._facts()[1] if self.analysis else {}
+        flaggable = [c for c, codes in facts.items() if any(codes.values())]
+        flag_codes = sorted({code for codes in facts.values() for code, true in codes.items() if true}) or sorted(ATTENTION)
         every = {'type': 'string', 'enum': [r.control.control_id for r in self.record.assessment.results]}
         return [tool('score_findings', 'Read the deterministic risk ranking of this scan (you cannot change scores).', t),
                 tool('inspect_finding', 'Read one scored finding: factors, how each was derived, rationale, actions.', t,
@@ -366,7 +371,8 @@ class AnalysisTools(_RoleTools):
                 tool('submit_analysis', 'Submit once: findings for administrator attention and a triage code for '
                      'every gap.', t,
                      attention=coded_list(('control_id', 'attention_code'),
-                                          dict(control_id=found, attention_code=sorted(ATTENTION)), 3),
+                                          dict(control_id=flaggable, attention_code=flag_codes),
+                                          3 if flaggable or not self.analysis else 0),
                      gap_triage=coded_list(('control_id', 'triage_code'),
                                            dict(control_id=gaps, triage_code=sorted(TRIAGE))))]
 
