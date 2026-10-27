@@ -57,10 +57,10 @@ class ImportedEvidenceStore:
             connection.close()
 
     def save(self, raw: bytes, *, expected_hostname: str, expected_machine_uuid: str,
-             now: datetime | None = None) -> tuple[SavedImport, bool]:
+             now: datetime | None = None, mode: EvidenceMode = EvidenceMode.IMPORTED) -> tuple[SavedImport, bool]:
         # Validate again at the persistence boundary; no caller-supplied results/scores.
         result = load_evidence(raw, expected_hostname=expected_hostname,
-                               expected_machine_uuid=expected_machine_uuid, now=now)
+                               expected_machine_uuid=expected_machine_uuid, now=now, mode=mode)
         imported_at = datetime.now(timezone.utc).isoformat()
         snapshot = json.dumps([_encode_result(r) for r in result.results], sort_keys=True, allow_nan=False)
         with self._connection() as connection:
@@ -87,7 +87,7 @@ class ImportedEvidenceStore:
             raise ValueError('Stored source bytes failed integrity check')
         results = tuple(_decode_result(r) for r in json.loads(snapshot))
         summarise(results)
-        if not results or any(r.evidence.target_id != target_id or r.evidence.mode != EvidenceMode.IMPORTED
+        if not results or any(r.evidence.target_id != target_id or r.evidence.mode not in (EvidenceMode.IMPORTED, EvidenceMode.LIVE)
                               or r.assessment_id != 'import-' + digest
                               or r != assess(r.assessment_id, r.control, r.evidence) for r in results):
             raise ValueError('Stored imported snapshot failed validation')

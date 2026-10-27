@@ -36,7 +36,8 @@ PROMPTS = {
     ORCHESTRATOR: COMMON + 'You are the AI Agent Orchestrator for hardening one registered Windows Server 2022 VM. '
         'You coordinate specialist agents; you never scan, score, approve or execute yourself. '
         '1) Call delegate_scanner. 2) If the Scanner handed off, call delegate_analysis; if it reported a '
-        'collection failure, call submit_plan with empty fixes and skipped. If the analysis lists rescan_requested, '
+        'collection failure, call submit_plan with empty fixes and skipped; if it stopped without a handoff '
+        '(retry_allowed), call delegate_scanner once more. If the analysis lists rescan_requested, '
         'you may call delegate_scanner once more and then delegate_analysis again. 3) Call submit_plan once with '
         'your whole decision about the must_decide findings only (never gaps). fixes: findings to fix now, in '
         'execution order, each {control_id, action_id, reason_code}: action_id from that finding\'s actions and '
@@ -50,10 +51,10 @@ PROMPTS = {
         'observations. Finish with your handoff tool, or report_failure if scanning failed. You never change settings.',
     ANALYSIS: COMMON + 'You are the Analysis Agent. A deterministic risk engine scores findings; you can read but '
         'never change scores. 1) Call score_findings. 2) Investigate before you judge, at most 2 calls in total: '
-        'inspect_finding for findings you may flag, check_history for findings that show D. 3) Call submit_analysis once. attention: up to '
-        '3 findings the administrator should look at first, each {control_id, attention_code} with a code from that '
-        'finding\'s attention_codes (a finding without attention_codes cannot be flagged). gap_triage: every gap exactly once, each {control_id, triage_code} from its '
-        'triage_codes; choose rescan only if a fresh collection could change it.',
+        'inspect_finding for findings you may flag, check_history for findings that show D. 3) Call submit_analysis once. Flag up to '
+        '3 findings the administrator should look at first: list each under the parameter named after one of its '
+        'attention_codes (each parameter offers only the findings that code fits; leave the others empty). '
+        'gap_triage: every gap exactly once, each {control_id, triage_code} from its triage_codes; choose rescan only if a fresh collection could change it.',
     REMEDIATION: COMMON + 'You are the Remediation Agent. You act only on requests the administrator approved; you '
         'never approve, choose values or write commands. 1) Call precheck to observe the VM read-only (list_approved '
         'is optional). 2) Decide each request once: skip_fix (with a reason_code from its skip_codes) every request '
@@ -85,8 +86,9 @@ FIX_REASONS = {'high_risk': 'High-priority finding', 'unblocks_other': 'Prerequi
 SKIP_REASONS = {'waits_for_prerequisite': 'Waits until {prerequisites} is compliant',
                 'needs_review': 'Operational impact needs administrator review first',
                 'lower_priority': 'Lower priority; deferred to a later round'}
-ATTENTION = {'regression': 'regressed since the previous assessment', 'high_risk': 'high-priority finding',
-             'unblocks_other': 'fixing it unblocks {waiting}', 'manual_fix_needed': 'no library action: needs a manual fix'}
+# Most specific first: flags are kept in this order, and high_risk only repeats what the ranking already shows.
+ATTENTION = {'regression': 'regressed since the previous assessment', 'unblocks_other': 'fixing it unblocks {waiting}',
+             'manual_fix_needed': 'no library action: needs a manual fix', 'high_risk': 'high-priority finding'}
 TRIAGE = {'rescan': 'collection error; Scanner asked to collect again',
           'resolves_with_prerequisite': 'expected to resolve once {prerequisite} is fixed',
           'manual_review': 'review manually'}
@@ -348,6 +350,14 @@ class AnalysisTools(_RoleTools):
                                     'manual_review': True} for g in self.analysis['gaps']}
         return waiting, attention, triage, prerequisite
 
+    def _flag_options(self):
+        """Per attention code, the findings it is true for; codes true for no finding are not offered."""
+        if self.analysis is None:
+            return {}
+        facts = self._facts()[1]
+        return {code: [c for c, codes in facts.items() if codes[code]] for code in ATTENTION
+                if any(codes[code] for codes in facts.values())}
+
     def available(self):
         if self.analysis is None:
             return ('score_findings',)
@@ -357,11 +367,11 @@ class AnalysisTools(_RoleTools):
         t = self.target_id
         found = [f['control_id'] for f in self.analysis['findings']] if self.analysis else []
         gaps = [g['control_id'] for g in self.analysis['gaps']] if self.analysis else []
-        # Only findings with at least one true attention code may be flagged, and only with codes that are true
-        # for some finding: real qwen3:8b called audit controls manual_fix_needed when any finding was allowed.
-        facts = self._facts()[1] if self.analysis else {}
-        flaggable = [c for c, codes in facts.items() if any(codes.values())]
-        flag_codes = sorted({code for codes in facts.values() for code, true in codes.items() if true}) or sorted(ATTENTION)
+        # One list per attention code, offering only the findings that code fits. With a single control enum and a
+        # single code enum, real qwen3:8b still paired audit controls with manual_fix_needed (27 Oct evaluation).
+        flags = {code: {'type': 'array', 'maxItems': 3, 'items': {'type': 'string', 'enum': controls},
+                        'description': 'Flag for attention: ' + ATTENTION[code].format(waiting='other findings')}
+                 for code, controls in self._flag_options().items()}
         every = {'type': 'string', 'enum': [r.control.control_id for r in self.record.assessment.results]}
         return [tool('score_findings', 'Read the deterministic risk ranking of this scan (you cannot change scores).', t),
                 tool('inspect_finding', 'Read one scored finding: factors, how each was derived, rationale, actions.', t,
@@ -369,10 +379,7 @@ class AnalysisTools(_RoleTools):
                 tool('check_history', 'Read earlier observations of one control on this VM, newest first.', t,
                      control_id=every),
                 tool('submit_analysis', 'Submit once: findings for administrator attention and a triage code for '
-                     'every gap.', t,
-                     attention=coded_list(('control_id', 'attention_code'),
-                                          dict(control_id=flaggable, attention_code=flag_codes),
-                                          3 if flaggable or not self.analysis else 0),
+                     'every gap.', t, **flags,
                      gap_triage=coded_list(('control_id', 'triage_code'),
                                            dict(control_id=gaps, triage_code=sorted(TRIAGE))))]
 
@@ -421,21 +428,27 @@ class AnalysisTools(_RoleTools):
         return dict(control_id=control, current=dict(value=current.evidence.value, status=current.status.value),
                     earlier=earlier or 'No earlier assessment of this control on this VM.')
 
-    def _submit(self, arguments):
+    def _submit(self, arguments, flags):
         if self.analysis is None:
             raise ValueError('Call score_findings before submitting')
         waiting, attention_facts, triage_facts, prerequisite = self._facts()
         # Attention is advisory and changes no number, so a flag that does not fit the facts is discarded and
-        # recorded instead of failing the decision; only fitting flags are shown, at most 3. Real qwen3:8b
-        # over-flagged and wrongly called 17.1.1 manual_fix_needed in the 26 Oct evaluation, and the retry of
-        # a refused decision ran out of time. Gap triage stays strict: every gap needs one fitting code.
-        attention = check_entries(arguments['attention'], ('control_id', 'attention_code'), 'attention', ATTENTION)
+        # recorded instead of failing the decision; only fitting flags are shown, at most 3, in code order. Real
+        # qwen3:8b over-flagged and wrongly called 17.1.1 manual_fix_needed in the 26 Oct evaluation, and the retry
+        # of a refused decision ran out of time. Gap triage stays strict: every gap needs one fitting code.
+        attention = []
+        for code, controls in flags.items():
+            if type(controls) is not list or len(controls) > 40 or any(
+                    type(c) is not str or not c.strip() or len(c) > 40 for c in controls):
+                raise ValueError(f'{code} must be a list of control_ids')
+            attention += [dict(control_id=c, attention_code=code) for c in controls]
         fitting, discarded = [], []
         for entry in attention:
             control, code = entry['control_id'], entry['attention_code']
-            fits = control in attention_facts and attention_facts[control][code] and control not in {
-                e['control_id'] for e in fitting}
-            (fitting if fits else discarded).append(entry)
+            if not (control in attention_facts and attention_facts[control][code]):
+                discarded.append(entry)
+            elif control not in {e['control_id'] for e in fitting}:  # Listed under a later code too: shown once.
+                fitting.append(entry)
         attention, dropped = fitting[:3], [e['control_id'] for e in fitting[3:]]
         triage = check_entries(arguments['gap_triage'], ('control_id', 'triage_code'), 'gap_triage', TRIAGE)
         seen = set()
@@ -488,7 +501,10 @@ class AnalysisTools(_RoleTools):
             self.investigations += 1
             output['investigations_left'] = MAX_INVESTIGATIONS - self.investigations
         elif name == 'submit_analysis':
-            return self._submit(self._args(name, arguments, lists=('attention', 'gap_triage')))
+            # Attention parameters are optional and taken in code order; an empty one need not be sent.
+            rest = dict(arguments) if type(arguments) is dict else arguments
+            flags = {code: rest.pop(code) for code in ATTENTION if type(rest) is dict and code in rest}
+            return self._submit(self._args(name, rest, lists=('gap_triage',)), flags)
         else:
             raise ValueError('Tool is outside this agent role')
         self.seen.add(name)
@@ -741,11 +757,13 @@ class OrchestratorTools(_RoleTools):
                     waits_for=sorted({c for a in actions for c in a.blocked_by(results)}))
         return decisions
 
-    @staticmethod
-    def _facts(control, decisions):
+    def _facts(self, control, decisions):
         """Which reason codes are true for this finding (codes not listed here are judgement calls)."""
         decision = decisions[control]
-        waiting = [c for c, d in decisions.items() if control in d['waits_for']]
+        # Gaps expected to resolve with this fix count too, as in the Analysis Agent's facts: real qwen3:8b reused
+        # Analysis's unblocks_other flag for 1.2.2 and was refused when only findings counted (27 Oct check).
+        waiting = ([c for c, d in decisions.items() if control in d['waits_for']]
+                   + [g['control_id'] for g in self.analysis['gaps'] if g['prerequisite'] == control])
         return waiting, {'high_risk': decision['finding']['level'] in ('High', 'Critical'),
                          'unblocks_other': bool(waiting), 'improves_detection': control.startswith(DETECTION_CONTROLS),
                          'waits_for_prerequisite': bool(decision['waits_for'])}
@@ -876,7 +894,8 @@ class OrchestratorTools(_RoleTools):
 
     def _delegate_scanner(self):
         tools = ScannerTools(self.rounds)
-        child, finished = self._child(SCANNER, tools, steps=6, calls=8, seconds=150)
+        # A cold first request after another agent ran took over 60 s on the laptop (27 Oct evaluation).
+        child, finished = self._child(SCANNER, tools, steps=6, calls=8, seconds=180, request=120)
         self.scans += 1
         outcome = tools.terminal_outcome or dict(outcome='incomplete', reason=finished['summary'])
         if outcome['outcome'] == 'handoff_analysis':
@@ -887,7 +906,10 @@ class OrchestratorTools(_RoleTools):
             if tools.record is not None:
                 self.framework_run_id = tools.framework_run_id  # Evidence exists even without a handoff.
         # A failed second scan keeps the first scan and its analysis.
-        return dict(agent=SCANNER, child_run_id=child['run_id'], status=finished['status'], handoff=outcome)
+        result = dict(agent=SCANNER, child_run_id=child['run_id'], status=finished['status'], handoff=outcome)
+        if self._rescan_allowed() and outcome['outcome'] == 'incomplete':
+            result['retry_allowed'] = True
+        return result
 
     def _delegate_analysis(self):
         previous = self.rounds.previous_records(self.framework_run_id)
@@ -1011,7 +1033,7 @@ class OrchestratorReviewTools(_RoleTools):
             if self.verification is not None:
                 raise ValueError('Verification runs once per phase')
             tools = ScannerTools(self.rounds, verify_run_id=self.framework_run_id)
-            child, finished = self._child(SCANNER, tools, steps=6, calls=8, seconds=150)
+            child, finished = self._child(SCANNER, tools, steps=6, calls=8, seconds=180, request=120)
             if tools.record is not None:  # Collected evidence counts even if the agent did not hand off.
                 self.verification = self._scan_facts(tools.framework_run_id)
             else:

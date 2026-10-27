@@ -51,7 +51,7 @@ The password stays in the Streamlit session's memory only. It is never written t
 
 ## Limits and design notes
 
-- Evidence is still labelled `Imported` in storage, because the importer and storage enforce that mode. Relabelling it `Live` for channel-collected runs is a follow-up.
+- Evidence collected over this channel is stored as `Live` (since 27 October 2026); an uploaded file stays `Imported`. The export inside is the same collector contract, so drift compares the two. The **History and drift** table shows the source of every assessment.
 - Hardening can cut this channel. Future firewall controls (for example disabling local firewall rule merging), WinRM service policies and network logon rights can break remoting. The Remediation Agent must refuse, or flag, any action that would disconnect its own channel before verification.
 - The Remediation Agent runs [Invoke-RemediationAction.ps1](scripts/Invoke-RemediationAction.ps1) over this channel for approved library actions, as described in [ARCHITECTURE.md](ARCHITECTURE.md). Its precheck runs the same read-only collector without storing a new assessment. The manual file exchange of the retired upload page is documented in [archived VM_BRIDGE.md](docs/archive/legacy/VM_BRIDGE.md).
 - Nothing needs to be copied into the VM for the agentic page: the collector and runner are sent over the channel on every call.
