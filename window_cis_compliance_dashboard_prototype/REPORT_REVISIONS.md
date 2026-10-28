@@ -114,6 +114,16 @@ Note the corrected IDs: the report's 9.3.8, 17.2.5 and 17.2.6 are 9.3.6, 17.2.2 
 
 > the language model chooses the agents' next actions only through registered, code-validated tools, and has no path to free-form commands, numerical risk values or unapproved changes.
 
+**Revised figure:** `myown/drawio/Module Class Diagram (revised).drawio` (your original is unchanged). It connects LocalLLMClient to all four agents with *selects validated tool calls*, adds `selectToolCall(prompt, tools)`, gives the ScannerAgent `verifyRemediation(controlIds)`, and replaces the RemediationAgent's methods with `precheck()`, `executeApproved(controlIds)`, `skipAction(controlId, reasonCode)` and `reportResults()`. The remediation library still has no link to the LLM. Export it from draw.io as the new Figure 4.5.
+
+**In §4.4.1 "Agent Layer", replace the RemediationAgent paragraph ("Following the Orchestrator's proposal … configuration-changing commands.") with:**
+
+> Following the Orchestrator's proposal of applicable actions and their approval by the Administrator, RemediationAgent first performs a read-only precheck of the target, then executes or skips each approved action from the pre-approved PowerShell library and reports each outcome. Verification is delegated to the ScannerAgent. RemediationAgent uses LocalLLMClient only to choose among its registered tools (precheck, execute, skip, report); the actions themselves are predefined, every call is validated by code against the administrator's approval and the precheck result, and the language model never produces configuration-changing commands.
+
+**In "Supporting Reasoning and Calculation Layer", replace the LocalLLMClient paragraph with:**
+
+> The LocalLLMClient class wraps the local language model. It returns the next tool call an agent selects from the tools that are valid in the current state, and generates explanations of findings. It has no risk-calculating or command-generating method: numerical risk calculation and remediation actions remain deterministic and outside the control of the language model, as required by NFR07.
+
 ---
 
 ## A3. Compliance status: Unknown and Error
@@ -148,6 +158,8 @@ Note the corrected IDs: the report's 9.3.8, 17.2.5 and 17.2.6 are 9.3.6, 17.2.2 
 > The Orchestrator cannot choose Assessment Completed or Next Round while any action is failed, uncertain or not attempted. No path retries a configuration change automatically; any further change must again pass through Awaiting Approval.
 
 **Also add to Figure 4.4:** a loop from Analysis back to Scanning labelled *rescan requested (once)*, and the Next Round transition from Verification back to Assessment Requested.
+
+**Revised figure:** `myown/drawio/Orchestrator Chart Diagram (revised).drawio` (your original is unchanged) already contains both transitions, shows the Scanner Agent verifying and the Remediation Agent prechecking, executing or skipping, and splits Verification into *[All executed actions verified]*, *[Findings remain] Next round* and *[Failed, uncertain or not attempted]*. Export it from draw.io as the new Figure 4.4.
 
 **In Table 3.6 and Table 4.1**, change the Remediation Agent's responsibility to:
 
@@ -215,6 +227,12 @@ Source: `cis_compliance_dashboard_prototype/data/agentic_evaluations/20261027_14
 > In two of the four *changed_after_approval* runs, the Remediation Agent first tried to include the changed request in its execution list. The validation refused the whole list before anything ran, and the agent then skipped that request. This shows that the code-enforced controls, rather than the model's judgement, are what guarantee safety.
 >
 > **Limitations.** In all four *channel_drop* runs, the Remediation Agent passed the execution results into its final report call, which accepts only the target identifier. Code refused the call, and in three runs the agent repeated it and was stopped without its structured report. The outcome was unaffected: the remediation summary is written by code from the recorded verdicts, and the Orchestrator still sent every such round to review. The tool description was then made explicit, and in two further *channel_drop* runs the Remediation Agent completed its report with no refused call. The model made nearly identical choices on every repeat of a scenario, so the repetitions mainly show that timings are stable. Twenty runs against one simulated target are a small sample, and the results must be confirmed on the real server.
+
+**Figure for this section:** [docs/figures/fig_phase_times.png](docs/figures/fig_phase_times.png) (regenerate with `python scripts/make_report_figures.py`). Suggested caption and lead-in:
+
+> **Figure 5.x Time per workflow phase against the NFR06 limit.** Mean time of the assessment round and the remediation phase in each scenario (four runs each), divided by the agent in which it was spent; whiskers show the fastest and slowest run.
+>
+> Figure 5.x shows that the slowest assessment round (297 seconds) used about half of the ten-minute limit. Most of the time was spent in the Orchestrator's own model requests, because each switch between agents requires the shared local model to process a different prompt.
 
 **Also cite:**
 
