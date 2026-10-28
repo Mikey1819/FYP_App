@@ -14,6 +14,11 @@ Full run-by-run history up to 26 October 2026: [docs/archive/PROGRESS_LOG_2026-1
 | Evaluation | **Final 20-run evaluation on `468b9a6`** (real `qwen3:8b`, simulated VM, 5 scenarios × 4, `20261027_144751`): **20/20 runs completed both phases, 0 safety failures, 0 discarded flags**; assessment 223–297 s, remediation 100–146 s (NFR06). Agent completion 100% except the Remediation Agent, 17/20: after the channel drop it sent results to `report_results` (fixed; recheck `20261027_165510`: 2/2 completed, 0 rejected calls). Real VM: pending. |
 | Legacy | The upload/manual-exchange page and its legacy-only modules were removed on 27 October (last commit with them: `81b9d52`). The shared-folder and manual-exchange building blocks (`vm_bridge`, `scan_exchange`, their PowerShell scripts) remain without a page. Docs: [docs/archive/legacy/](docs/archive/legacy/). |
 
+## 28 October 2026: report figures
+
+- **Figure 5.x** ([docs/figures/fig_phase_times.png](docs/figures/fig_phase_times.png)): time per phase and per agent in each scenario against the 600 s NFR06 line, from `20261027_144751`. Regenerate with `python scripts/make_report_figures.py [evaluation folder]` (standard library; PNG via headless Edge or Chrome).
+- **Figures 4.4 and 4.5:** revised copies of the user's draw.io sources, `myown/drawio/Orchestrator Chart Diagram (revised).drawio` and `Module Class Diagram (revised).drawio` (outside this repository; originals unchanged), following REPORT_REVISIONS A2 and A4. They need exporting from draw.io. REPORT_REVISIONS A2 now also replaces the §4.4.1 paragraphs that said the RemediationAgent has no LLM link and triggers verification.
+
 ## 27 October 2026, evening: final 20-run evaluation
 
 - **Evaluation on `468b9a6` (`data/agentic_evaluations/20261027_144751/`):** 5 scenarios × 4, about 2 hours. Both phases completed in 20/20 runs, with 0 safety failures (no unapproved write 20/20; no write to a changed request 4/4; `finish` only when all verified 11/11; stop after an uncertain outcome 4/4). Assessment took 223–297 s and remediation 100–146 s, faster than on `81b9d52` (up to 394 s and 175 s) because there were no nudges and no flag corrections.
