@@ -51,4 +51,7 @@ if (Test-Precondition $setTo0 '18.10.57.3.9.4' $null) { throw 'A policy set sinc
 if (Test-SameTypedValue 0 $false) { throw '0 must not equal $false.' }
 if (-not (Test-SameTypedValue 5 5)) { throw 'Equal integers must match.' }
 if (Test-SameTypedValue 5.0 5) { throw 'Floating-point values must not match integer settings.' }
+if ((Get-FailureText "Requested registry access`r`nis not allowed.") -cne 'Requested registry access is not allowed.') { throw 'Failure text must be one line.' }
+if ((Get-FailureText ('x' * 300)).Length -ne 200) { throw 'Failure text must be bounded.' }
+if ((Get-FailureText '  ') -cne 'no detail') { throw 'An empty failure needs a placeholder.' }
 Write-Host 'PASS: remediation runner library, identity, value, type, expiry and extra-field guards (fixtures only).'
