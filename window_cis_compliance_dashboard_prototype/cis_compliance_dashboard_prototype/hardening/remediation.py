@@ -16,8 +16,7 @@ import uuid
 
 from .action_library import LIBRARY
 from .domain import Status
-from .evidence_import import _no_duplicates, _object, _time, load_evidence
-from .vm_bridge import encode
+from .evidence_import import _no_duplicates, _object, _time, encode, load_evidence
 from .winrm_channel import ChannelError
 
 APP = Path(__file__).resolve().parents[1]

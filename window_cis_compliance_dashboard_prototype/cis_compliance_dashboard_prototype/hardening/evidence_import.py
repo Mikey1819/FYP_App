@@ -112,6 +112,11 @@ def _no_duplicates(pairs):
     return result
 
 
+def encode(data):
+    """Canonical JSON bytes, so equal records always hash and compare equal."""
+    return json.dumps(data, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+
+
 @dataclass(frozen=True)
 class ImportedAssessment:
     results: tuple

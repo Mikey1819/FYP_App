@@ -45,7 +45,7 @@ If the agents stop before finishing, **Execute remaining approved fixes without 
 
 ## Checks
 
-From `cis_compliance_dashboard_prototype` (194 tests on 27 October 2026; fixtures and a simulated VM only, nothing touches a real machine):
+From `cis_compliance_dashboard_prototype` (169 tests on 29 October 2026; fixtures and a simulated VM only, nothing touches a real machine):
 
 ```powershell
 $env:TEMP = Join-Path (Get-Location) 'data\test_tmp'; $env:TMP = $env:TEMP

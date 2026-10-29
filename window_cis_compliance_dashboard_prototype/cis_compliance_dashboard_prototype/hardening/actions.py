@@ -1,4 +1,4 @@
-"""Reviewed action metadata shared by eligibility and the existing VM bridge.
+"""Reviewed action metadata used for remediation eligibility.
 
 Registering metadata does not grant the runner a new executable capability.
 """

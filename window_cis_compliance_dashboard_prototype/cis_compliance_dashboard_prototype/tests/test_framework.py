@@ -12,7 +12,6 @@ from unittest.mock import patch
 from hardening.actions import PASSWORD_LENGTH
 from hardening.framework import AssessmentOrchestrator
 from hardening.import_storage import ImportedEvidenceStore
-from hardening.vm_bridge import finding
 from test_evidence_import import export_fixture, MACHINE_UUID
 
 
@@ -40,7 +39,6 @@ class FrameworkTests(unittest.TestCase):
         self.assertEqual(run.tasks[-1]['output']['candidates'][0]['action_id'], PASSWORD_LENGTH.action_id)
         self.assertEqual(self.runtime.advance(run.run_id), run)
         self.assertIsNone(run.tasks[1]['output']['risk_score'])
-        self.assertFalse(self.imports.path.with_name('imports_bridge.sqlite3').exists())
 
     def test_outcomes_distinguish_compliant_unknown_error_and_unsupported_findings(self):
         cases = [('compliant', None, 'assessment_complete'),
@@ -105,17 +103,14 @@ class FrameworkTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'workflow state'):
             self.runtime.advance(run.run_id)
 
-    def test_registry_eligibility_matches_bridge_boundaries(self):
+    def test_registry_eligibility_matches_action_boundaries(self):
         for value, expected in ((0, True), (13, True), (14, False), (15, False)):
             payload = export_fixture(); payload['observations'][0]['value'] = value
             run = self.runtime.complete_assessment(self.start(payload).run_id)
             record = self.imports.get(run.evidence_sha256)
             self.assertEqual(bool(run.tasks[-1]['output']['candidates']), expected)
-            if expected:
-                self.assertEqual(finding(record).evidence.value, value)
-            else:
-                with self.assertRaises(ValueError):
-                    finding(record)
+            result = next(r for r in record.assessment.results if r.control.control_id == PASSWORD_LENGTH.control_id)
+            self.assertEqual(PASSWORD_LENGTH.eligible(result), expected)
 
     def test_dispatch_rejects_altered_contract_before_invoking_role(self):
         run = self.start()

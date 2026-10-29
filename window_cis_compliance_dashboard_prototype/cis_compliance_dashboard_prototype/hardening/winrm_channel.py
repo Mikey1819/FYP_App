@@ -7,11 +7,13 @@ string-built commands or model text). Credentials stay in the caller's memory.
 from dataclasses import dataclass, field
 import hashlib
 import json
+from pathlib import Path
 from uuid import uuid4
 
 from .domain import EvidenceMode
 from .evidence_import import load_evidence
-from .scan_exchange import COLLECTOR
+
+COLLECTOR = Path(__file__).resolve().parents[2] / 'scripts' / 'Collect-Server2022Evidence.ps1'
 
 DEFAULT_HOST, DEFAULT_PORT = '127.0.0.1', 55985
 IDENTITY_SCRIPT = r'''

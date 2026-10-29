@@ -2,7 +2,7 @@
 
 Full run-by-run history up to 26 October 2026: [docs/archive/PROGRESS_LOG_2026-10-17_to_2026-10-26.md](docs/archive/PROGRESS_LOG_2026-10-17_to_2026-10-26.md). Current design: [ARCHITECTURE.md](ARCHITECTURE.md).
 
-## Current status — 27 October 2026 (Asia/Kuala_Lumpur)
+## Current status — 29 October 2026 (Asia/Kuala_Lumpur)
 
 | Area | State |
 | --- | --- |
@@ -12,7 +12,13 @@ Full run-by-run history up to 26 October 2026: [docs/archive/PROGRESS_LOG_2026-1
 | Orchestrator | Assessment phase: delegates Scanner and Analysis, may send the Scanner back once on a rescan request, then makes one `submit_plan`. **Remediation phase (new):** delegates the Remediation Agent and a verification rescan, then decides `finish` / `next_round` / `remediation_review`. |
 | Remediation Agent | **LLM tool loop (new).** It prechecks the VM read-only, then executes (as a list, in its chosen order) or skips each *approved* request, and stops after an uncertain outcome. 21 library actions. **Real VM remediation has not been run yet.** |
 | Evaluation | **Final 20-run evaluation on `468b9a6`** (real `qwen3:8b`, simulated VM, 5 scenarios × 4, `20261027_144751`): **20/20 runs completed both phases, 0 safety failures, 0 discarded flags**; assessment 223–297 s, remediation 100–146 s (NFR06). Agent completion 100% except the Remediation Agent, 17/20: after the channel drop it sent results to `report_results` (fixed; recheck `20261027_165510`: 2/2 completed, 0 rejected calls). Real VM: pending. |
-| Legacy | The upload/manual-exchange page and its legacy-only modules were removed on 27 October (last commit with them: `81b9d52`). The shared-folder and manual-exchange building blocks (`vm_bridge`, `scan_exchange`, their PowerShell scripts) remain without a page. Docs: [docs/archive/legacy/](docs/archive/legacy/). |
+| Legacy | Removed. The upload/manual-exchange page went on 27 October (last commit with it: `81b9d52`); the shared-folder building blocks went on 29 October (last commit with them: `0ddd3ba`). Docs: [docs/archive/legacy/](docs/archive/legacy/). |
+
+## 29 October 2026: shared-folder code removed
+
+- Deleted `vm_bridge`, `scan_exchange`, `vm_paths` and the shared-folder queue in `scan_view`, with `Watch-ScanRequests.ps1`, `Invoke-ApprovedVmAction.ps1`, their fixture and test scripts, and their tests (`test_vm_bridge`, `test_scan_exchange`, `test_worker_readiness`, and two receipt tests for the old bridge). None had a page since 27 October; the last commit with them is `0ddd3ba`.
+- Kept, moved: `encode` (canonical JSON bytes) is now in `evidence_import`; the collector path `COLLECTOR` is in `winrm_channel`. The connection form is now `connection_view.py`.
+- Python suite: **169 passed** (25 tests went with the code). PowerShell runner and collector tests pass.
 
 ## 28 October 2026: report figures
 
@@ -168,4 +174,3 @@ PowerShell script tests were **not re-run**: the `-ExecutionPolicy Bypass` comma
 3. **User review of risk attributes** in [RISK_DERIVATION.md](RISK_DERIVATION.md); regenerate the doc after any change.
 4. Firewall policy actions: design a channel-safety precheck before adding them to the library.
 5. Independent manual comparison of the 16 new controls in the VM (gpedit/auditpol).
-6. Optional: remove the remaining shared-folder/manual-exchange building blocks (`vm_bridge` except `encode`, `scan_exchange` except the collector path, `vm_paths`, the shared-folder part of `scan_view`, and their PowerShell scripts and tests). They have no page since 27 October.

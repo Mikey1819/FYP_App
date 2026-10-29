@@ -7,7 +7,7 @@ from streamlit.testing.v1 import AppTest
 
 from hardening.history import HistoryService
 from hardening.risk import analyse
-from hardening.vm_bridge import encode
+from hardening.evidence_import import encode
 from hardening.winrm_channel import LiveScanner
 from test_agentic import LAB_STATE, AgenticTestCase, FakeVm
 from test_local_security_controls import local_security_fixture
