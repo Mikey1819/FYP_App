@@ -45,18 +45,19 @@ If the agents stop before finishing, **Execute remaining approved fixes without 
 
 ## Checks
 
-From `cis_compliance_dashboard_prototype` (169 tests on 29 October 2026; fixtures and a simulated VM only, nothing touches a real machine):
+From `cis_compliance_dashboard_prototype` (172 tests on 29 October 2026; fixtures and a simulated VM only, nothing touches a real machine):
 
 ```powershell
 $env:TEMP = Join-Path (Get-Location) 'data\test_tmp'; $env:TMP = $env:TEMP
 .\.venv\Scripts\python.exe -B -m unittest discover -s tests -v
 ```
 
-From this folder, PowerShell runner and collector tests:
+From this folder, PowerShell runner, collector and cross-check parser tests:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\test_remediation_runner.ps1
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\test_collector_helpers.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\test_cross_check_values.ps1
 ```
 
 Real `qwen3:8b` against the **simulated** VM, covering an assessment round, automatic approval and the remediation phase. Results go to `cis_compliance_dashboard_prototype/data/agentic_probes/`:

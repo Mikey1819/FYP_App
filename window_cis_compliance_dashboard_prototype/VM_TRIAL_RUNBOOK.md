@@ -39,25 +39,19 @@ The first end-to-end agentic run on the real lab VM. It takes about 60–90 minu
 4. **Check the open question from collector v5:** in Section 3's control list, the five audit controls (17.1.1, 17.2.2, 17.2.3, 17.5.1, 17.5.4) must show numbers, not Unknown. If they are Unknown, the `auditpol /backup` column assumption was wrong — stop here and tell me; nothing has been changed yet.
 5. Take screenshots of Sections 2–5.
 
-## Part C — Manual cross-check (10 min; compliance accuracy evidence)
+## Part C — Independent cross-check (5 min; compliance accuracy evidence)
 
-Inside the VM, in PowerShell as Administrator, run these read-only commands and compare with the dashboard's observed values:
+On the laptop, open a **second** PowerShell window in the repository folder (leave the dashboard running) and run:
 
 ```powershell
-net accounts
-auditpol /get /subcategory:"Credential Validation","Logon","Account Lockout","User Account Management","Security Group Management"
-Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa' | Select-Object RestrictAnonymous,RestrictAnonymousSAM,LimitBlankPasswordUse
-Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services' -ErrorAction SilentlyContinue
+cis_compliance_dashboard_prototype\.venv\Scripts\python.exe scripts\cross_check_controls.py --out cis_compliance_dashboard_prototype\data\crosscheck_round1.md
 ```
 
-| Control | Dashboard observed | Manual observed | Agree? |
-| --- | --- | --- | --- |
-| 1.1.1 password history | | `net accounts`: Length of password history | |
-| 1.1.4 minimum length | | `net accounts`: Minimum password length | |
-| 1.2.2 lockout threshold | | `net accounts`: Lockout threshold | |
-| 17.5.4 Logon audit | | `auditpol`: Logon | |
-| 2.3.10.3 RestrictAnonymous | | registry | |
-| 18.10.57.3.9.4 NLA policy | | registry (absent = Not configured) | |
+Type the Administrator password when it asks; it isn't stored. The script checks it reached the right VM with an administrator token, then runs the read-only [Get-CrossCheckValues.ps1](scripts/Get-CrossCheckValues.ps1) there. That script reads all 32 values with different tools from the collector: `net accounts`, `Get-LocalUser`, `reg query` and `auditpol /get`. It then prints a table comparing them with the dashboard's latest scan, ending in **"N of 32 controls agree"**. The table is also saved to `crosscheck_round1.md`.
+
+- **Disagree** on any row: screenshot it and tell me; don't change anything.
+- Three values exist only in the security policy database (1.1.5, 1.1.7, 2.3.10.1), so the script reads them from a secedit export like the collector. Check those three in `secpol.msc` by eye, and take one screenshot there for the report.
+- If WinRM fails, run the script inside the VM instead: `powershell -ExecutionPolicy Bypass -File Get-CrossCheckValues.ps1` (copy it in first). It prints the same values for comparing by eye.
 
 ## Part D — Decide (5 min)
 
@@ -81,7 +75,7 @@ Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services
 | Verdicts (all "Verified compliant"?) | Section 6 table | |
 | Did the rejected fix stay untouched? | Section 6 table / VM check below | |
 
-3. In the VM, rerun `net accounts` and the `auditpol` line from Part C and confirm the new values match the verdicts.
+3. Rerun the Part C command with `--out cis_compliance_dashboard_prototype\data\crosscheck_after_fix.md`. It now compares against the verification scan; the fixed controls should agree at their new values.
 
 ## Part F — Next round and drift (15 min)
 
