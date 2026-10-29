@@ -5,11 +5,10 @@ import tempfile
 import unittest
 
 from hardening.domain import EvidenceMode
+from hardening.evidence_import import encode
 from hardening.framework import AssessmentOrchestrator
 from hardening.import_storage import ImportedEvidenceStore
-from hardening.scan_exchange import COLLECTOR
-from hardening.vm_bridge import encode
-from hardening.winrm_channel import IDENTITY_SCRIPT, ChannelError, LiveScanner, WinRmTarget
+from hardening.winrm_channel import COLLECTOR, IDENTITY_SCRIPT, ChannelError, LiveScanner, WinRmTarget
 from test_evidence_import import MACHINE_UUID
 from test_full_controls import full_fixture
 

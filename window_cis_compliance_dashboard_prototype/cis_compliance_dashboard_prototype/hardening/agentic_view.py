@@ -10,7 +10,7 @@ from .framework import AssessmentOrchestrator
 from .import_storage import ImportedEvidenceStore
 from .remediation import RemediationStore
 from .round_report import round_analysis, round_report, shown
-from .scan_view import render_connection
+from .connection_view import render_connection
 from .winrm_channel import ChannelError, LiveScanner
 
 SESSION = 'agentic_session'

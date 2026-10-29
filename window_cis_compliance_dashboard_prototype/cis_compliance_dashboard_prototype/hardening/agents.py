@@ -1,7 +1,7 @@
 """Policy-driven assessment roles. No model calls or OS commands.
 
-The first RemediationAgent capability is eligibility assessment, not execution.
-The existing human-approved VM bridge still owns the execution exchange.
+The RemediationAgent here assesses eligibility only; execution runs through the
+human-approved remediation store (remediation.py).
 """
 from dataclasses import asdict
 

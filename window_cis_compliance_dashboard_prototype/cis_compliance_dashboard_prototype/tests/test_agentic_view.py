@@ -8,7 +8,7 @@ from unittest.mock import patch
 from streamlit.testing.v1 import AppTest
 
 from hardening import agentic, agentic_view
-from hardening.scan_view import LIVE_TARGET
+from hardening.connection_view import LIVE_TARGET
 from hardening.winrm_channel import LiveScanner
 from test_agentic import FakeVm, TeamDouble, call, clients
 from test_winrm_channel import MACHINE_UUID, target

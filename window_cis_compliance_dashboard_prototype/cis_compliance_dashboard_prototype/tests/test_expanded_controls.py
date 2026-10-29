@@ -1,7 +1,4 @@
 """Synthetic account-policy coverage; never collects or changes host policy."""
-from datetime import timedelta
-import base64
-import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -9,11 +6,10 @@ import tempfile
 import unittest
 
 from hardening.domain import Status, summarise
-from hardening.evidence_import import CONTEXT_SOURCES
+from hardening.evidence_import import CONTEXT_SOURCES, encode
 from hardening.framework import AssessmentOrchestrator
 from hardening.import_storage import ImportedEvidenceStore
 from hardening.server2022_catalogue import EXPANDED_CATALOGUE_ID, EXPANDED_SOURCES
-from hardening.vm_bridge import BridgeStore, encode
 from test_evidence_import import export_fixture, load, MACHINE_UUID, NOW
 
 
@@ -128,28 +124,3 @@ class ExpandedControlTests(unittest.TestCase):
         data['observations'] = rows + [r for r in data['observations'] if not r['source'].startswith('secedit-export:')]
         self.assertEqual(summarise(load(data).results).compliant, 12)
 
-    def test_schema_three_receipt_verifies_only_approved_password_action(self):
-        with tempfile.TemporaryDirectory() as folder:
-            imports = ImportedEvidenceStore(Path(folder) / 'imports.sqlite3')
-            data = expanded_fixture(); observation(data, '1.1.4')['value'] = 0
-            saved, _ = imports.save(encode(data), expected_hostname='FIXTURE-SERVER',
-                                    expected_machine_uuid=MACHINE_UUID, now=NOW)
-            bridge = BridgeStore(Path(folder) / 'bridge.sqlite3', imports)
-            identifier = bridge.propose(saved.assessment.source_sha256)
-            request = bridge.decide(identifier, approve=True, operator='fixture-admin', now=NOW)
-            evidence = []
-            for offset, value in ((1, 0), (2, 14)):
-                doc = expanded_fixture()
-                start = NOW + timedelta(minutes=offset)
-                doc.update(started_at=start.isoformat(), completed_at=(start + timedelta(seconds=30)).isoformat())
-                for row in doc['observations'] + doc['effective_context']:
-                    row['collected_at'] = (start + timedelta(seconds=15)).isoformat()
-                observation(doc, '1.1.4')['value'] = value
-                observation(doc, '1.1.1')['value'] = 0
-                doc['observations'].reverse()
-                evidence.append(base64.b64encode(encode(doc)).decode())
-            receipt = encode(dict(schema_version=1, request_id=identifier,
-                request_sha256=hashlib.sha256(request).hexdigest(), status='applied',
-                before_evidence=evidence[0], after_evidence=evidence[1]))
-            self.assertEqual(bridge.accept_receipt(receipt, now=NOW + timedelta(hours=1)), 'Verified compliant')
-            self.assertEqual(imports.get(saved.assessment.source_sha256).raw, encode(data))

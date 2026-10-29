@@ -1,8 +1,5 @@
 """Local-security assessments use fixture evidence and mocked registry access only."""
 from copy import deepcopy
-from datetime import timedelta
-import base64
-import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -10,10 +7,10 @@ import tempfile
 import unittest
 
 from hardening.domain import Status, summarise
+from hardening.evidence_import import encode
 from hardening.framework import AssessmentOrchestrator
 from hardening.import_storage import ImportedEvidenceStore
 from hardening.server2022_catalogue import LOCAL_SECURITY_CATALOGUE_ID, LATEST_SOURCES
-from hardening.vm_bridge import BridgeStore, encode
 from test_evidence_import import export_fixture, load, MACHINE_UUID, NOW
 from test_expanded_controls import expanded_fixture, observation
 
@@ -85,31 +82,6 @@ class LocalSecurityTests(unittest.TestCase):
             reopened = ImportedEvidenceStore(path).get(run.evidence_sha256)
             self.assertEqual(reopened.raw, encode(data))
             self.assertEqual(len(reopened.assessment.results), 16)
-
-    def test_v4_receipts_can_verify_a_legacy_proposal_without_changing_original(self):
-        with tempfile.TemporaryDirectory() as folder:
-            imports = ImportedEvidenceStore(Path(folder) / 'imports.sqlite3')
-            original = expanded_fixture(); observation(original, '1.1.4')['value'] = 0
-            saved, _ = imports.save(encode(original), expected_hostname='FIXTURE-SERVER', expected_machine_uuid=MACHINE_UUID, now=NOW)
-            bridge = BridgeStore(Path(folder) / 'bridge.sqlite3', imports)
-            identifier = bridge.propose(saved.assessment.source_sha256)
-            request = bridge.decide(identifier, approve=True, operator='fixture-admin', now=NOW)
-            evidence = []
-            for offset, value in ((1, 0), (2, 14)):
-                data = local_security_fixture()
-                start = NOW + timedelta(minutes=offset)
-                data.update(started_at=start.isoformat(), completed_at=(start + timedelta(seconds=30)).isoformat())
-                for row in data['observations'] + data['effective_context']:
-                    row['collected_at'] = (start + timedelta(seconds=15)).isoformat()
-                observation(data, '1.1.4')['value'] = value
-                observation(data, '2.3.1.2')['value'] = 0
-                data['observations'].reverse()
-                evidence.append(base64.b64encode(encode(data)).decode())
-            receipt = encode(dict(schema_version=1, request_id=identifier,
-                request_sha256=hashlib.sha256(request).hexdigest(), status='applied',
-                before_evidence=evidence[0], after_evidence=evidence[1]))
-            self.assertEqual(bridge.accept_receipt(receipt, now=NOW + timedelta(hours=1)), 'Verified compliant')
-            self.assertEqual(len(imports.get(saved.assessment.source_sha256).assessment.results), 12)
 
     def test_powershell_sources_and_independent_failure_records(self):
         collector = Path(__file__).resolve().parents[2] / 'scripts' / 'Collect-Server2022Evidence.ps1'
