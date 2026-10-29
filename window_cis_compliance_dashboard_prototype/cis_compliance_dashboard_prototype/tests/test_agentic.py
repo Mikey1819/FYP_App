@@ -313,7 +313,7 @@ class AgenticRoundTests(AgenticTestCase):
         result = hardening.run_round()
         errors = self.rejected(hardening, result['round_id'])
         self.assertEqual(errors[0], 'REM-1.2.1 cannot fix 1.2.1 now; it waits for 1.2.2 to be compliant')
-        self.assertEqual(errors[1], '1.2.2 appears more than once; decide each finding exactly once')
+        self.assertEqual(errors[1], '1.2.2 is in both fixes and skipped: decide to fix it now or to defer it, not both')
         self.assertEqual(self.store.for_run(result['framework_run_id']), [])
 
     def test_blocked_finding_is_deferred_and_its_prerequisite_proposed(self):
@@ -875,6 +875,20 @@ class JudgementTests(AgenticTestCase):
         entry = next(d for d in handoff['must_decide'] if d['control_id'] == '1.2.2')
         self.assertEqual(entry['reverted_after_fix'], 1)
         self.assertNotIn('keeps_reverting', entry['skip_codes'])
+
+    def test_a_finding_both_fixed_and_deferred_is_refused_with_the_choice_named(self):
+        self.history(COMPLIANT_LOCKOUT, {}, COMPLIANT_LOCKOUT)
+        t = 'windows:' + target().machine_uuid
+        hardening = self.hardening(FakeVm(), [call('delegate_scanner', t), call('delegate_analysis', t),
+            plan(t, fixes=[('1.2.2', 'REM-1.2.2', 'unblocks_other')], skipped=[('1.2.2', 'keeps_reverting')] + DEFER_ALL[1:]),
+            plan(t, skipped=[('1.2.2', 'keeps_reverting')] + DEFER_ALL[1:])])
+        result = hardening.run_round()
+        self.assertEqual(self.rejected(hardening, result['round_id']),
+                         ['1.2.2 is in both fixes and skipped: decide to fix it now or to defer it, not both'])
+        rejected = next(e['data'] for e in self.trace(hardening, result['round_id'], ORCHESTRATOR)[0]['events']
+                        if e['kind'] == 'tool_rejected')
+        self.assertEqual(rejected['arguments']['fixes'][0]['control_id'], '1.2.2')  # Kept for later review.
+        self.assertEqual(result['outcome']['skipped'][0]['reason_code'], 'keeps_reverting')
 
     def remediation_round(self, vm, remediation):
         t = 'windows:' + target().machine_uuid

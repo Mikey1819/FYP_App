@@ -845,6 +845,12 @@ class OrchestratorTools(_RoleTools):
         # failing the whole plan (real qwen3:8b did this in 2 of 4 probes). A fix for such a control is still refused.
         self.ignored_skips = [e['control_id'] for e in skipped if e['control_id'] not in decisions]
         skipped = [e for e in skipped if e['control_id'] in decisions]
+        # Real qwen3:8b listed 1.2.2 in both when it could fix it again or defer it as keeps_reverting (29 Oct
+        # evaluation), and repeated the plan after a generic duplicate error: name the choice it must make.
+        both = sorted({e['control_id'] for e in fixes} & {e['control_id'] for e in skipped})
+        if both:
+            raise ValueError(f"{', '.join(both)} is in both fixes and skipped: decide to fix it now or to defer it, "
+                             'not both')
         seen = set()
         for entry in fixes + skipped:
             control = entry['control_id']
