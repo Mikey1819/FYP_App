@@ -114,6 +114,8 @@ Final count: 32 implemented (Account Policies 9, Local Security Options 5, Firew
 
 ## Independent manual comparison
 
+**Tool-based cross-check (29 October):** `scripts/cross_check_controls.py` reads all 32 values in the VM with different tools from the collector (see [Get-CrossCheckValues.ps1](scripts/Get-CrossCheckValues.ps1)) and compares them with a stored scan; see VM_TRIAL_RUNBOOK.md Part C. It does not replace the GUI views below for the three values that only the security policy database holds (1.1.5, 1.1.7, 2.3.10.1), or for report screenshots.
+
 Inside the VM, inspect these views without changing values. Record observed values and screenshots with collection time; do not press Apply after editing settings.
 
 | Check | Manual view |
