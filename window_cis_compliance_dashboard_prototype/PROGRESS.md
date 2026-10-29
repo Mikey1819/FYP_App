@@ -14,6 +14,29 @@ Full run-by-run history up to 26 October 2026: [docs/archive/PROGRESS_LOG_2026-1
 | Evaluation | **Final 20-run evaluation on `468b9a6`** (real `qwen3:8b`, simulated VM, 5 scenarios × 4, `20261027_144751`): **20/20 runs completed both phases, 0 safety failures, 0 discarded flags**; assessment 223–297 s, remediation 100–146 s (NFR06). Agent completion 100% except the Remediation Agent, 17/20: after the channel drop it sent results to `report_results` (fixed; recheck `20261027_165510`: 2/2 completed, 0 rejected calls). Real VM: pending. |
 | Legacy | Removed. The upload/manual-exchange page went on 27 October (last commit with it: `81b9d52`); the shared-folder building blocks went on 29 October (last commit with them: `0ddd3ba`). Docs: [docs/archive/legacy/](docs/archive/legacy/). |
 
+## 29 October 2026, evening: judgement scenarios evaluated (hypothesis not supported)
+
+- **Added (`0dc5c8a`, `7e07c2b`):**
+  - **J1 recurring drift:** `reversions()` counts Compliant→Non-Compliant transitions. The `keeps_reverting` flag is offered only after the Analysis Agent's own `check_history`. The Orchestrator gets a `keeps_reverting` skip code and `reverted_after_fix`.
+  - **J2 failure during execution:** execution pauses after a failed result. The Remediation Agent continues with `execute_fixes` or calls `stop_execution`. The runner receipt carries the failure's cause (`error`), shown in the verdict.
+  - **Clearer refusal:** a plan listing a finding in both fixes and skipped is refused with the choice named, and rejected arguments are now logged.
+  - Expectations and the rule baselines are in `JUDGEMENT` in [scripts/evaluate_agentic_rounds.py](scripts/evaluate_agentic_rounds.py). They were committed before any run.
+- **First run aborted:** in `20261029_150631` (see `ABORTED.txt`), the Orchestrator received a generic duplicate error twice. The clearer message and argument logging above were added, then the evaluation restarted from scratch. No expectation was changed.
+- **Results (`20261029_152610`, 3 scenarios × 4):**
+
+  | Scenario | Agents | Rule baseline |
+  | --- | --- | --- |
+  | J1 | **0/4** | Risk-order rule: 0/4 |
+  | J2a | **1/4** | Always continue: 4/4; stop at the first failure: 0/4 |
+  | J2b | **4/4** | Always continue: 0/4; stop at the first failure: 4/4 |
+
+  - The Orchestrator tried `keeps_reverting` in 3/4 J1 plans, but also listed 1.2.2 as a fix (one entry per true code). 2 runs ended `incomplete` after two refused plans. The Analysis Agent never checked history.
+  - The Remediation Agent stopped after the first failure in 7/8 J2 runs, so it acts like "stop at the first failure".
+  - Design flaw: J2a's failure carried no cause ("Verification failed" only), while J2b's named "Access is denied."
+  - Write-up: [AGENTIC_ASSESSMENT.md](AGENTIC_ASSESSMENT.md#results-dataagentic_evaluations20261029_152610-real-qwen38b-4-runs-per-scenario-code-at-7e07c2b).
+- **Safety and regression:** no unapproved write in 22/22 runs. The 5 original scenarios × 2 (`20261029_164012`) completed both phases 10/10 with every agent completing and 0 safety failures, matching the 20-run evaluation.
+- Python suite: **178 passed**.
+
 ## 29 October 2026: is it really agentic?
 
 - [AGENTIC_ASSESSMENT.md](AGENTIC_ASSESSMENT.md): structurally agentic (four LLM agents choose every tool call, delegate, observe and act), but the AI's decisions are narrow. In the 20-run evaluation, its plans contained the same fixes as "all fixable findings in risk-rank order" in 17/20 runs; the order differed in 20/20, always the same way. The Remediation Agent executed in rank order 20/20, the Analysis Agent never investigated, and 15/20 next steps had only one valid option (the AI chose `next_round` in the other 5). Recommendation: natural-language administrator goals for the Orchestrator's plan, plus a decision audit in Chapter 5.
