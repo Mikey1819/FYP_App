@@ -178,7 +178,12 @@ class RemediationStore:
         if type(raw) is not bytes or len(raw) > 200000:
             raise ValueError('Receipt exceeds size limit')
         data = json.loads(raw.decode('utf-8-sig'), object_pairs_hook=_no_duplicates)
+        # The runner adds `error` (the cause, one bounded line) only when the write itself failed.
+        failure = data.pop('error', None) if type(data) is dict else None
         _object(data, 'schema_version request_id request_sha256 status before_evidence after_evidence', 'receipt')
+        if failure is not None and (data['status'] != 'execution_failed' or type(failure) is not str
+                                    or not failure.strip() or len(failure) > 200):
+            raise ValueError('Invalid failure detail in receipt')
         if data['schema_version'] != 2 or data['status'] not in ('applied', 'execution_failed', 'verification_unavailable'):
             raise ValueError('Unsupported remediation receipt')
         record = self.get(data['request_id'])
@@ -202,7 +207,7 @@ class RemediationStore:
         before = next(r for r in decoded['before_evidence'][1].results if r.control.control_id == control)
         if before.status != Status.NON_COMPLIANT or not _same_value(before.evidence.value, request['expected_before']):
             raise ValueError('Precondition evidence does not match the approved observation')
-        verdict = 'Unresolved: ' + data['status']
+        verdict = 'Unresolved: ' + data['status'] + (f' ({failure.strip()})' if failure else '')
         if 'after_evidence' in decoded and data['status'] == 'applied':
             after = next(r for r in decoded['after_evidence'][1].results if r.control.control_id == control)
             verdict = 'Verified compliant' if after.status == Status.COMPLIANT else 'Verification failed'

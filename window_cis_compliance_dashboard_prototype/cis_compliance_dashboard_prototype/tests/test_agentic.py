@@ -29,11 +29,14 @@ LAB_STATE = {'1.2.2': 0, '1.2.1': None, '1.2.4': None, '1.1.1': 0, '1.1.3': 0, '
 class FakeVm:
     """Answers only the three registered scripts and simulates the runner's guards."""
 
-    def __init__(self, state=LAB_STATE, *, fail_action=False, firewall=True, error_controls=()):
+    def __init__(self, state=LAB_STATE, *, fail_action=False, firewall=True, error_controls=(), revert_controls=()):
+        # fail_action: every write fails (True, or the failure message the runner reports).
+        # revert_controls: the write succeeds but something sets the old value straight back.
         self.values = {o['control_id']: o['value'] for o in full_fixture()['observations']}
         self.values.update(state)
         self.fail_action, self.firewall, self.error_controls = fail_action, firewall, set(error_controls)
-        self.ledger, self.writes, self.scripts = set(), [], []
+        self.revert_controls = set(revert_controls)
+        self.ledger, self.writes, self.scripts, self.attempts = set(), [], [], []
 
     def __call__(self, target):
         return self
@@ -79,8 +82,11 @@ class FakeVm:
         if type(current) is not type(request['expected_before']) or current != request['expected_before']:
             return [], True, ['Configuration changed since assessment. Rescan and obtain a new approval.']
         self.ledger.add(request['request_id'])
+        self.attempts.append(request['control_id'])
         status = 'execution_failed' if self.fail_action else 'applied'
-        if not self.fail_action:
+        if not self.fail_action and request['control_id'] in self.revert_controls:
+            self.writes.append(request['control_id'])  # Written, then reverted before verification.
+        elif not self.fail_action:
             # auditpol /set only enables flags, so audit values gain bits; other actions set the value.
             self.values[request['control_id']] = (current | action.target_value if request['control_id'].startswith('17.')
                                                   else action.target_value)
@@ -92,6 +98,8 @@ class FakeVm:
         receipt = dict(schema_version=2, request_id=request['request_id'], request_sha256=p['ExpectedRequestSha256'],
                        status=status, before_evidence=base64.b64encode(before.encode()).decode(),
                        after_evidence=base64.b64encode(self.evidence().encode()).decode())
+        if type(self.fail_action) is str:
+            receipt['error'] = self.fail_action
         return [json.dumps(receipt)], False, []
 
 
@@ -807,6 +815,117 @@ class RemediationPhaseTests(AgenticTestCase):
         rejected = self.rejected(hardening, executed['round_id'], REMEDIATION)
         self.assertEqual(rejected, ['1.1.1 is not ready (precondition_changed); use skip_fix'])
         self.assertEqual(vm.writes, ['1.2.2'])  # After the refusal the agent skipped 1.1.1 and executed 1.2.2.
+
+
+COMPLIANT_LOCKOUT = {'1.2.2': 5, '1.2.1': 15, '1.2.4': 15}
+
+
+class JudgementTests(AgenticTestCase):
+    """Decisions with no single forced answer (J1 recurring drift, J2 isolated or systemic failure)."""
+
+    def history(self, *states):
+        """Earlier scans of the same VM, oldest first."""
+        for state in states:
+            LiveScanner(self.runtime, target(), session_factory=FakeVm(dict(LAB_STATE, **state))).request(
+                target().hostname, target().machine_uuid)
+
+    def test_keeps_reverting_is_learnt_from_history_and_only_then_offered_and_accepted(self):
+        self.history(COMPLIANT_LOCKOUT, {}, COMPLIANT_LOCKOUT)  # Fixed, reverted, fixed; now reverted again.
+        t = 'windows:' + target().machine_uuid
+        offered = []
+
+        class Recording(MockClient):
+            def chat(self, messages, tools, *, timeout):
+                submit = next((s for s in tools if s['function']['name'] == 'submit_analysis'), None)
+                offered.append(sorted(submit['function']['parameters']['properties']) if submit else None)
+                return super().chat(messages, tools, timeout=timeout)
+        triage = [dict(control_id=g, triage_code='manual_review') for g in ('1.2.1', '1.2.4')]
+        analysis = Recording([call('score_findings', t), call('check_history', t, control_id='1.2.2'),
+                              call('submit_analysis', t, keeps_reverting=['1.2.2'], gap_triage=triage)])
+        hardening = self.hardening(FakeVm(), [call('delegate_scanner', t), call('delegate_analysis', t),
+                                              plan(t, skipped=[('1.2.2', 'keeps_reverting')] + DEFER_ALL[1:])],
+                                   analysis=analysis)
+        result = hardening.run_round()
+        self.assertNotIn('keeps_reverting', offered[1])  # Scores alone do not reveal it...
+        self.assertIn('keeps_reverting', offered[2])  # ...the agent's own history check does.
+        trace = self.trace(hardening, result['round_id'], ANALYSIS)[0]
+        checked = next(e['data']['result'] for e in trace['events'] if e['kind'] == 'tool'
+                       and e['data']['name'] == 'check_history')
+        self.assertEqual(checked['reverted_after_fix'], 2)
+        self.assertIn('1.2.2 (reverted 2 times after being fixed; find what changes it back)', result['outcome']['reason'])
+        self.assertEqual(result['outcome']['skipped'][0]['reason'],
+                         'Reverted 2 times after earlier fixes; find what changes it back before fixing it again')
+        self.assertNotIn('1.2.2', [p['proposal']['control_id'] for p in self.store.for_run(result['framework_run_id'])])
+
+    def test_keeps_reverting_needs_the_history_check_and_two_reversions(self):
+        self.history(COMPLIANT_LOCKOUT)  # One regression only: the drift scenario.
+        t = 'windows:' + target().machine_uuid
+        triage = [dict(control_id=g, triage_code='manual_review') for g in ('1.2.1', '1.2.4')]
+        analysis = [call('score_findings', t), call('submit_analysis', t, keeps_reverting=['1.2.2'], gap_triage=triage)]
+        hardening = self.hardening(FakeVm(), [call('delegate_scanner', t), call('delegate_analysis', t),
+                                              plan(t, skipped=[('1.2.2', 'keeps_reverting')] + DEFER_ALL[1:]),
+                                              plan(t, skipped=DEFER_ALL)], analysis=analysis)
+        result = hardening.run_round()
+        stored = self.store.rounds(result['session_id'])[0]['analysis_outcome']
+        self.assertEqual(stored['discarded_flags'], [['1.2.2', 'keeps_reverting']])  # Unchecked, and only 1 reversion.
+        self.assertTrue(self.rejected(hardening, result['round_id'])[0].startswith(
+            'reason_code keeps_reverting does not fit 1.2.2'))
+        handoff = next(e['data']['result'] for e in self.trace(hardening, result['round_id'], ORCHESTRATOR)[0]['events']
+                       if e['kind'] == 'tool' and e['data']['name'] == 'delegate_analysis')
+        entry = next(d for d in handoff['must_decide'] if d['control_id'] == '1.2.2')
+        self.assertEqual(entry['reverted_after_fix'], 1)
+        self.assertNotIn('keeps_reverting', entry['skip_codes'])
+
+    def remediation_round(self, vm, remediation):
+        t = 'windows:' + target().machine_uuid
+        fixes = [(c, 'REM-' + c, 'low_impact') for c in ('1.2.2', '2.3.10.3', '1.1.1')]
+        hardening = self.hardening(vm, [call('delegate_scanner', t), call('delegate_analysis', t),
+                                        plan(t, fixes=fixes, skipped=DEFER_ALL[3:])], remediation=Responsive(remediation))
+        result = hardening.run_round()
+        self.approve_all(result['framework_run_id'])
+        return hardening, hardening.execute_approved(result['session_id'])
+
+    @staticmethod
+    def after_pause(decision):
+        def policy(seen, names):
+            paused = [r for n, r in seen if n == 'execute_fixes' and r.get('paused_after_failure')]
+            if paused and len([n for n, _ in seen if n == 'execute_fixes']) == 1:
+                return decision(paused[0])
+            return remediation_policy(seen, names)
+        return policy
+
+    def test_execution_pauses_after_a_failure_and_the_agent_may_continue(self):
+        vm = FakeVm(revert_controls=('2.3.10.3',))  # Isolated: something sets this one value back.
+        hardening, executed = self.remediation_round(
+            vm, self.after_pause(lambda r: ('execute_fixes', dict(control_ids=r['remaining']))))
+        self.assertEqual(vm.attempts, ['1.2.2', '2.3.10.3', '1.1.1'])
+        self.assertEqual([v['verdict'] for v in executed['verdicts']],
+                         ['Verified compliant', 'Verification failed', 'Verified compliant'])
+        events = next(t for t in hardening.traces(executed['round_id']) if t['agent_role'] == REMEDIATION)['events']
+        first = next(e['data']['result'] for e in events if e['kind'] == 'tool' and e['data']['name'] == 'execute_fixes')
+        self.assertEqual((len(first['results']), first['remaining']), (2, ['1.1.1']))
+        self.assertEqual((executed['outcome']['outcome'], executed['outcome']['reason_code']),
+                         ('remediation_review', 'verification_failed'))
+
+    def test_the_agent_may_stop_after_a_failure_and_the_cause_is_shown(self):
+        vm = FakeVm(fail_action='Requested registry access is not allowed.')  # Systemic: every write fails.
+        hardening, executed = self.remediation_round(vm, self.after_pause(lambda r: ('stop_execution', {})))
+        self.assertEqual(vm.attempts, ['1.2.2'])
+        self.assertEqual(executed['verdicts'][0]['verdict'],
+                         'Unresolved: execution_failed (Requested registry access is not allowed.)')
+        self.assertIn('Skipped by the Remediation Agent: 2.3.10.3 (stopped after an earlier failed result); '
+                      '1.1.1 (stopped after an earlier failed result).', executed['outcome']['reason'])
+        self.assertEqual((executed['outcome']['outcome'], executed['outcome']['reason_code']),
+                         ('remediation_review', 'verification_failed'))
+
+    def test_stop_execution_is_refused_before_any_failure(self):
+        vm = FakeVm()
+        hardening, executed = self.remediation_round(vm, lambda seen, names: (
+            ('precheck', {}) if not seen else ('stop_execution', {}) if len(seen) == 1
+            else remediation_policy(seen, names)))
+        self.assertEqual(self.rejected(hardening, executed['round_id'], REMEDIATION),
+                         ['stop_execution is for after a failed result; nothing has failed'])
+        self.assertEqual(vm.attempts, ['1.2.2', '2.3.10.3', '1.1.1'])
 
 
 class ApprovedActionExecutorTests(AgenticTestCase):

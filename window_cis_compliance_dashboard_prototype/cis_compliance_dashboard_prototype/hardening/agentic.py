@@ -44,7 +44,7 @@ PROMPTS = {
         'reason_code from its fix_codes. A finding with blocked_until_compliant cannot be fixed yet: fix its '
         'prerequisite and skip it. skipped: every other must_decide finding, each {control_id, reason_code} with '
         'reason_code from its skip_codes. Every must_decide control appears exactly once. Choose which to fix and '
-        'their order yourself; a plan is not approval: the administrator decides.',
+        'their order yourself, weighing the facts of each finding; a plan is not approval: the administrator decides.',
     SCANNER: COMMON + 'You are the Scanner Agent. Call scan_target first to collect evidence from the VM over WinRM. '
         'Then call read_coverage. If any control is in Error state you may call rescan once: Error can be transient, '
         'while Unknown means no value is recorded (e.g. not applicable) and a rescan will not change it. You may inspect '
@@ -59,8 +59,9 @@ PROMPTS = {
         'never approve, choose values or write commands. 1) Call precheck to observe the VM read-only (list_approved '
         'is optional). 2) Decide each request once: skip_fix (with a reason_code from its skip_codes) every request '
         'precheck shows not ready, and execute_fixes with the ready requests in the order you choose (rank order '
-        'unless a prerequisite needs another). After a failed result decide whether to continue; after must_stop '
-        'execute nothing more. 3) Finish with report_results (target_id only: code records every result).',
+        'unless a prerequisite needs another). Execution pauses after a failed result: judge from its cause whether '
+        'the remaining requests would fail the same way, then continue with execute_fixes or call stop_execution. '
+        'After must_stop execute nothing more. 3) Finish with report_results (target_id only: code records every result).',
 }
 REVIEW_PROMPT = COMMON + ('You are the AI Agent Orchestrator after the administrator approved fixes. You never '
     'execute, approve or retry yourself. 1) Call delegate_remediation. 2) If any fix was executed, call '
@@ -85,9 +86,12 @@ FIX_REASONS = {'high_risk': 'High-priority finding', 'unblocks_other': 'Prerequi
                'improves_detection': 'Restores security auditing or logging', 'low_impact': 'Low operational impact'}
 SKIP_REASONS = {'waits_for_prerequisite': 'Waits until {prerequisites} is compliant',
                 'needs_review': 'Operational impact needs administrator review first',
-                'lower_priority': 'Lower priority; deferred to a later round'}
+                'lower_priority': 'Lower priority; deferred to a later round',
+                'keeps_reverting': 'Reverted {reverted} times after earlier fixes; find what changes it back before '
+                                   'fixing it again'}
 # Most specific first: flags are kept in this order, and high_risk only repeats what the ranking already shows.
-ATTENTION = {'regression': 'regressed since the previous assessment', 'unblocks_other': 'fixing it unblocks {waiting}',
+ATTENTION = {'keeps_reverting': 'reverted {reverted} times after being fixed; find what changes it back',
+             'regression': 'regressed since the previous assessment', 'unblocks_other': 'fixing it unblocks {waiting}',
              'manual_fix_needed': 'no library action: needs a manual fix', 'high_risk': 'high-priority finding'}
 TRIAGE = {'rescan': 'collection error; Scanner asked to collect again',
           'resolves_with_prerequisite': 'expected to resolve once {prerequisite} is fixed',
@@ -146,6 +150,15 @@ def gap_hint(result, results):
         return (f'Not recorded while the lockout threshold ({prerequisite}) is 0; '
                 f'expected to resolve after {prerequisite} is fixed.')
     return 'No value recorded for this non-policy setting; Windows applies its default. Assessment-only: review manually.'
+
+
+def reversions(control_id, record, previous_records):
+    """How often the control went from Compliant back to Non-Compliant across this VM's stored scans."""
+    statuses = [r.status for older in reversed(previous_records) for r in older.assessment.results
+                if r.control.control_id == control_id]
+    statuses += [r.status for r in record.assessment.results if r.control.control_id == control_id]
+    statuses = [s for s in statuses if s in (Status.COMPLIANT, Status.NON_COMPLIANT)]
+    return sum(a == Status.COMPLIANT and b == Status.NON_COMPLIANT for a, b in zip(statuses, statuses[1:]))
 
 
 def verdict_kind(verdict):
@@ -332,6 +345,7 @@ class AnalysisTools(_RoleTools):
         super().__init__(rounds, ANALYSIS)
         self.record, self.previous, self.framework_run_id = record, previous_records, framework_run_id
         self.analysis, self.investigations = None, 0
+        self.history_checked = set()  # keeps_reverting is learnt from check_history, never handed over.
         self.initial_message = (f'Analyse scan {framework_run_id} of target {self.target_id}. '
                                 'Start with score_findings.')
 
@@ -342,7 +356,8 @@ class AnalysisTools(_RoleTools):
         prerequisite = {g['control_id']: g['prerequisite'] for g in self.analysis['gaps']}
         waiting = {c: sorted([o for o, w in waits.items() if c in w] + [g for g, p in prerequisite.items() if p == c])
                    for c in findings}
-        attention = {c: {'regression': f['factors']['D'] == 5, 'high_risk': f['level'] in ('High', 'Critical'),
+        attention = {c: {'keeps_reverting': reversions(c, self.record, self.previous) >= 2,
+                         'regression': f['factors']['D'] == 5, 'high_risk': f['level'] in ('High', 'Critical'),
                          'unblocks_other': bool(waiting[c]), 'manual_fix_needed': not f['candidate_actions']}
                      for c, f in findings.items()}
         triage = {g['control_id']: {'rescan': g['status'] == Status.ERROR.value,
@@ -355,8 +370,9 @@ class AnalysisTools(_RoleTools):
         if self.analysis is None:
             return {}
         facts = self._facts()[1]
-        return {code: [c for c, codes in facts.items() if codes[code]] for code in ATTENTION
-                if any(codes[code] for codes in facts.values())}
+        options = {code: [c for c, codes in facts.items() if codes[code]
+                          and (code != 'keeps_reverting' or c in self.history_checked)] for code in ATTENTION}
+        return {code: controls for code, controls in options.items() if controls}
 
     def available(self):
         if self.analysis is None:
@@ -370,7 +386,8 @@ class AnalysisTools(_RoleTools):
         # One list per attention code, offering only the findings that code fits. With a single control enum and a
         # single code enum, real qwen3:8b still paired audit controls with manual_fix_needed (27 Oct evaluation).
         flags = {code: {'type': 'array', 'maxItems': 3, 'items': {'type': 'string', 'enum': controls},
-                        'description': 'Flag for attention: ' + ATTENTION[code].format(waiting='other findings')}
+                        'description': 'Flag for attention: ' + ATTENTION[code].format(
+                            waiting='other findings', reverted='several')}
                  for code, controls in self._flag_options().items()}
         every = {'type': 'string', 'enum': [r.control.control_id for r in self.record.assessment.results]}
         return [tool('score_findings', 'Read the deterministic risk ranking of this scan (you cannot change scores).', t),
@@ -388,7 +405,7 @@ class AnalysisTools(_RoleTools):
         _, attention, triage, _ = self._facts()
         findings = []
         for f in self.analysis['findings']:
-            codes = [c for c, true in attention[f['control_id']].items() if true]
+            codes = [c for c, true in attention[f['control_id']].items() if true and c != 'keeps_reverting']
             findings.append(dict(control_id=f['control_id'], level=f['level'], score=f['score'],
                                  **({'D': f['factors']['D']} if f['factors']['D'] > 1 else {}),
                                  **({'attention_codes': codes} if codes else {})))
@@ -425,8 +442,10 @@ class AnalysisTools(_RoleTools):
                 earlier.append(dict(collected_at=older.assessment.collected_at.isoformat(timespec='minutes'),
                                     value=prior.evidence.value, status=prior.status.value,
                                     comparable=comparable(prior, current)))
+        self.history_checked.add(control)
         return dict(control_id=control, current=dict(value=current.evidence.value, status=current.status.value),
-                    earlier=earlier or 'No earlier assessment of this control on this VM.')
+                    earlier=earlier or 'No earlier assessment of this control on this VM.',
+                    reverted_after_fix=reversions(control, self.record, self.previous))
 
     def _submit(self, arguments, flags):
         if self.analysis is None:
@@ -445,8 +464,9 @@ class AnalysisTools(_RoleTools):
         fitting, discarded = [], []
         for entry in attention:
             control, code = entry['control_id'], entry['attention_code']
-            if not (control in attention_facts and attention_facts[control][code]):
-                discarded.append(entry)
+            if not (control in attention_facts and attention_facts[control][code]) or (
+                    code == 'keeps_reverting' and control not in self.history_checked):
+                discarded.append(entry)  # A keeps_reverting flag must rest on a history check by this agent.
             elif control not in {e['control_id'] for e in fitting}:  # Listed under a later code too: shown once.
                 fitting.append(entry)
         attention, dropped = fitting[:3], [e['control_id'] for e in fitting[3:]]
@@ -466,8 +486,9 @@ class AnalysisTools(_RoleTools):
         if missing:
             raise ValueError('Every gap needs a triage_code; missing: ' + ', '.join(missing))
         # New dicts: the logged model arguments stay exactly as the model sent them.
-        attention = [dict(e, reason=ATTENTION[e['attention_code']].format(waiting=', '.join(waiting[e['control_id']])))
-                     for e in attention]
+        attention = [dict(e, reason=ATTENTION[e['attention_code']].format(
+            waiting=', '.join(waiting[e['control_id']]), reverted=reversions(e['control_id'], self.record, self.previous)))
+            for e in attention]
         triage = [dict(e, reason=TRIAGE[e['triage_code']].format(prerequisite=prerequisite[e['control_id']]))
                   for e in triage]
         rescan = [e['control_id'] for e in triage if e['triage_code'] == 'rescan']
@@ -519,7 +540,7 @@ class RemediationTools(_RoleTools):
 
     The model names a request by its control ID (one proposal per control per round, enforced by the store).
     Writing twelve 32-hex request IDs took a local model longer than its request budget (26 Oct probe)."""
-    names = ('list_approved', 'precheck', 'execute_fixes', 'skip_fix', 'report_results')
+    names = ('list_approved', 'precheck', 'execute_fixes', 'skip_fix', 'stop_execution', 'report_results')
     repeatable = ('precheck',)  # At most twice, e.g. to re-observe after an execution.
 
     def __init__(self, rounds, framework_run_id):
@@ -550,7 +571,8 @@ class RemediationTools(_RoleTools):
             return ('report_results',)
         if not self.checks:
             return ('precheck',) if 'list_approved' in self.seen else ('list_approved', 'precheck')
-        return ('execute_fixes', 'skip_fix') + (('precheck',) if self.checks < 2 else ())
+        return (('execute_fixes', 'skip_fix') + (('stop_execution',) if self._failure() else ())
+                + (('precheck',) if self.checks < 2 else ()))
 
     def _all_schemas(self):
         t = self.target_id
@@ -564,6 +586,8 @@ class RemediationTools(_RoleTools):
                      control_ids={'type': 'array', 'minItems': 1, 'maxItems': 40, 'items': ids}),
                 tool('skip_fix', 'Leave one approved request unexecuted, with a reason code from its skip_codes.', t,
                      control_id=ids, reason_code={'type': 'string', 'enum': sorted(REMEDIATION_SKIPS)}),
+                tool('stop_execution', 'After a failed result: leave every remaining request unexecuted and finish; '
+                     'code records why.', t),
                 tool('report_results', 'Finish once every request is executed or skipped, or after must_stop. Takes '
                      'target_id only: code writes the report from the recorded results.', t)]
 
@@ -627,13 +651,17 @@ class RemediationTools(_RoleTools):
             request_ids.append(request_id)
         results = []
         for request_id in request_ids:
-            if self.stopped:
-                break  # The rest stay open and are reported as not attempted.
+            if self.stopped or (results and results[-1]['result'] == 'failed'):
+                break  # Uncertain: the rest stay open, not attempted. Failed: the agent decides how to go on.
             results.append(self._execute(request_id))
-        # Real qwen3:8b copied these results into report_results after an uncertain outcome (27 Oct evaluation).
-        return dict(results=results, must_stop=self.stopped is not None,
-                    **({'next': 'report_results with target_id only; these results are already recorded'}
-                       if self.stopped else {}))
+        output = dict(results=results, must_stop=self.stopped is not None)
+        if self.stopped:  # Real qwen3:8b copied these results into report_results after an uncertain outcome (27 Oct).
+            output['next'] = 'report_results with target_id only; these results are already recorded'
+        elif results[-1]['result'] == 'failed' and self.open():
+            output.update(paused_after_failure=True, remaining=[self.pending[i]['proposal']['control_id']
+                                                                 for i in self.open()],
+                          next='execute_fixes to continue with remaining requests, or stop_execution')
+        return output
 
     def _execute(self, request_id):
         proposal = self.pending[request_id]['proposal']
@@ -650,6 +678,19 @@ class RemediationTools(_RoleTools):
         self.verdicts.append(dict(proposal_id=request_id, control_id=proposal['control_id'],
                                   action_id=proposal['action_id'], verdict=verdict))
         return dict(control_id=proposal['control_id'], verdict=verdict, result=kind)
+
+    def _stop(self):
+        """The agent's judgement after a failure: the remaining requests would fail the same way. Closes them all."""
+        if not self._failure() or self.stopped:
+            raise ValueError('stop_execution is for after a failed result; nothing has failed')
+        reason = REMEDIATION_SKIPS['stop_after_failure']
+        for request_id, record in self.open().items():
+            proposal = record['proposal']
+            self.store.record_refusal(request_id, 'skipped', 'skipped by the Remediation Agent (' + reason + ')')
+            self.skipped.append(dict(request_id=request_id, control_id=proposal['control_id'],
+                                     action_id=proposal['action_id'], reason_code='stop_after_failure', reason=reason))
+        self.terminal_outcome = self.outcome(finished=True)
+        return dict(self.terminal_outcome)
 
     def _skip(self, control_id, code):
         request_id, proposal = self._open_request(control_id)
@@ -699,6 +740,9 @@ class RemediationTools(_RoleTools):
         elif name == 'skip_fix':
             arguments = self._args(name, arguments, 'control_id', 'reason_code')
             output = self._skip(arguments['control_id'], arguments['reason_code'])
+        elif name == 'stop_execution':
+            self._args(name, arguments)
+            return self._stop()
         else:
             raise ValueError('Tool is outside this agent role')
         self.seen.add(name)
@@ -717,7 +761,7 @@ class OrchestratorTools(_RoleTools):
         self.initial_message = ('Run one hardening round for target ' + self.target_id
                                 + '. Start by delegating the Scanner Agent.')
         self.scanner_outcome, self.analysis, self.analysis_outcome, self.record = None, None, None, None
-        self.proposals, self.scans, self.ignored_skips = [], 0, []
+        self.proposals, self.scans, self.ignored_skips, self.previous = [], 0, [], []
 
     def _rescan_allowed(self):
         """A second Scanner delegation: when Analysis asked for a rescan, or the Scanner stopped without a
@@ -770,7 +814,8 @@ class OrchestratorTools(_RoleTools):
                    + [g['control_id'] for g in self.analysis['gaps'] if g['prerequisite'] == control])
         return waiting, {'high_risk': decision['finding']['level'] in ('High', 'Critical'),
                          'unblocks_other': bool(waiting), 'improves_detection': control.startswith(DETECTION_CONTROLS),
-                         'waits_for_prerequisite': bool(decision['waits_for'])}
+                         'waits_for_prerequisite': bool(decision['waits_for']),
+                         'keeps_reverting': reversions(control, self.record, self.previous) >= 2}
 
     def _codes(self, control, decisions):
         _, facts = self._facts(control, decisions)
@@ -789,7 +834,8 @@ class OrchestratorTools(_RoleTools):
                              + (f", waits for {', '.join(decision['waits_for'])}" if decision['waits_for'] else '')
                              + (f", unblocks {', '.join(waiting)}" if waiting else '') + ')')
         template = (FIX_REASONS if 'action_id' in entry else SKIP_REASONS)[code]
-        return template.format(waiting=', '.join(waiting), prerequisites=', '.join(decision['waits_for']))
+        return template.format(waiting=', '.join(waiting), prerequisites=', '.join(decision['waits_for']),
+                               reverted=reversions(control, self.record, self.previous))
 
     def _validate_plan(self, fixes, skipped):
         decisions = self._decisions() if self.analysis else {}
@@ -916,7 +962,7 @@ class OrchestratorTools(_RoleTools):
         return result
 
     def _delegate_analysis(self):
-        previous = self.rounds.previous_records(self.framework_run_id)
+        previous = self.previous = self.rounds.previous_records(self.framework_run_id)
         tools = AnalysisTools(self.rounds, self.record, previous, self.framework_run_id)
         child, finished = self._child(ANALYSIS, tools, steps=6, calls=10, seconds=220, request=180)
         # Scores are deterministic (D2): if the agent stopped early, code still computes the same ranking.
@@ -932,6 +978,9 @@ class OrchestratorTools(_RoleTools):
                          actions=decision['usable'], fix_codes=fix_codes, skip_codes=skip_codes)
             if decision['waits_for']:
                 entry['blocked_until_compliant'] = decision['waits_for']
+            reverted = reversions(control, self.record, previous)
+            if reverted:
+                entry['reverted_after_fix'] = reverted
             must_decide.append(entry)
         no_action = [f['control_id'] for f in self.analysis['findings'] if not f['candidate_actions']]
         return dict(agent=ANALYSIS, status=finished['status'], must_decide=must_decide,
