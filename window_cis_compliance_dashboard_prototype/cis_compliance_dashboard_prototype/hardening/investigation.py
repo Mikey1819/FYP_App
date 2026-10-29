@@ -128,7 +128,7 @@ class Coordinator:
                 if self.clock() - started >= self.limits.seconds:
                     status, summary, stop = "Time limit reached", "Tool dispatch stopped at the deadline.", True
                     break
-                name = "invalid"
+                name, dispatched = "invalid", False
                 try:
                     function = call["function"]
                     name, arguments = function["name"], function["arguments"]
@@ -140,12 +140,16 @@ class Coordinator:
                         status, summary, stop = "Repeated call blocked", "An identical tool call was blocked; no repeat was executed.", True
                         break
                     seen.add(signature)
+                    dispatched = True  # The arguments passed the JSON check above, so they can be logged.
                     output = self.tools.call(name, arguments)
                     self.log.append(run_id, "tool", {"name": name, "arguments": arguments, "result": output})
                 except (ValueError, TypeError, KeyError) as error:
                     invalid_count += 1
                     output = {"error": str(error)[:200]}
-                    self.log.append(run_id, "tool_rejected", {"name": str(name)[:80], "error": output["error"]})
+                    rejected = {"name": str(name)[:80], "error": output["error"]}
+                    if dispatched:  # The refused arguments, so a rejected decision can be reviewed later.
+                        rejected["arguments"] = arguments
+                    self.log.append(run_id, "tool_rejected", rejected)
                 messages.append({"role": "tool", "tool_name": str(name)[:80], "content": json.dumps(output)})
                 terminal = getattr(self.tools, 'terminal_outcome', None)
                 if terminal is not None:
