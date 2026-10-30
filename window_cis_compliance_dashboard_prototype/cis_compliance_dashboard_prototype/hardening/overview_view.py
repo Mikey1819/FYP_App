@@ -8,12 +8,14 @@ import pandas as pd
 import streamlit as st
 
 from .action_library import actions_for
+from .agentic import verdict_kind
 from .domain import summarise
 from .framework import AssessmentOrchestrator
 from .history import HistoryService
 from .import_storage import ImportedEvidenceStore
 from .remediation import RemediationStore
 from .risk import analyse
+from .ui import local_time
 
 LEVELS = ('Critical', 'High', 'Moderate', 'Low')
 # Ordinal one-hue ramp, darker = more severe; validated light and dark (dataviz validator, --ordinal).
@@ -22,6 +24,10 @@ SEVERITY_RAMP = {'light': ('#0d366b', '#1c5cab', '#3987e5', '#86b6ef'),
 # Secondary text ink per theme: labels never wear the series colour.
 TEXT_INK = {'light': '#52514e', 'dark': '#c3c2b7'}
 METER_BLUE = '#3987e5'  # Single-hue meter fill, readable on both surfaces.
+STATUS = {'awaiting_approval': 'Awaiting approval', 'no_fix_proposed': 'No fix proposed',
+          'no_findings': 'No findings', 'collection_failed': 'Scan failed', 'scan_not_handed_off': 'Scan not validated',
+          'incomplete': 'Stopped early', 'finish': 'Finished', 'next_round': 'Next round recommended',
+          'remediation_review': 'Needs review', 'fallback': 'Executed without AI'}
 AREAS = ('Account Policies', 'Local Security Options', 'Windows Defender Firewall', 'Advanced Audit Policy',
          'Remote Desktop Services')
 
@@ -61,6 +67,31 @@ def area_table(results):
     return rows
 
 
+def _round_target(runtime, r):
+    """A failed scan has no run; a verification round belongs to the VM of the run it remediated."""
+    run_id = r['framework_run_id'] if r['kind'] == 'assessment' else r.get('remediated_run_id')
+    return runtime.get(run_id).target_id if run_id else None
+
+
+def activity_row(r, store):
+    """One line per stored round, in the terms an administrator would log it."""
+    outcome = r.get('outcome') or {}
+    status = STATUS.get(outcome.get('outcome'), (outcome.get('outcome') or '—').replace('_', ' '))
+    if r['kind'] == 'assessment':
+        proposed, deferred = len(outcome.get('proposals') or []), len(outcome.get('skipped') or [])
+        result = (f'{proposed} fix(es) proposed, {deferred} deferred' if r['framework_run_id']
+                  else 'Scan did not complete')
+        activity = 'Assessment round'
+        if outcome.get('outcome') == 'awaiting_approval':  # The stored state is as of the round; decisions came later.
+            undecided = sum(p['decision'] is None for p in store.for_run(r['framework_run_id']))
+            status = f'{undecided} awaiting approval' if undecided else 'All decided'
+    else:
+        kinds = Counter(verdict_kind(v['verdict']) for v in r['verdicts'] if v['control_id'])
+        result = ', '.join(f'{n} {kind}' for kind, n in kinds.items()) or 'Nothing executed'
+        activity = 'Remediation and verification'
+    return {'Time': local_time(r['created_at']), 'Activity': activity, 'Result': result, 'Status': status}
+
+
 def render_overview(database_path: Path):
     st.title('Overview')
     try:
@@ -79,7 +110,7 @@ def render_overview(database_path: Path):
         record = imports.get(runtime.get(latest['run_id']).evidence_sha256)
         results = record.assessment.results
         ranked = analyse(record, history.previous_records(latest['run_id']))
-        st.caption(f"{targets[target]} · latest assessment {latest['created_at'][:16].replace('T', ' ')} UTC · "
+        st.caption(f"{targets[target]} · latest assessment {local_time(latest['created_at'])} · "
                    f"{latest['controls']} controls · CIS Windows Server 2022 Stand-alone v2.0.0, Level 1")
 
         previous = runs[-2] if len(runs) > 1 else None
@@ -101,8 +132,9 @@ def render_overview(database_path: Path):
         regressions = [d for d in history.drift_records(target)
                        if d['current_run_id'] == latest['run_id'] and d['change'] == 'Regression']
         if regressions:
-            st.warning(f"⚠ {len(regressions)} control(s) regressed since the previous assessment: "
-                       + ', '.join(d['control_id'] for d in regressions) + '. See History and drift.')
+            st.warning(f"{len(regressions)} control(s) regressed since the previous assessment: "
+                       + ', '.join(d['control_id'] for d in regressions) + '. See History and drift.',
+                       icon=':material/trending_down:')
 
         left, right = st.columns([1, 1.5])
         with left:
@@ -133,19 +165,11 @@ def render_overview(database_path: Path):
         else:
             st.caption('Nothing to prioritise.')
 
-        st.subheader('Recent agent activity')
-        rounds = [r for r in store.recent_rounds(10)
-                  if r['framework_run_id'] is None or runtime.get(r['framework_run_id']).target_id == target][:5]
-        if not rounds:
+        st.subheader('Activity')
+        rounds = [r for r in store.recent_rounds(20) if _round_target(runtime, r) in (None, target)][:8]
+        if rounds:
+            st.dataframe([activity_row(r, store) for r in rounds], hide_index=True)
+        else:
             st.caption('No agentic rounds yet for this VM.')
-        for r in rounds:
-            when = r['created_at'][:16].replace('T', ' ') + ' UTC'
-            if r['kind'] == 'assessment':
-                st.write(f"**{when} · Orchestrator round** — {r['outcome']['reason']}")
-            else:
-                verdicts = '; '.join(f"{v['control_id']}: {v['verdict']}" for v in r['verdicts'] if v['control_id'])
-                step = (r.get('outcome') or {}).get('outcome')
-                st.write(f"**{when} · Remediation and verification** — {verdicts or 'no executed fixes'}"
-                         + (f" · next step: {step.replace('_', ' ')}" if step else ''))
     except (ValueError, OSError, sqlite3.Error) as exc:
         st.error('Overview: ' + str(exc))

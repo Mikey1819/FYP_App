@@ -36,7 +36,7 @@ flowchart TD
 
 | Role | Tools (validated by code) | Decides | Cannot |
 | --- | --- | --- | --- |
-| AI Agent Orchestrator, assessment phase | `delegate_scanner`, `delegate_analysis`, `submit_plan` | Delegation order. Whether to send the Scanner back **once**, only when Analysis requested a rescan or the Scanner stopped without handing off (a stopped Scanner is reported as `scan_not_handed_off`, never as a collection failure, and its delegation result says `retry_allowed`). **Which fixes to propose, in what order, and why each other fixable finding waits.** | Scan, score, approve, execute. Fix a gap, use an action outside the library or the finding's list, fix a blocked finding, leave a fixable finding undecided, give a reason that contradicts the analysis. |
+| AI Agent Orchestrator, assessment phase | `interpret_goal` (only when the administrator gave a goal), `delegate_scanner`, `delegate_analysis`, `submit_plan` | How to read the administrator's goal, if any (see below). Delegation order. Whether to send the Scanner back **once**, only when Analysis requested a rescan or the Scanner stopped without handing off (a stopped Scanner is reported as `scan_not_handed_off`, never as a collection failure, and its delegation result says `retry_allowed`). **Which fixes to propose, in what order, and why each other fixable finding waits.** | Scan, score, approve, execute. Fix a gap, use an action outside the library or the finding's list, fix a blocked finding, leave a fixable finding undecided, give a reason that contradicts the analysis. |
 | AI Agent Orchestrator, remediation phase | `delegate_remediation`, `delegate_verification`, `submit_review` | Next step: `finish`, `next_round` or `remediation_review` (report Figure 4.4), with a fact-checked reason code | Decide before verifying executed fixes. Finish while a fix failed, is uncertain or was not attempted. |
 | Scanner Agent | `scan_target`, `read_coverage`, `inspect_observation`, `rescan`, `handoff_analysis` / `handoff_verification`, `report_failure` | When to scan. Whether coverage is acceptable. Whether to rescan once (Error results only). | Change settings or send anything but the fixed collector |
 | Analysis Agent | `score_findings`, `inspect_finding`, `check_history`, `submit_analysis` | What to investigate (at most 2 investigations). **Which findings need your attention first** (≤ 3). **How to triage every gap:** rescan, resolves with a prerequisite, or manual review. | Change any factor, score or level (D2). There is no tool that could. |
@@ -62,14 +62,24 @@ In an earlier trial, free-text reasons were invented: the model justified the an
 
 | Agent | Codes | Fact that must hold |
 | --- | --- | --- |
-| Orchestrator plan, fixes | `high_risk`, `unblocks_other`, `improves_detection`, `low_impact` | High/Critical level; another finding waits on this control; audit/logging control |
-| Orchestrator plan, skips | `waits_for_prerequisite`, `needs_review`, `lower_priority`, `keeps_reverting` | A prerequisite is not compliant; the control went from Compliant back to Non-Compliant at least twice in this VM's stored scans |
+| Orchestrator plan, fixes | `high_risk`, `unblocks_other`, `improves_detection`, `low_impact`, `serves_goal` | High/Critical level; another finding waits on this control; audit/logging control; the control fits the goal's focus |
+| Orchestrator plan, skips | `outside_goal`, `waits_for_prerequisite`, `needs_review`, `lower_priority`, `keeps_reverting` | The interpreted goal excludes the control; a prerequisite is not compliant; the control went from Compliant back to Non-Compliant at least twice in this VM's stored scans |
 | Analysis attention | `keeps_reverting`, `regression`, `high_risk`, `unblocks_other`, `manual_fix_needed` | Reverted at least twice **and** the agent checked that control's history itself (the fact is shown only by `check_history`); D = 5; High/Critical; a finding or gap depends on it; no library action |
 | Analysis gap triage | `rescan`, `resolves_with_prerequisite`, `manual_review` | Status is Error; the gap is a lockout timer left unrecorded while the threshold is 0 |
 | Remediation skip | `precondition_changed`, `prerequisite_not_met`, `expired`, `stop_after_failure` | Fresh precheck observation; an earlier result in this task failed |
 | Orchestrator review | `finish`: `all_verified`, `nothing_fixable`, `nothing_executed`. `next_round`: `unblocked_findings`, `remaining_findings`. `remediation_review`: `verification_failed`, `uncertain_outcome`, `remediation_incomplete` | Receipt verdicts plus the verification rescan. `finish` and `next_round` require no failed, uncertain or unattempted fix. |
 
 As a result, every reason shown to the administrator is true by construction. The choices themselves stay with the models: what to investigate, what to flag, what to fix, in what order, what to skip, and what happens next.
+
+## Administrator goals
+
+Before a round, the administrator may type a goal in plain words, at most 300 characters, for example *"Keep RDP usable for remote support this week"*. The goal is untrusted data. It travels in the Orchestrator's first message; the system prompt does not change.
+
+1. **The model interprets it.** Only `interpret_goal` is offered until the goal is read. Its arguments form a closed set: `only_areas` and `exclude_areas` (the 5 security areas), `exclude_controls` (controls with a library action), `focus` (`detection`, `account_security`, `remote_desktop` or `none`), `max_fixes` (0–10, where 0 means no limit) and `unclear`. Code validates them; with `unclear`, every other field must be empty.
+2. **Code enforces it.** Findings the reading excludes are taken out of `must_decide`, listed as `outside_goal`, and recorded as skipped with `outside_goal` by code. In the first goal evaluation, the model often read the goal correctly and then failed the plan by copying the exclusions by hand. A plan that fixes an excluded control, or more than `max_fixes`, is refused, and the refusal names the goal. `serves_goal` is offered only where it is true.
+3. **The administrator sees it.** The Fixes tab and the round report show the goal and the reading written by code ("leave Remote Desktop Services unchanged"), next to the proposals and before any approval.
+
+A goal can only **narrow or reorder** a plan. It cannot add a fix, choose a value, skip approval or change a score. A wrong reading is visible and costs at most a rejected proposal. Rounds without a goal are unchanged: the goal codes are neither offered nor accepted. The pre-registered evaluation is `--goals` in [scripts/evaluate_agentic_rounds.py](scripts/evaluate_agentic_rounds.py).
 
 ## Fallbacks (report Section 4.1.2)
 

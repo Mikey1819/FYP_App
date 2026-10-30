@@ -82,6 +82,9 @@ def round_report(hardening, rounds, assessment_round, *, now=None):
             cards += f'<div class="card"><b>{100 * counts["Compliant"] / evaluated:.0f}%</b><span>Compliance of evaluated</span></div>'
     else:
         title, facts, cards, results = 'No assessment', [], '', ()
+    if assessment_round.get('goal'):
+        facts += [('Administrator goal', assessment_round['goal']['text']),
+                  ('Goal read by the Orchestrator as', assessment_round['goal']['read_as'])]
     facts += [('Round', f"{assessment_round['round_id']} (started {assessment_round['created_at'][:19].replace('T', ' ')} UTC)"),
               ('Report generated (UTC)', now.isoformat(timespec='seconds'))]
     parts.append('<dl>' + ''.join(f'<dt>{escape(k)}</dt><dd>{escape(str(v))}</dd>' for k, v in facts) + '</dl>')

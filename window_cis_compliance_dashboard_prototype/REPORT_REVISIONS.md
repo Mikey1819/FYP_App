@@ -189,6 +189,66 @@ Note the corrected IDs: the report's 9.3.8, 17.2.5 and 17.2.6 are 9.3.6, 17.2.2 
 
 ---
 
+## A6. User interface design (§4.7, Figures 4.11–4.16)
+
+*Added 30 October 2026, after the dashboard rework (PROGRESS, 30 October).*
+
+**Where:** §4.7 introduction, §4.7.1–4.7.6, Figures 4.11(a)–4.16, and the §4.8 sentence on dashboard views.
+
+**Problem:** The figures are design mock-ups with sample data, organised as six separate views. The delivered dashboard has three pages, and the agentic workflow is one page with tabs. Several mock-up elements do not exist: the *Agentic Workflow Replay*, the *Current Device Situation* narrative, the per-finding *Decision Support* consequences panel, the optional review comment, and a single Approve that proceeds straight to execution. The delivered system also has elements the mock-ups lack: the step bar, the execution confirmation, approval expiry, the agent log and the round report.
+
+**Mapping from mock-up to delivered interface:**
+
+| Report figure | Delivered interface | Main differences |
+| --- | --- | --- |
+| 4.11(a)–(c) Dashboard / Overview | **Overview** page | No workflow replay or plain-language device narrative. The Activity table lists real rounds; the workflow itself runs on the Agentic hardening page. |
+| 4.12 Assessment Results | **Agentic hardening → Controls** tab | Same purpose. The filter is by status (All, Compliant, Non-Compliant, Unknown, Error); Unknown and Error are never counted as passes. |
+| 4.13(a) Risk Findings / Details | **Risk ranking** tab | Same purpose. Adds the Analysis Agent's flags and gap triage. |
+| 4.13(b) Decision Support | **Explain with local AI** in the finding details, plus the library action's fixed impact text on each fix | Model text is labelled unverified and changes nothing. There is no generated "consequences of approve/reject" panel. |
+| 4.14 Remediation Review | **Fixes** tab, then the execution confirmation | Approval and execution are separate steps. Approval records a decision bound to the request and valid for one hour; execution needs a second confirmation. No review comment field. |
+| 4.15 Verification / Result | **Results** tab | Verification is a fresh full rescan by the Scanner Agent; the Orchestrator's next step is shown. |
+| 4.16 Drift / History | **History and drift** page | Same purpose. Adds a comparison of any two assessments. |
+
+**Replace the first paragraph of §4.7 with:**
+
+> The administrator works through a Streamlit dashboard with three pages: Overview, Agentic hardening and History and drift. A sidebar shows on every page whether the target VM is connected and whether the local model is available. The Agentic hardening page holds the complete workflow for one target. A step bar shows the current round's progress through Scan, Analyse, Plan, Approve, Execute and Verify, followed by the Orchestrator's next step. A single action row offers only the actions valid in the current state. The detail is organised in five tabs: Fixes, Risk ranking, Controls, Results and Agent log, and the page opens on the tab that needs the administrator's attention. Figures 4.11 to 4.16 show the delivered interface. [If you keep the mock-ups instead, say: "The figures show the design mock-ups; the delivered interface, described in Chapter 5, organises the same information as follows."]
+
+**§4.7.1 (Figure 4.11), replace with:**
+
+> The Overview page summarises the latest assessment of the target: compliance among evaluated controls with the change since the previous assessment, the number of non-compliant and Unknown/Error controls, the highest risk score and the number of fixes awaiting a decision. A severity chart and a per-area compliance table show where the weaknesses lie, and the Top risks table lists the highest-scoring findings with the library action that would fix each, or "Manual review" where none exists. The Activity table records every assessment round and remediation phase with its time, result and status, so that the administrator can see what the agents have done without reading raw records. A warning appears when a control has regressed since the previous assessment.
+
+**§4.7.2 (Figure 4.12), replace the last sentence with:**
+
+> The Controls tab presents all 32 controls with the observed value and status, and can be filtered by status. Unknown and Error results are shown separately and are never counted as compliant.
+
+**§4.7.3 (Figure 4.13), replace both paragraphs with:**
+
+> The Risk ranking tab lists every scored non-compliant finding in rank order with its observed and required values, risk score, level and any flag raised by the Analysis Agent. Selecting a finding shows its derivation: each factor of R = 6I + 5E + 4P + 3L + 2D with the rule that produced it, and the benchmark rationale. The administrator may ask the local model for a plain-language explanation; it is labelled as unverified and cannot change any score. Gaps (Unknown or Error) are listed separately with the Analysis Agent's triage.
+
+**§4.7.4 (Figure 4.14), replace with:**
+
+> The Fixes tab is the human-in-the-loop checkpoint. Each fix proposed by the AI Agent Orchestrator shows its rank, the control, the library action, the current and target values, the action's operational impact and the Orchestrator's reason code. The administrator enters their name once and approves or rejects each proposal; an approval is bound to that request on that target and expires after one hour. Findings the Orchestrator deferred are listed with their reasons. Execution is a separate step: the administrator opens a confirmation that lists every approved change, its current value, the approver and the approval expiry, and only then confirms. No configuration change is possible without both steps.
+
+**§4.7.5 (Figure 4.15), replace with:**
+
+> After execution, the page opens on the Results tab. It shows the Orchestrator's decision on the next step (finish, next round or remediation review), the verdict for each executed action, and the configuration changes found by the Scanner Agent's fresh verification rescan, including controls resolved as a side effect. The Agent log tab records every tool call each agent made, every call that code rejected, and each agent's final decision. A round report can be downloaded as a self-contained HTML record.
+
+**§4.7.6 (Figure 4.16):** the text still fits. Add: "Any two assessments of the same target can also be compared side by side."
+
+**Screenshots to take for the new figures.** Use the real VM after the trial (VM_TRIAL_RUNBOOK). If you use the simulated VM, label the figure "simulated target":
+
+| Figure | Page and state |
+| --- | --- |
+| 4.11 | Overview after one remediation (tiles, chart, area table, Activity) |
+| 4.12 | Controls tab, filter *Non-Compliant* |
+| 4.13 | Risk ranking tab with one finding's details open |
+| 4.14(a) | Fixes tab with proposals awaiting a decision |
+| 4.14(b) | The execution confirmation panel |
+| 4.15 | Results tab after verification |
+| 4.16 | History and drift with at least two assessments |
+
+---
+
 ## B1. Smaller inconsistencies
 
 | Where | Problem | Replacement |
