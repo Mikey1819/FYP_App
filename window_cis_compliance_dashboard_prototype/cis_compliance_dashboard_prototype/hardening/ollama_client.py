@@ -51,3 +51,19 @@ class OllamaClient:
                     "tool_calls": message.get("tool_calls", [])}
         finally:
             connection.close()
+
+
+def model_available(timeout=1.0):
+    """Loopback check for the status panel: is Ollama up and is the agents' model pulled?"""
+    connection = http.client.HTTPConnection("127.0.0.1", 11434, timeout=timeout)
+    try:
+        connection.request("GET", "/api/tags")
+        response = connection.getresponse()
+        if response.status != 200:
+            return False
+        models = json.loads(response.read(4194304)).get("models", [])
+        return any(m.get("name") == OllamaClient.model for m in models if isinstance(m, dict))
+    except (OSError, ValueError, AttributeError):
+        return False
+    finally:
+        connection.close()

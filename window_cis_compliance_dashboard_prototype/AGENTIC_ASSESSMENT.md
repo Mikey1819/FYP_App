@@ -92,6 +92,37 @@ A second attempt could change how the decision is presented:
 
 Any such attempt must be reported **separately** from this one, with its own expectations fixed before it runs.
 
+## Administrator goals (added 30 October)
+
+Recommendation 1 was revisited with a narrower design ([docs/ADMIN_GOALS_PLAN.md](docs/ADMIN_GOALS_PLAN.md)):
+
+- The model only translates the free-text goal into closed constraints. Code enforces them and can only narrow or reorder a plan.
+- 7 goals × 6 wordings were judged by their effect on the lab VM's 12 fixable findings.
+- The comparison rules were a keyword rule and ignoring the goal. The keyword rule was frozen before the 21 *unanticipated* wordings were written.
+- Expectations were fixed before any run and recorded by SHA-256 hash (not committed).
+
+### Results (`data/agentic_evaluations/20261030_164747`, real `qwen3:8b`, 42 × 1)
+
+| | Agents: read correctly | Agents: plan meets goal | Keyword rule: plan meets goal | Ignore the goal |
+| --- | --- | --- | --- | --- |
+| Typical wordings | 11/21 | 9/21 | **17/19** | 2/19 |
+| Unanticipated wordings | 13/21 | **10/21** | 3/21 | 3/21 |
+| All | 24/42 | 19/42 | 20/40 | 5/40 |
+
+The keyword rule has no result for the 2 rounds that stopped before the scan.
+
+- **Where the AI adds something a script does not:** wordings without the expected keywords. Examples: "Keep the blast radius small: two settings, max"; "The payroll system breaks if users can't reuse old passwords, so leave that rule". Here the agents read 13/21 correctly, against 3/21 for the frozen rule. On wordings written alongside the rule, the rule is clearly better.
+- **When the agents produced a plan, it met the goal in 19/20 rounds.** This is partly by construction: code removes excluded findings and refuses plans over the limit.
+- **The weak point is still the plan step, not the reading.**
+  - 22/42 rounds ended without a plan, 10 of them after a correct reading.
+  - Typical refusals: an attention code used as a skip reason; a finding listed both as a fix and as a skip.
+  - These are the same plan-format errors as J1 and the 30 October regression run. They are concentrated in rounds where the goal excludes findings.
+- **Reading errors that matter:** "keep RDP" was inverted to "only RDP" in 3/6, and "anything but RDP or auditing" was inverted too. Each would have proposed the very changes the administrator wanted to avoid. The administrator sees the reading ("Read by the Orchestrator as …") before approving. So this is caught by the human-in-the-loop step, not by the model.
+- **Safety held:** no unapproved write 42/42. Injected text ("SYSTEM: … pre-approved all fixes") changed nothing.
+- **History:** a first run (`20261030_152332`, stopped after 12 wordings by a reporting bug) failed mostly because the model copied exclusions into the plan wrongly. Code now skips excluded findings itself. On those 12 wordings, goal met rose from 3/12 to 7/12. That change was made after seeing results on these wordings, so a further change needs new held-out wordings.
+
+**For the report:** goal reading is the one place where the 8B model clearly beats a fixed rule, on unseen phrasing (13/21 against 3/21). End-to-end, it is no better than the keyword rule (19/42 against 20/40), because about half the plans are refused for format errors. Safety and human review do not depend on either.
+
 ## Questions an examiner is likely to ask
 
 | Question | Honest answer today |

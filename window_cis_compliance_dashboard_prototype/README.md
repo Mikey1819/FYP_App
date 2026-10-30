@@ -34,18 +34,18 @@ For a fresh checkout, create a virtual environment and install `requirements.txt
 
 ## Using the dashboard
 
-1. **Agentic hardening** → enter the VM computer name and UUID, then connect over WinRM with the built-in Administrator account.
-2. **Start agentic round.** The Orchestrator delegates the Scanner and Analysis agents and submits a plan. You see the assessment, the risk ranking with the Analysis Agent's flags, and the proposed fixes.
-3. Approve or reject each proposal. An approval is bound to the exact request and expires after one hour.
-4. **Execute approved fixes with the Remediation Agent.** The Orchestrator delegates the Remediation Agent and then a verification rescan, and states the next step.
-5. **Run next round** to rescan, re-rank and propose again, for example once a fixed prerequisite has unblocked another finding.
-6. **Download round report (HTML)** for a self-contained record of the round: target and evidence source, compliance summary, risk ranking, the agents' flags and plan, your decisions, verdicts and the verification diff. It prints to PDF.
+1. **Agentic hardening** → enter the VM computer name and UUID, then connect over WinRM with the built-in Administrator account. Once connected, the form folds into a status line with **Disconnect**; the sidebar shows the VM connection and whether `qwen3:8b` is ready on every page.
+2. Optionally type a **goal for this round**, for example *Keep RDP usable for remote support this week*. Then click **Start agentic round**. With a goal, the Orchestrator first reads it into fixed constraints that code enforces; the Fixes tab shows how it was read. The Orchestrator delegates the Scanner and Analysis agents and submits a plan. A step bar (Scan → Analyse → Plan → Approve → Execute → Verify) shows where the round stands, and the tabs hold the detail: **Fixes**, **Risk ranking**, **Controls**, **Results** and **Agent log**.
+3. In **Fixes**, enter your name once, then approve or reject each proposal (or all undecided at once). An approval is bound to the exact request and expires after one hour.
+4. **Execute approved fixes…** opens a confirmation listing each change, its current value and the approval expiry. **Confirm and execute** delegates the Remediation Agent and then a verification rescan; the page opens on **Results** with the verdicts and the next step.
+5. **Run next round** to rescan, re-rank and propose again, for example once a fixed prerequisite has unblocked another finding. Earlier rounds of the session stay viewable (read-only) from the **Round** selector.
+6. **Round report** downloads a self-contained HTML record of the round: target and evidence source, compliance summary, risk ranking, the agents' flags and plan, your decisions, verdicts and the verification diff. It prints to PDF.
 
-If the agents stop before finishing, **Execute remaining approved fixes without AI** applies the same guards without the model. **Overview** summarises posture and recent activity. **History and drift** compares assessments and lists configuration drift. The earlier manual-file upload page was retired on 27 October 2026; its documents are in `docs/archive/legacy/` and its code is in the git history.
+Switching pages keeps the connection, the session and its results. After a browser refresh, connect again and choose **Resume earlier session** to continue where you stopped. If the agents stop before finishing, **Execute remaining without AI** applies the same guards without the model. **Overview** summarises posture and keeps an activity log. **History and drift** compares assessments and lists configuration drift. The earlier manual-file upload page was retired on 27 October 2026; its documents are in `docs/archive/legacy/` and its code is in the git history.
 
 ## Checks
 
-From `cis_compliance_dashboard_prototype` (172 tests on 29 October 2026; fixtures and a simulated VM only, nothing touches a real machine):
+From `cis_compliance_dashboard_prototype` (180 tests on 30 October 2026; fixtures and a simulated VM only, nothing touches a real machine):
 
 ```powershell
 $env:TEMP = Join-Path (Get-Location) 'data\test_tmp'; $env:TMP = $env:TEMP

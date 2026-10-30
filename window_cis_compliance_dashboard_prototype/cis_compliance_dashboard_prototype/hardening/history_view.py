@@ -9,9 +9,6 @@ from .history import HistoryService
 from .import_storage import ImportedEvidenceStore
 from .remediation import RemediationStore
 
-FLAG = {'Regression': '🔴', 'Improvement': '🟢'}
-
-
 def _label(run):
     return f"{run['created_at'][:19].replace('T', ' ')} UTC · {run['run_id'][:8]}"
 
@@ -54,7 +51,7 @@ def render_history(database_path: Path):
             regressions = sum(r['change'] == 'Regression' for r in records)
             if regressions:
                 st.warning(f'{regressions} regression(s): a control that was compliant became non-compliant.')
-            st.dataframe([{'': FLAG.get(r['change'], ''), 'Detected (UTC)': r['detected_at'][:19].replace('T', ' '),
+            st.dataframe([{'Detected (UTC)': r['detected_at'][:19].replace('T', ' '),
                            'Control': r['control_id'], 'Title': r['title'], 'Before': repr(r['before']),
                            'After': repr(r['after']), 'Change': r['change'],
                            'Runs': r['previous_run_id'][:8] + ' → ' + r['current_run_id'][:8]} for r in records],
@@ -73,7 +70,7 @@ def render_history(database_path: Path):
                 rows = history.compare(before, after)
                 show_all = st.checkbox('Show unchanged controls', key='history_all')
                 shown = rows if show_all else [r for r in rows if r['change'] != 'Unchanged']
-                st.dataframe([{'': FLAG.get(r['change'], ''), 'Control': r['control_id'], 'Title': r['title'],
+                st.dataframe([{'Control': r['control_id'], 'Title': r['title'],
                                'Before': repr(r['before']), 'After': repr(r['after']), 'Change': r['change']}
                               for r in shown] or [{'Change': 'No differences'}], hide_index=True)
     except (ValueError, OSError, sqlite3.Error) as exc:
