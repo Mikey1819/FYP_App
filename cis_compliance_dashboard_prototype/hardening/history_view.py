@@ -15,6 +15,11 @@ def _label(run):
     return f"{myt(run['created_at'], FULL)} MYT · {run['run_id'][:8]}"
 
 
+def _value(value):
+    """An absent setting is a policy that is not configured (decision D5), shown as such rather than as None."""
+    return 'not configured' if value is None else repr(value)
+
+
 def render_history(database_path: Path):
     st.title('History and configuration drift')
     st.caption('Every assessment is an immutable snapshot. Drift compares each assessment with the previous one of '
@@ -62,7 +67,7 @@ def render_history(database_path: Path):
                        'Compliance of evaluated': '—' if r['compliance_percent'] is None
                        else f"{r['compliance_percent']:.0f}%"} for r in reversed(runs)], hide_index=True)
         st.caption('Compliance is among evaluated controls (Compliant + Non-compliant); Unknown/Error are shown '
-                   'separately and never counted as passes. Older runs may cover fewer controls (5, 12, 16 or 32).')
+                   'separately and never counted as passes.')
 
         st.subheader('Detected configuration drift')
         records = history.drift_records(target)
@@ -75,8 +80,8 @@ def render_history(database_path: Path):
             if regressions:
                 st.warning(f'{regressions} regression(s): a control that was compliant became non-compliant.')
             st.dataframe([{'Detected (MYT)': myt(r['detected_at'], FULL),
-                           'Control': r['control_id'], 'Title': r['title'], 'Before': repr(r['before']),
-                           'After': repr(r['after']), 'Change': r['change'],
+                           'Control': r['control_id'], 'Title': r['title'], 'Before': _value(r['before']),
+                           'After': _value(r['after']), 'Change': r['change'],
                            'Runs': r['previous_run_id'][:8] + ' → ' + r['current_run_id'][:8]} for r in records],
                          hide_index=True)
 
@@ -94,7 +99,7 @@ def render_history(database_path: Path):
                 show_all = st.checkbox('Show unchanged controls', key='history_all')
                 shown = rows if show_all else [r for r in rows if r['change'] != 'Unchanged']
                 st.dataframe([{'Control': r['control_id'], 'Title': r['title'],
-                               'Before': repr(r['before']), 'After': repr(r['after']), 'Change': r['change']}
+                               'Before': _value(r['before']), 'After': _value(r['after']), 'Change': r['change']}
                               for r in shown] or [{'Change': 'No differences'}], hide_index=True)
     except (ValueError, OSError, sqlite3.Error) as exc:
         st.error('History: ' + md_escape(exc))
