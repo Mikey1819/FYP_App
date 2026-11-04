@@ -2,10 +2,11 @@
 
 Full run-by-run history up to 26 October 2026: [docs/archive/PROGRESS_LOG_2026-10-17_to_2026-10-26.md](docs/archive/PROGRESS_LOG_2026-10-17_to_2026-10-26.md). Current design: [ARCHITECTURE.md](docs/design/ARCHITECTURE.md).
 
-## Current status — 1 November 2026 (Asia/Kuala_Lumpur)
+## Current status — 5 November 2026 (Asia/Kuala_Lumpur)
 
 | Area | State |
 | --- | --- |
+| Reaching a server (D7) | **New, branch `lan-pairing`, not yet merged or run on a real server.** **Servers** page with saved servers. Pairing by one-time code ([LAN_PAIRING_DESIGN.md](docs/design/LAN_PAIRING_DESIGN.md)), Re-pair, a paired-laptops list with three Disconnect actions, and adding by address for the lab port forward. Client package: `Start.cmd` plus its own Python 3.15. 225 Python tests and the PowerShell suites pass on this laptop. **Next: the morning checklist below.** |
 | Controls | **32 assessed** (Stand-alone v2.0.0, one catalogue `full1`): Account 9, Local Security 5, Firewall 8, Audit 5, RDP 5. The report's minimum of 30 is met. The 16 new controls were source-reviewed from extracted PDF text; VM comparison is pending. Report ID errors are documented in [BENCHMARK_MAPPING.md](docs/design/BENCHMARK_MAPPING.md). |
 | Scanner Agent | LLM tool loop with its own WinRM channel. It also runs verification rescans. **Collector v5 ran on the real VM on 30 October:** all 32 controls were collected (state `ok`), including real values for the 5 audit controls. |
 | Analysis Agent | **LLM tool loop (new).** It reads the deterministic ranking, investigates up to 2 findings, flags up to 3 for attention and triages every gap, all with fact-checked codes. It can never change a score (D2). If it fails, the same deterministic ranking is used. |
@@ -13,6 +14,26 @@ Full run-by-run history up to 26 October 2026: [docs/archive/PROGRESS_LOG_2026-1
 | Remediation Agent | **LLM tool loop (new).** It prechecks the VM read-only, then executes (as a list, in its chosen order) or skips each *approved* request, and stops after an uncertain outcome. 21 library actions. **First real VM remediation on 30 October:** 1.2.2, 1.1.1 and 1.1.3 were approved, executed and verified compliant. |
 | Evaluation | **Latest: 16-run evaluation of the 1 November code** (real `qwen3:8b`, simulated VM, 8 scenarios × 2, `20261101_185014`, code frozen by SHA-256 before the run): **16/16 assessment rounds produced an accepted plan and both phases ran; 0 safety failures.** 8/16 plans left out the two lowest-ranked findings, which code deferred as `not_decided`. Assessment 221–409 s, remediation 110–168 s (NFR06). Judgement scenarios unchanged: no better than a fixed rule. Earlier: 20-run evaluation on `468b9a6` (`20261027_144751`), 20/20 completed. Real VM: one round with remediation on 30 October. |
 | Legacy | Removed. The upload/manual-exchange page went on 27 October (last commit with it: `81b9d52`); the shared-folder building blocks went on 29 October (last commit with them: `0ddd3ba`). Docs: [docs/archive/legacy/](docs/archive/legacy/). The staged non-AI pipeline (`hardening/agents.py`, `hardening/actions.py`) went on 1 November; `framework.py` is now only the run register (`AssessmentRuns`). On 3 November the preview-era modules and every manual "run it inside the VM" mode went too. On 4 November the staged catalogues (schemas 1-4) and the retired run states and stage table went (entries below). |
+
+## 5 November 2026 (night): pairing plan step 6, documents, and the checklist for the real server
+
+- **Updated:** README (run with `launch.py`, the Servers page, the client package, the servers database, layout, document list); the repository README; [VM_CONNECTION_SETUP.md](docs/vm/VM_CONNECTION_SETUP.md) (pairing with the helper, using a host-only or bridged adapter for pairing tests, new failure states `unsupported_target` and `pairing_not_confirmed`); [ARCHITECTURE.md](docs/design/ARCHITECTURE.md) (new section *Which server the agents reach*); [DATABASE_SCHEMA.md](docs/design/DATABASE_SCHEMA.md) (file 4, `servers`). The schema document also said "All 11 tables" are append-only, but there were 10. Now there are 10 audit tables plus the editable `servers`. [LAN_PAIRING_DESIGN.md](docs/design/LAN_PAIRING_DESIGN.md) is marked built, with its differences from the plan. AGENTS.md has **decision D7**, the client's servers as targets, and the Python 3.15 venv.
+- **Checks run:** every file changed on the branch was scanned for stray control characters after an escaping slip put a tab into one command line in DATABASE_SCHEMA.md (fixed). Python suite **225 passed**.
+
+### Morning checklist: what only the real server can show (about 15 minutes)
+
+Nothing here was run tonight; it needs the VM's console and the Administrator password.
+
+1. **Regression first:** start the dashboard (`.venv\Scripts\python.exe -s launch.py`). On **Servers → Add a server → By address**, add `127.0.0.1`, port `55985`. It should save `WIN-VFT30DUDRHQ` with the same UUID as before, and the Overview and History should still show the earlier scans. Run one agentic round.
+2. **Give the VM a Host-only adapter** (VirtualBox → Settings → Network → Adapter 2 → Host-only, laptop side `192.168.56.1`). Or use **Bridged** to test exactly what a client does.
+3. **In the VM:** copy the helper zip from the Servers page and check `Get-FileHash`. Run `Start-ServerAccess.cmd`, then **Start pairing**.
+4. **On the laptop:** Add a server → With a pairing code → Find server → log in. It should say "Re-paired WIN-VFT30DUDRHQ", because it is the same UUID, now at its host-only address.
+5. **Who can reach…** should list this laptop. Try **Disconnect this laptop** and confirm that connecting fails (`unreachable`). Then Start pairing again and **Re-pair**.
+6. **Wrong code:** type a wrong code 5 times. The helper window should say pairing stopped.
+7. **Revert changes** in the helper. Afterwards `Get-NetFirewallRule -Group 'FYP Server Access'` should find nothing, and WinRM should be as it was. The NAT forward keeps working for step 1.
+8. **Client package:** copy `dist\FYP-Hardening-20261105.zip` to another Windows PC without Python, unzip it and double-click `Start.cmd`.
+
+If something fails, the state and message on the page, and the helper window's log, say what to look at first.
 
 ## 5 November 2026 (night): pairing plan step 5, client package
 

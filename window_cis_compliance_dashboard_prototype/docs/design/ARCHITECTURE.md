@@ -1,6 +1,6 @@
 # Agentic framework architecture
 
-Current design as of 1 November 2026. It implements decisions D1–D6 in [AGENTS.md](../../AGENTS.md). Page: **Agentic hardening** (`app.py`). Code: [agentic.py](../../cis_compliance_dashboard_prototype/hardening/agentic.py).
+Current design as of 5 November 2026. It implements decisions D1–D7 in [AGENTS.md](../../AGENTS.md). Page: **Agentic hardening** (`app.py`). Code: [agentic.py](../../cis_compliance_dashboard_prototype/hardening/agentic.py).
 
 Every role is a bounded local-LLM tool loop (`qwen3:8b`). It chooses its own tool calls, observes the results and acts on them (D6). PowerShell scripts are the agents' tools. Deterministic code does three jobs: it computes compliance and risk (D2), it validates every call, and it enforces approval.
 
@@ -31,6 +31,17 @@ flowchart TD
       O2 -->|submit_review: finish · next_round · remediation_review| Admin
     end
 ```
+
+## Which server the agents reach (decision D7)
+
+Before any round, the administrator connects to one saved server on the **Servers** page ([servers_view.py](../../cis_compliance_dashboard_prototype/hardening/servers_view.py)). A server is added by **pairing**. The server access helper on the server shows a one-time code. The laptop finds the server by that code on the local network ([pairing_client.py](../../cis_compliance_dashboard_prototype/hardening/pairing_client.py); HMAC-signed messages in [pairing.py](../../cis_compliance_dashboard_prototype/hardening/pairing.py), so the code never travels). The helper then opens WinRM to paired laptops only. The server is saved only when four checks agree:
+
+1. the administrator login works;
+2. the machine behind it has the hostname and UUID that answered the code;
+3. it is a stand-alone Server 2022;
+4. the server's own pairing record, read over WinRM, holds this pairing for this laptop.
+
+The lab VM through its port forward is added by address instead. Every later connection, and every agent tool call, checks that the same hostname and UUID answer (`wrong_target` otherwise), so the agents can only act on the server the administrator saved. The models never see addresses, passwords or the pairing; nothing in the agent design below changed. Design and security limits: [LAN_PAIRING_DESIGN.md](LAN_PAIRING_DESIGN.md).
 
 ## Who decides what
 

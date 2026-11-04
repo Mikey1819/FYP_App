@@ -1,6 +1,12 @@
-# Plan: pairing the main program with a server by code (proposed)
+# Plan: pairing the main program with a server by code (built)
 
-> **Status, 5 November 2026: agreed in discussion, not built.** Nothing in the code has changed yet. When it is built, the delivered design moves into [ARCHITECTURE.md](ARCHITECTURE.md) and [VM_CONNECTION_SETUP.md](../vm/VM_CONNECTION_SETUP.md), and this page stays as the original proposal.
+> **Status, 5 November 2026 (night): built in six steps on branch `lan-pairing`, tested on this laptop, not yet on a real server.** The delivered design is summarised in [ARCHITECTURE.md](ARCHITECTURE.md#which-server-the-agents-reach-decision-d7). How to use it is in [VM_CONNECTION_SETUP.md](../vm/VM_CONNECTION_SETUP.md). What was built and checked, step by step, is in [PROGRESS.md](../../PROGRESS.md). This page stays as the proposal. Differences from it:
+>
+> - **Close all access** removes every paired laptop and both rules, but does **not** turn PowerShell Remoting off. Doing that over the same WinRM session would cut the session midway and could leave the revert half-done. The page says to click **Revert changes** on the server when the helper had turned Remoting on.
+> - **Adding by address stays**, as a second tab: for the lab VM's NAT port forward (which cannot carry the pairing broadcast) and for networks that block pairing. On the server, `-Action Allow -ScannerAddress` adds that laptop as a paired-laptop record, so it shows up in the list and can be disconnected like any other.
+> - **A lost answer is answered again** for 10 seconds after pairing (same question from the same address); nothing new is recorded.
+> - **Pairing without a window:** `-Action Pair` (for Server Core).
+> - **Packaging:** `Start.cmd` calls a small launcher (`launch.py`) instead of Streamlit directly. Streamlit asks for an e-mail address on first use when it opens the browser itself, which would block a client. The launcher runs it headless, picks a free port and opens the browser when the dashboard answers. The package ships the venv's Python 3.15 and libraries, pinned in `requirements-lock.txt`.
 
 ## Idea in one paragraph
 
