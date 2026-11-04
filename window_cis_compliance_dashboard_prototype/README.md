@@ -47,7 +47,7 @@ The agentic steps happen on **Agentic hardening** once a server is connected. Sw
 
 ## Checks
 
-From `cis_compliance_dashboard_prototype` (225 tests on 5 November 2026; fixtures, a simulated VM and UDP on this laptop's own address only, nothing touches a real server or the firewall):
+From `cis_compliance_dashboard_prototype` (230 tests on 5 November 2026; fixtures, a simulated VM and UDP on this laptop's own address only, nothing touches a real server or the firewall):
 
 ```powershell
 $env:TEMP = Join-Path (Get-Location) 'data\test_tmp'; $env:TMP = $env:TEMP
