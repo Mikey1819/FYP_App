@@ -17,7 +17,7 @@ def _label(run):
 def render_history(database_path: Path):
     st.title('History and configuration drift')
     st.caption('Every assessment is an immutable snapshot. Drift compares each assessment with the previous one of '
-               'the same VM and records every change once. Changes are compared only when the benchmark source, '
+               'the same server and records every change once. Changes are compared only when the benchmark source, '
                'profile, rule and collection method are identical.')
     try:
         imports = ImportedEvidenceStore(database_path)
@@ -28,7 +28,7 @@ def render_history(database_path: Path):
         if not targets:
             st.info('No assessments yet. Run an agentic round or a scan first.')
             return
-        target = st.selectbox('VM', list(targets), format_func=lambda t: f'{targets[t]} ({t.removeprefix("windows:")})',
+        target = st.selectbox('Server', list(targets), format_func=lambda t: f'{targets[t]} ({t.removeprefix("windows:")})',
                               key='history_target')
         runs = history.runs(target)
         # Rounds record drift as they scan; this fills in runs recorded before the page existed. Idempotent, and done

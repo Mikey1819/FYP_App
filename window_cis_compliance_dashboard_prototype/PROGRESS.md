@@ -14,6 +14,19 @@ Full run-by-run history up to 26 October 2026: [docs/archive/PROGRESS_LOG_2026-1
 | Evaluation | **Latest: 16-run evaluation of the 1 November code** (real `qwen3:8b`, simulated VM, 8 scenarios × 2, `20261101_185014`, code frozen by SHA-256 before the run): **16/16 assessment rounds produced an accepted plan and both phases ran; 0 safety failures.** 8/16 plans left out the two lowest-ranked findings, which code deferred as `not_decided`. Assessment 221–409 s, remediation 110–168 s (NFR06). Judgement scenarios unchanged: no better than a fixed rule. Earlier: 20-run evaluation on `468b9a6` (`20261027_144751`), 20/20 completed. Real VM: one round with remediation on 30 October. |
 | Legacy | Removed. The upload/manual-exchange page went on 27 October (last commit with it: `81b9d52`); the shared-folder building blocks went on 29 October (last commit with them: `0ddd3ba`). Docs: [docs/archive/legacy/](docs/archive/legacy/). The staged non-AI pipeline (`hardening/agents.py`, `hardening/actions.py`) went on 1 November; `framework.py` is now only the run register (`AssessmentRuns`). On 3 November the preview-era modules and every manual "run it inside the VM" mode went too. On 4 November the staged catalogues (schemas 1-4) and the retired run states and stage table went (entries below). |
 
+## 5 November 2026 (night): pairing plan step 1, saved servers, and a Python 3.15 venv
+
+Branch `lan-pairing`. Plan: [LAN_PAIRING_DESIGN.md](docs/design/LAN_PAIRING_DESIGN.md), step 1 of 6.
+
+- **Project venv rebuilt on Python 3.15.2.** The old venv ran on a Python 3.12 copied inside another tool's folder (`.cache\codex-runtimes`), which could disappear. The old venv is kept as `.venv-py312-backup` (ignored by git) until the new one has been used for a while. The new venv has Streamlit 1.66.1, pandas 3.1.1, pyarrow 26.0.1 and pypsrp 0.8.1.
+- **New Servers page ("My servers").** It lists saved servers with name, address, system, account, note and last connection. **Add a server** takes an address, port, account, password and an optional note. The program reads the server's hostname and machine UUID from the server itself (`probe_identity`) and saves them. **Connect** checks that the machine answering at the saved address still has that hostname and UUID. Removing a server keeps its assessment history.
+- **The connection form no longer asks for the hostname and UUID.** The Agentic hardening page shows the connected server with **Disconnect**, or points to the Servers page. The lab VM is added like any server: address `127.0.0.1`, port `55985`.
+- **Supported systems are checked before saving.** Anything other than a stand-alone Windows Server 2022 is refused with a plain reason (`unsupported_target`). The collector still checks again before reading.
+- **Wording:** "server" instead of "VM" on the pages and in the sidebar. The lab cross-check tool keeps the lab port forward as its own default.
+- New table `servers` in `preview_imports_servers.sqlite3`. **No password is stored.** The pairing columns exist but stay empty until step 4. `show_database.py servers` lists the saved servers.
+- **Checks run:** Python suite **195 passed** on the new 3.15 venv (18 new: probe, registry, Servers page). PowerShell collector, cross-check, runner and helper tests **pass**. Not yet tried against the real VM.
+- **Next:** step 2, the pairing messages.
+
 ## 5 November 2026: full Impact and Privilege scales
 
 - **P = 3 category added.** `PRIVILEGE_SCOPE` in `risk.py` gains `standard_user_or_service` (Table 4.14c score 3: "may affect access to important user or system functions").
