@@ -54,4 +54,7 @@ if (Test-SameTypedValue 5.0 5) { throw 'Floating-point values must not match int
 if ((Get-FailureText "Requested registry access`r`nis not allowed.") -cne 'Requested registry access is not allowed.') { throw 'Failure text must be one line.' }
 if ((Get-FailureText ('x' * 300)).Length -ne 200) { throw 'Failure text must be bounded.' }
 if ((Get-FailureText '  ') -cne 'no detail') { throw 'An empty failure needs a placeholder.' }
+# Every control character (NUL to 0x1F, not just line breaks) becomes one space.
+$controls = 'Access' + [char]0 + [char]31 + 'denied' + [char]9 + 'end'
+if ((Get-FailureText $controls) -cne 'Access denied end') { throw 'Control characters must not reach the agent or the page.' }
 Write-Host 'PASS: remediation runner library, identity, value, type, expiry and extra-field guards (fixtures only).'
