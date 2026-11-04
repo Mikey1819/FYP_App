@@ -25,7 +25,8 @@ def _report(output, had_errors, errors, target):
         report = json.loads(output[0])
         pairings = report['pairings']
         if (type(report) is not dict or set(report) != {'hostname', 'machine_uuid', 'pairings', 'helper_enabled_remoting'}
-                or type(report['helper_enabled_remoting']) is not bool or type(pairings) is not list):
+                or type(report['helper_enabled_remoting']) is not bool or type(pairings) is not list
+                or type(report['hostname']) is not str or len(report['hostname']) > 63):
             raise ValueError
         machine_uuid = str(UUID(report['machine_uuid']))
         checked = []

@@ -542,6 +542,7 @@ function New-HelperForm {
         $script:Timer.Stop(); Stop-PairingListener $script:Listener; $script:Listener = $null; $script:CodeLabel.Text = ''
     }
     $script:Timer.Add_Tick({
+        if (-not $script:Listener) { $script:Timer.Stop(); return }  # Pairing was stopped; nothing to listen to.
         try {
             & $script:Log @(Receive-PairPackets $script:Listener)
             $left = [int]($script:Listener.session.expires - [DateTimeOffset]::UtcNow).TotalSeconds

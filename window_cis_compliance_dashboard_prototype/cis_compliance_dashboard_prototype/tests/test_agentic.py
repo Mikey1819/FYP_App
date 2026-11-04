@@ -1258,6 +1258,39 @@ class ApprovedActionExecutorTests(AgenticTestCase):
         with self.assertRaises(ValueError):
             ApprovedActionExecutor(self.store, hardening.scanner).execute(proposal)
 
+    def test_a_receipt_is_judged_even_when_the_error_stream_is_not_empty(self):
+        """A receipt proves a write may have happened; an extra error-stream entry must never turn it into
+        "Refused before execution" (which would hide a change on the server)."""
+        vm = FakeVm()
+        hardening, _, proposal = self.proposed(vm)
+        self.store.decide(proposal, approve=True, operator='admin01')
+        original = vm.run
+
+        def noisy(script, parameters=None):
+            output, had_errors, errors = original(script, parameters)
+            if script == RUNNER.read_text(encoding='utf-8-sig') and output:
+                return output, True, ['A warning written to the error stream after the write.']
+            return output, had_errors, errors
+        vm.run = noisy
+        verdict = ApprovedActionExecutor(self.store, hardening.scanner).execute(proposal)
+        self.assertEqual(verdict, 'Verified compliant')
+        self.assertEqual(vm.writes, ['1.2.2'])
+
+    def test_stray_output_with_errors_is_uncertain_not_refused(self):
+        vm = FakeVm()
+        hardening, _, proposal = self.proposed(vm)
+        self.store.decide(proposal, approve=True, operator='admin01')
+        original = vm.run
+
+        def garbled(script, parameters=None):
+            if script == RUNNER.read_text(encoding='utf-8-sig'):
+                original(script, parameters)  # The write happened...
+                return ['not a receipt'], True, ['...and something else went wrong.']
+            return original(script, parameters)
+        vm.run = garbled
+        verdict = ApprovedActionExecutor(self.store, hardening.scanner).execute(proposal)
+        self.assertTrue(verdict.startswith('Unresolved: receipt failed validation'), verdict)
+
 
 class RiskEngineTests(AgenticTestCase):
     def record(self, vm):
