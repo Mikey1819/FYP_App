@@ -1,7 +1,7 @@
 """Strict, offline imported-evidence validation; no OS commands, model or writes.
 
 These files are user-supplied observations, not authenticated remote attestation.
-Risk scoring is deferred until real context/baselines have been reviewed.
+Risk is scored separately, by the deterministic engine in risk.py.
 """
 
 from dataclasses import dataclass
@@ -13,10 +13,60 @@ from uuid import UUID
 
 from .domain import Evidence, EvidenceMode, assess
 from .server2022_catalogue import (
-    BENCHMARK_SHA256, CATALOGUE, CATALOGUE_ID, COLLECTOR_ID, PROFILE, SOURCES,
+    BENCHMARK_SHA256, PROFILE, evidence_contract,
 )
 
 MAX_BYTES = 65536
+CONTEXT_SOURCES = {
+    "firewall_public_enabled": "Get-NetFirewallProfile:ActiveStore/Public/Enabled",
+    "nla_required": "Win32_TSGeneralSetting:RDP-tcp/UserAuthenticationRequired",
+    "nla_policy_source": "Win32_TSGeneralSetting:RDP-tcp/PolicySourceUserAuthenticationRequired",
+}
+# Schema 5 also reads the effective state behind the other firewall policy checks, so a policy that is
+# merely not configured is not mistaken for disabled protection (risk Exposure only; never compliance).
+CONTEXT_SOURCES_V5 = {
+    **CONTEXT_SOURCES,
+    "firewall_private_enabled": "Get-NetFirewallProfile:ActiveStore/Private/Enabled",
+    "firewall_private_inbound_blocked": "Get-NetFirewallProfile:ActiveStore/Private/DefaultInboundAction",
+    "firewall_public_inbound_blocked": "Get-NetFirewallProfile:ActiveStore/Public/DefaultInboundAction",
+}
+BOOLEAN_CONTEXT = {"firewall_public_enabled", "firewall_private_enabled", "firewall_private_inbound_blocked",
+                   "firewall_public_inbound_blocked"}
+
+
+def effective_context(raw):
+    """Read validated supplementary observations; legacy files have none."""
+    data = json.loads(raw.decode("utf-8-sig"))
+    return data.get("effective_context", [])
+
+
+def _validate_context(rows, started, completed, version=4):
+    sources = CONTEXT_SOURCES_V5 if version >= 5 else CONTEXT_SOURCES
+    if type(rows) is not list or len(rows) != len(sources):
+        raise ValueError(f"All {len(sources)} effective context observations are required")
+    seen = set()
+    for row in rows:
+        _object(row, "control_id source state value error collected_at", "effective context")
+        key = row["control_id"]
+        if type(key) is not str or key not in sources or key in seen:
+            raise ValueError("Unknown or duplicate effective context")
+        seen.add(key)
+        if row["source"] != sources[key] or not started <= _time(row["collected_at"]) <= completed:
+            raise ValueError("Invalid effective context provenance")
+        state, value, error = row["state"], row["value"], row["error"]
+        if state == "ok":
+            scalar = bool if key in BOOLEAN_CONTEXT else int
+            allowed = (0, 1, 2) if key == "nla_policy_source" else (0, 1)
+            if error is not None or type(value) is not scalar or value not in allowed:
+                raise ValueError("Invalid effective context value")
+        elif state == "missing":
+            if value is not None or error is not None:
+                raise ValueError("Invalid missing effective context")
+        elif state == "error":
+            if value is not None or error not in ("collection_failed", "invalid_value", "timeout"):
+                raise ValueError("Invalid effective context error")
+        else:
+            raise ValueError("Invalid effective context state")
 
 
 def _object(value, keys, label):
@@ -62,6 +112,11 @@ def _no_duplicates(pairs):
     return result
 
 
+def encode(data):
+    """Canonical JSON bytes, so equal records always hash and compare equal."""
+    return json.dumps(data, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+
+
 @dataclass(frozen=True)
 class ImportedAssessment:
     results: tuple
@@ -72,7 +127,11 @@ class ImportedAssessment:
 
 
 def load_evidence(raw: bytes, *, expected_hostname: str, expected_machine_uuid: str,
-                  now: datetime | None = None) -> ImportedAssessment:
+                  now: datetime | None = None, mode: EvidenceMode = EvidenceMode.IMPORTED) -> ImportedAssessment:
+    """`mode` records how the export arrived: Imported (file) or Live (the Scanner Agent's own WinRM channel).
+    The export itself is the same collector contract either way, so its own `evidence_mode` field stays Imported."""
+    if mode not in (EvidenceMode.IMPORTED, EvidenceMode.LIVE):
+        raise ValueError("Evidence mode must be Imported or Live")
     if type(raw) is not bytes or not 0 < len(raw) <= MAX_BYTES:
         raise ValueError("Evidence file must contain at most 64 KiB")
     try:
@@ -80,11 +139,16 @@ def load_evidence(raw: bytes, *, expected_hostname: str, expected_machine_uuid: 
                           parse_constant=lambda _: (_ for _ in ()).throw(ValueError("Non-finite JSON")))
     except (UnicodeError, json.JSONDecodeError, RecursionError) as exc:
         raise ValueError("Invalid UTF-8 JSON evidence") from exc
-    _object(data, "schema_version collector_id catalogue_id benchmark_sha256 profile "
-            "evidence_mode started_at completed_at target observations", "export")
-    if type(data["schema_version"]) is not int or data["schema_version"] != 1:
+    if type(data) is not dict:
+        raise ValueError("Evidence must be an object")
+    version = data.get("schema_version")
+    if type(version) is not int or version not in (1, 2, 3, 4, 5):
         raise ValueError("Unsupported evidence schema")
-    for key, expected in (("collector_id", COLLECTOR_ID), ("catalogue_id", CATALOGUE_ID),
+    _object(data, "schema_version collector_id catalogue_id benchmark_sha256 profile "
+            "evidence_mode started_at completed_at target observations" +
+            (" effective_context" if version >= 2 else ""), "export")
+    collector, catalogue_id, catalogue, sources = evidence_contract(version)
+    for key, expected in (("collector_id", collector), ("catalogue_id", catalogue_id),
                           ("benchmark_sha256", BENCHMARK_SHA256), ("profile", PROFILE),
                           ("evidence_mode", EvidenceMode.IMPORTED.value)):
         if data[key] != expected:
@@ -115,16 +179,18 @@ def load_evidence(raw: bytes, *, expected_hostname: str, expected_machine_uuid: 
         raise ValueError("Invalid collection interval")
     if completed > now + timedelta(minutes=5):
         raise ValueError("Evidence timestamp is in the future; check the VM clock")
+    if version >= 2:
+        _validate_context(data["effective_context"], started, completed, version)
     observations = data["observations"]
-    if type(observations) is not list or len(observations) != len(CATALOGUE):
-        raise ValueError("Export must include all five selected controls, including failures")
+    if type(observations) is not list or len(observations) != len(catalogue):
+        raise ValueError(f"Export must include all {len(catalogue)} selected controls, including failures")
     by_id = {}
     for row in observations:
         _object(row, "control_id source state value error collected_at", "observation")
         identifier = _string(row["control_id"], "control ID", 64)
-        if identifier not in SOURCES or identifier in by_id:
+        if identifier not in sources or identifier in by_id:
             raise ValueError("Unknown or duplicate control")
-        if row["source"] != SOURCES[identifier]:
+        if row["source"] != sources[identifier]:
             raise ValueError("Evidence source does not match the registered collector")
         timestamp = _time(row["collected_at"])
         if not started <= timestamp <= completed:
@@ -136,7 +202,9 @@ def load_evidence(raw: bytes, *, expected_hostname: str, expected_machine_uuid: 
             expected_type = bool if identifier == "2.3.1.1" else int
             if type(value) is not expected_type:
                 raise ValueError("Evidence has incorrect scalar type")
-            if expected_type is int and not 0 <= value <= 4294967295:
+            # Preserve the INF never-expire/admin-unlock sentinel as evidence.
+            minimum = -1 if identifier in ("1.1.2", "1.2.1") else 0
+            if expected_type is int and not minimum <= value <= 4294967295:
                 raise ValueError("Evidence integer outside collector range")
         elif state == "missing":
             if value is not None or error is not None:
@@ -151,10 +219,10 @@ def load_evidence(raw: bytes, *, expected_hostname: str, expected_machine_uuid: 
     digest = hashlib.sha256(raw).hexdigest()
     assessment_id, target_id = "import-" + digest, "windows:" + uuid
     results = []
-    for control in CATALOGUE:
+    for control in catalogue:
         row = by_id[control.control_id]
         error = f"Collector reported {row['error']}" if row["state"] == "error" else None
         evidence = Evidence(target_id, control.control_id, row["value"], _time(row["collected_at"]),
-                            EvidenceMode.IMPORTED, row["source"], error)
+                            mode, row["source"], error)
         results.append(assess(assessment_id, control, evidence))
     return ImportedAssessment(tuple(results), target_id, hostname, digest, completed)
