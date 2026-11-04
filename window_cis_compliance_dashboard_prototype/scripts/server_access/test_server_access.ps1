@@ -65,10 +65,103 @@ Assert-True (@($codes | Where-Object { $_ -cmatch '^\d{9}$' }).Count -eq 20) 'co
 Assert-True (@($codes | Sort-Object -Unique).Count -gt 15) 'codes are random'
 Assert-True ((New-Nonce) -cmatch '^[0-9a-f]{32}$') 'nonce is 128 bits of hex'
 
+# Pairing decisions (no network, no firewall): accept once, count wrong codes, stop, expire, answer a lost reply again.
+function New-Find([string]$Code, [string]$Nonce = (New-Nonce), [string]$Name = 'DESKTOP-KHOO') {
+    $mac = Get-PairingMac $Code @('find', 1, $Nonce, $Name)
+    return ,[Text.Encoding]::UTF8.GetBytes((@{ v = 1; type = 'find'; nonce_l = $Nonce; laptop_name = $Name; mac = $mac } | ConvertTo-Json -Compress))
+}
+$t0 = [DateTimeOffset]::Parse('2026-11-05T12:00:00+00:00')
+$s = New-PairingSession $t0
+$right = New-Find $s.code
+$wrongCode = if ($s.code -eq '000000000') { '111111111' } else { '000000000' }
+Assert-True ((Get-PairDecision $s ([Text.Encoding]::UTF8.GetBytes('hello')) '192.168.1.23' $t0).action -ceq 'ignore') 'noise is ignored, not counted'
+Assert-True ((Get-PairDecision $s $right '127.0.0.1' $t0).action -ceq 'ignore') 'loopback can never pair'
+Assert-True ((Get-PairDecision $s (New-Find $wrongCode) '192.168.1.99' $t0).action -ceq 'wrong') 'a wrong code is counted'
+Assert-True ($s.wrong['192.168.1.99'] -eq 1 -and -not $s.done) 'one wrong code does not stop pairing'
+$ok = Get-PairDecision $s $right '192.168.1.23' $t0.AddMinutes(1)
+Assert-True ($ok.action -ceq 'accept' -and $ok.find.laptop_name -ceq 'DESKTOP-KHOO' -and $s.result -ceq 'paired') 'the right code pairs'
+Assert-True ((Get-PairDecision $s $right '192.168.1.23' $t0.AddMinutes(1).AddSeconds(3)).action -ceq 'repeat') 'a repeated question gets the answer again'
+Assert-True ((Get-PairDecision $s $right '192.168.1.50' $t0.AddMinutes(1).AddSeconds(3)).action -ceq 'ignore') 'not from another address'
+Assert-True ((Get-PairDecision $s (New-Find $s.code) '192.168.1.23' $t0.AddMinutes(1).AddSeconds(3)).action -ceq 'ignore') 'the code works once'
+Assert-True ((Get-PairDecision $s $right '192.168.1.23' $t0.AddMinutes(1).AddSeconds(30)).action -ceq 'ignore') 'repeats end after a few seconds'
+
+$s = New-PairingSession $t0
+foreach ($i in 1..4) { Assert-True ((Get-PairDecision $s (New-Find $wrongCode) '192.168.1.99' $t0).action -ceq 'wrong') "wrong code $i" }
+$stop = Get-PairDecision $s (New-Find $wrongCode) '192.168.1.99' $t0
+Assert-True ($stop.action -ceq 'stop' -and $s.result -ceq 'too_many_wrong') 'five wrong codes from one address stop pairing'
+Assert-True ((Get-PairDecision $s (New-Find $s.code) '192.168.1.23' $t0).action -ceq 'ignore') 'after stopping, even the right code is refused'
+$s = New-PairingSession $t0
+foreach ($i in 1..19) { $null = Get-PairDecision $s (New-Find $wrongCode) ("10.0.0.$i") $t0 }
+Assert-True ((Get-PairDecision $s (New-Find $wrongCode) '10.0.0.20' $t0).action -ceq 'stop') 'twenty wrong codes in total stop pairing'
+$s = New-PairingSession $t0
+Assert-True ((Get-PairDecision $s (New-Find $s.code) '192.168.1.23' $t0.AddMinutes(10)).action -ceq 'stop' -and $s.result -ceq 'expired') 'the code expires after 10 minutes'
+
+# Pairing records: one per laptop, replaced when the same laptop pairs again, at most 10, removable by id.
+$list = Add-PairingEntry @() '192.168.1.23' 'DESKTOP-KHOO' ('a' * 32) $t0
+$list = Add-PairingEntry $list '192.168.1.40' 'OTHER-PC' ('b' * 32) $t0
+$list = Add-PairingEntry $list '192.168.0.105' 'desktop-khoo' ('c' * 32) $t0
+Assert-True (($list | ForEach-Object { $_.laptop_address }) -join ',' -ceq '192.168.1.40,192.168.0.105') 'a laptop pairing again keeps one record, at its new address'
+$list = Remove-PairingEntry $list ('b' * 32)
+Assert-True ($list.Count -eq 1 -and $list[0].pairing_id -ceq ('c' * 32)) 'a pairing is removed by its id'
+Assert-True ((Remove-PairingEntry @() ('b' * 32)).Count -eq 0) 'removing from no pairings is fine'
+$rejected = $false; try { $null = Add-PairingEntry @() '127.0.0.1' 'X' ('d' * 32) $t0 } catch { $rejected = $true }
+Assert-True $rejected 'loopback cannot be recorded'
+$full = @(); foreach ($i in 1..10) { $full = Add-PairingEntry $full "10.0.0.$i" "PC$i" ((New-Nonce)) $t0 }
+$rejected = $false; try { $null = Add-PairingEntry $full '10.0.0.11' 'PC11' ((New-Nonce)) $t0 } catch { $rejected = $true }
+Assert-True $rejected 'at most 10 laptops'
+$roundTrip = ([ordered]@{ schema_version = 1; pairings = @($list) } | ConvertTo-Json -Depth 4) | ConvertFrom-Json
+Assert-True (@($roundTrip.pairings).Count -eq 1 -and $roundTrip.pairings[0].laptop_name -ceq 'desktop-khoo') 'one record survives the JSON round trip as a list'
+
+# The listener's network handling, over real UDP on this computer's own address (not loopback, which can never
+# pair). Saving records and reading the identity are replaced for the test: no firewall rule, no file is written.
+$own = @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object {
+    $_.IPAddress -notlike '127.*' -and $_.IPAddress -notlike '169.254.*' -and (Test-ScannerAddress $_.IPAddress) } |
+    ForEach-Object { $_.IPAddress }) | Select-Object -First 1
+$script:Saved = @()
+function Save-Pairings([object[]]$Pairings) { $script:Saved = @($Pairings | Where-Object { $null -ne $_ }) }
+function Get-Pairings { $script:Saved }
+function Get-ServerIdentity { [pscustomobject]@{ hostname = 'WIN-TEST'; machine_uuid = 'e5d10741-f200-4292-a099-e6be76032f4e' } }
+
+# What the dashboard reads over WinRM: pairings is always a JSON list, also with none or one laptop.
+foreach ($n in 0, 1, 2) {
+    $script:Saved = @(); foreach ($i in 1..$n) { if ($n) { $script:Saved = Add-PairingEntry $script:Saved "10.0.0.$i" "PC$i" ((New-Nonce)) $t0 } }
+    $json = Get-RemoteReport | ConvertTo-Json -Depth 4 -Compress
+    Assert-True ($json -cmatch ('"pairings":\[' + $(if ($n) { '\{' } else { '\]' }))) "report lists $n pairing(s) as a JSON list"
+    Assert-True ($json -cmatch '"machine_uuid":"e5d10741-f200-4292-a099-e6be76032f4e"') 'report carries the identity'
+}
+$script:Saved = @()
+
+if ($own) {
+    $server = New-Object Net.Sockets.UdpClient (New-Object Net.IPEndPoint([Net.IPAddress]::Parse($own), 0))
+    $laptop = New-Object Net.Sockets.UdpClient (New-Object Net.IPEndPoint([Net.IPAddress]::Parse($own), 0))
+    try {
+        $laptop.Client.ReceiveTimeout = 3000
+        $listener = [pscustomobject]@{ udp = $server; session = New-PairingSession ([DateTimeOffset]::UtcNow); done = @() }
+        $nonce = New-Nonce
+        $question = New-Find $listener.session.code $nonce
+        [void]$laptop.Send($question, $question.Length, $server.Client.LocalEndPoint)
+        Start-Sleep -Milliseconds 200
+        $lines = @(Receive-PairPackets $listener)
+        Assert-True ($lines.Count -eq 1 -and $lines[0] -like "Paired with DESKTOP-KHOO ($own)*") 'the listener pairs over UDP'
+        $from = New-Object Net.IPEndPoint([Net.IPAddress]::Any, 0)
+        $answer = [Text.Encoding]::UTF8.GetString($laptop.Receive([ref]$from)) | ConvertFrom-Json
+        $expected = Get-PairingMac $listener.session.code @('found', 1, $nonce, $answer.nonce_s, 'WIN-TEST',
+            'e5d10741-f200-4292-a099-e6be76032f4e', 5985, $answer.pairing_id)
+        Assert-True ($answer.mac -ceq $expected -and $answer.nonce_l -ceq $nonce) 'the laptop receives a signed answer to its question'
+        Assert-True ($script:Saved.Count -eq 1 -and $script:Saved[0].laptop_address -ceq $own -and
+                     $script:Saved[0].pairing_id -ceq $answer.pairing_id) 'the laptop is recorded at the address it came from'
+        [void]$laptop.Send($question, $question.Length, $server.Client.LocalEndPoint)  # Its answer was "lost".
+        Start-Sleep -Milliseconds 200
+        $null = Receive-PairPackets $listener
+        $again = [Text.Encoding]::UTF8.GetString($laptop.Receive([ref]$from)) | ConvertFrom-Json
+        Assert-True ($again.pairing_id -ceq $answer.pairing_id -and $script:Saved.Count -eq 1) 'a repeated question gets the same answer, no new record'
+    } finally { $server.Close(); $laptop.Close() }
+} else { Write-Host 'SKIP: no IPv4 network address for the UDP listener check.' }
+
 if (([Environment]::OSVersion.Platform -eq 'Win32NT')) {
     $form = New-HelperForm
     $buttons = @($form.Controls | Where-Object { $_ -is [Windows.Forms.Button] } | ForEach-Object { $_.Text })
-    Assert-True (($buttons -join '|') -ceq 'Check status|Allow scanning|Revert changes') 'window has the three buttons'
+    Assert-True (($buttons -join '|') -ceq 'Check status|Start pairing|Revert changes') 'window has the three buttons'
     Assert-True (@($form.Controls | Where-Object { $_.Tag -is [scriptblock] }).Count -eq 3) 'each button carries its action'
     $form.Dispose()
 }

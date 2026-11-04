@@ -21,11 +21,19 @@ class ServerAccessBundleTests(unittest.TestCase):
     def test_bundle_is_identical_on_every_build(self):
         self.assertEqual(helper_bundle(), helper_bundle())
 
-    def test_helper_opens_only_one_address_and_never_weakens_winrm(self):
+    def test_helper_opens_winrm_only_to_paired_laptops_and_never_weakens_it(self):
         text = (SCRIPTS / FILES[0]).read_text(encoding='utf-8')
-        self.assertIn('-RemoteAddress $Address', text)
+        # The WinRM rule lists only paired laptops' addresses; only the temporary pairing rule uses the local subnet.
+        self.assertIn('-Protocol TCP -LocalPort $WinRmPort -RemoteAddress $Addresses', text)
+        self.assertIn('-Protocol UDP -LocalPort $PairingPort `\n            -RemoteAddress LocalSubnet', text)
+        self.assertEqual(text.count('LocalSubnet'), 1)
         for widening in ('-RemoteAddress Any', 'AllowUnencrypted -Value', 'Auth\\Basic -Value', 'TrustedHosts'):
             self.assertNotIn(widening, text)
+
+    def test_helper_files_are_plain_ascii(self):
+        # Windows PowerShell 5.1 reads a script without a byte-order mark in the local code page.
+        for name in FILES:
+            self.assertTrue((SCRIPTS / name).read_bytes().isascii(), name)
 
 
 if __name__ == '__main__':
