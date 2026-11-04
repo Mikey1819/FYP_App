@@ -534,12 +534,14 @@ function New-HelperForm {
         Size = New-Object Drawing.Size(720, 370); Anchor = 'Top, Bottom, Left, Right'; Font = New-Object Drawing.Font('Consolas', 9.5)
     }
     $script:Listener = $null
+    $script:PairButton = $null
     # Script scope: these are used by the button and timer handlers after this function has returned.
     $script:Timer = New-Object Windows.Forms.Timer -Property @{ Interval = 250 }
     $script:Log = { param([string[]]$Lines) if ($Lines.Count) {
         $script:LogBox.AppendText((@("[$(Get-Date -Format 'HH:mm:ss')]") + $Lines + '') -join "`r`n") } }
     $script:StopPairing = {
         $script:Timer.Stop(); Stop-PairingListener $script:Listener; $script:Listener = $null; $script:CodeLabel.Text = ''
+        if ($script:PairButton) { $script:PairButton.Text = 'Start pairing' }  # The same button starts it again.
     }
     $script:Timer.Add_Tick({
         if (-not $script:Listener) { $script:Timer.Stop(); return }  # Pairing was stopped; nothing to listen to.
@@ -559,6 +561,7 @@ function New-HelperForm {
             if ($script:Listener) { & $script:StopPairing; return @('Pairing stopped. The code no longer works.') }
             $script:Listener = Start-PairingListener
             $script:Timer.Start()
+            $script:PairButton.Text = 'Stop pairing'  # While a code is shown, this button withdraws it.
             return @($script:Listener.done) + "Waiting for a laptop on UDP $PairingPort (local network only). The code works once, for $CodeMinutes minutes." } },
         @{ Text = 'Revert changes'; X = 328; Run = {
             $answer = [Windows.Forms.MessageBox]::Show('Undo everything this helper changed on this server, and disconnect every paired laptop?',
@@ -577,6 +580,7 @@ function New-HelperForm {
             finally { $owner.Cursor = [Windows.Forms.Cursors]::Default }
             & $script:Log $lines
         })
+        if ($spec.Text -eq 'Start pairing') { $script:PairButton = $button }
         $form.Controls.Add($button)
     }
     $form.Add_Shown({ & $script:Log @(Get-StatusLines) })
