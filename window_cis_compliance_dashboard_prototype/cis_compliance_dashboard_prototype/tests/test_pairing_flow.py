@@ -86,6 +86,13 @@ class FindServerTests(unittest.TestCase):
             find_server(wrong, sources=[OWN], targets=[(OWN, server.port)], timeout=0.9, attempts=3)
         self.assertEqual(server.questions, 3)
 
+    def test_only_local_network_addresses_are_used(self):
+        infos = [(socket.AF_INET, 0, 0, '', (a, 0)) for a in
+                 ('192.168.0.202', '26.72.5.99', '192.168.56.1', '10.1.2.3', '172.20.0.5', '169.254.1.1', '127.0.0.1',
+                  '8.8.8.8', '100.64.0.1')]
+        with patch('socket.getaddrinfo', return_value=infos), patch('socket.socket.connect', side_effect=OSError):
+            self.assertEqual(local_addresses(), ['192.168.0.202', '192.168.56.1', '10.1.2.3', '172.20.0.5'])
+
     def test_no_network_address_is_explained(self):
         with patch('hardening.pairing_client.local_addresses', return_value=[]):
             with self.assertRaisesRegex(PairingError, 'no network address'):
