@@ -135,6 +135,13 @@ class ServerRegistry:
     def connected(self, machine_uuid, *, now=None):
         self._update(machine_uuid, 'last_connected_at=?', (_now(now),))
 
+    def paired(self, machine_uuid, pairing_id, laptop_address, *, now=None):
+        """Remember this laptop's pairing with the server, so the paired-laptops list can mark "this laptop"."""
+        if type(pairing_id) is not str or len(pairing_id) != 32 or any(c not in '0123456789abcdef' for c in pairing_id):
+            raise ValueError('Invalid pairing id')
+        laptop_address = _text(laptop_address, 'Laptop address', 45)
+        self._update(machine_uuid, 'pairing_id=?, laptop_address=?, paired_at=?', (pairing_id, laptop_address, _now(now)))
+
     def set_note(self, machine_uuid, note):
         self._update(machine_uuid, 'note=?', (_text(note, 'Note', MAX_NOTE),))
 
