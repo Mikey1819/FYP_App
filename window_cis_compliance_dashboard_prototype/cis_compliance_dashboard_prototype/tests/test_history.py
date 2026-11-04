@@ -10,7 +10,7 @@ from hardening.risk import analyse
 from hardening.evidence_import import encode
 from hardening.winrm_channel import LiveScanner
 from test_agentic import LAB_STATE, AgenticTestCase, FakeVm
-from test_local_security_controls import local_security_fixture
+from evidence_fixture import evidence_fixture
 from test_winrm_channel import MACHINE_UUID, target
 
 
@@ -49,17 +49,16 @@ class HistoryTests(AgenticTestCase):
         changes = {r['control_id']: r['change'] for r in hardening.history.drift_records('windows:' + MACHINE_UUID)}
         self.assertEqual(changes, {'1.2.2': 'Improvement', '1.2.1': 'Unknown -> Compliant', '1.2.4': 'Unknown -> Compliant'})
 
-    def test_history_spans_catalogue_versions_and_feeds_the_drift_factor(self):
-        doc = local_security_fixture()  # Schema 4 (16 controls), as in the first real VM scan.
+    def test_file_and_channel_scans_share_history_and_feed_the_drift_factor(self):
+        doc = evidence_fixture()  # An evidence file given to the command-line client: everything compliant.
         stamp = datetime.now(timezone.utc).isoformat()
         doc['started_at'] = doc['completed_at'] = stamp
         for row in doc['observations'] + doc['effective_context']:
             row['collected_at'] = stamp
         old = self.runtime.start(encode(doc), expected_hostname='FIXTURE-SERVER', expected_machine_uuid=MACHINE_UUID)
-        new = self.scan()  # Schema 5 (32 controls) with lockout threshold regressed to 0.
+        new = self.scan()  # A channel scan with the lockout threshold regressed to 0.
         changes = {c['control_id']: c['change'] for c in HistoryService(self.runtime, self.store).compare(old.run_id, new)}
         self.assertEqual(changes['1.2.2'], 'Regression')
-        self.assertEqual(changes['17.1.1'], 'New in this catalogue')
         older = self.runtime.imports.get(old.evidence_sha256)
         current = self.runtime.imports.get(self.runtime.get(new).evidence_sha256)
         # An uploaded file (Imported) and a channel scan (Live) use the same collector, so they stay comparable.

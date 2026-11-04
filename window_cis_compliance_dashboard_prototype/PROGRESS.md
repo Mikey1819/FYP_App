@@ -6,13 +6,49 @@ Full run-by-run history up to 26 October 2026: [docs/archive/PROGRESS_LOG_2026-1
 
 | Area | State |
 | --- | --- |
-| Controls | **32 assessed** (Stand-alone v2.0.0, schema 5 `full1`): Account 9, Local Security 5, Firewall 8, Audit 5, RDP 5. The report's minimum of 30 is met. The 16 new controls were source-reviewed from extracted PDF text; VM comparison is pending. Report ID errors are documented in [BENCHMARK_MAPPING.md](docs/design/BENCHMARK_MAPPING.md). |
+| Controls | **32 assessed** (Stand-alone v2.0.0, one catalogue `full1`): Account 9, Local Security 5, Firewall 8, Audit 5, RDP 5. The report's minimum of 30 is met. The 16 new controls were source-reviewed from extracted PDF text; VM comparison is pending. Report ID errors are documented in [BENCHMARK_MAPPING.md](docs/design/BENCHMARK_MAPPING.md). |
 | Scanner Agent | LLM tool loop with its own WinRM channel. It also runs verification rescans. **Collector v5 ran on the real VM on 30 October:** all 32 controls were collected (state `ok`), including real values for the 5 audit controls. |
 | Analysis Agent | **LLM tool loop (new).** It reads the deterministic ranking, investigates up to 2 findings, flags up to 3 for attention and triages every gap, all with fact-checked codes. It can never change a score (D2). If it fails, the same deterministic ranking is used. |
 | Orchestrator | Assessment phase: delegates Scanner and Analysis, may send the Scanner back once on a rescan request, then makes one `submit_plan` (one decision per finding; since 1 November a finding it leaves out is deferred by code as `not_decided`, while fixes stay strictly checked). **Remediation phase (new):** delegates the Remediation Agent and a verification rescan, then decides `finish` / `next_round` / `remediation_review`. |
 | Remediation Agent | **LLM tool loop (new).** It prechecks the VM read-only, then executes (as a list, in its chosen order) or skips each *approved* request, and stops after an uncertain outcome. 21 library actions. **First real VM remediation on 30 October:** 1.2.2, 1.1.1 and 1.1.3 were approved, executed and verified compliant. |
 | Evaluation | **Latest: 16-run evaluation of the 1 November code** (real `qwen3:8b`, simulated VM, 8 scenarios × 2, `20261101_185014`, code frozen by SHA-256 before the run): **16/16 assessment rounds produced an accepted plan and both phases ran; 0 safety failures.** 8/16 plans left out the two lowest-ranked findings, which code deferred as `not_decided`. Assessment 221–409 s, remediation 110–168 s (NFR06). Judgement scenarios unchanged: no better than a fixed rule. Earlier: 20-run evaluation on `468b9a6` (`20261027_144751`), 20/20 completed. Real VM: one round with remediation on 30 October. |
-| Legacy | Removed. The upload/manual-exchange page went on 27 October (last commit with it: `81b9d52`); the shared-folder building blocks went on 29 October (last commit with them: `0ddd3ba`). Docs: [docs/archive/legacy/](docs/archive/legacy/). The staged non-AI pipeline (`hardening/agents.py`, `hardening/actions.py`) went on 1 November; `framework.py` is now only the run register (`AssessmentRuns`). On 3 November the preview-era modules and every manual "run it inside the VM" mode went too (entry below). |
+| Legacy | Removed. The upload/manual-exchange page went on 27 October (last commit with it: `81b9d52`); the shared-folder building blocks went on 29 October (last commit with them: `0ddd3ba`). Docs: [docs/archive/legacy/](docs/archive/legacy/). The staged non-AI pipeline (`hardening/agents.py`, `hardening/actions.py`) went on 1 November; `framework.py` is now only the run register (`AssessmentRuns`). On 3 November the preview-era modules and every manual "run it inside the VM" mode went too. On 4 November the staged catalogues (schemas 1-4) and the retired run states and stage table went (entries below). |
+
+## 5 November 2026: full Impact and Privilege scales
+
+- **P = 3 category added.** `PRIVILEGE_SCOPE` in `risk.py` gains `standard_user_or_service` (Table 4.14c score 3: "may affect access to important user or system functions").
+- **I = 1 category added.** `CONSEQUENCE` gains `limited_consequence` (Table 4.14a score 1: "limited security consequences, narrowly scoped security function").
+- Both tables now cover the full 1-5 scale for controls added later. No current control uses either new category, so no score changes.
+- **Checks run:** Python suite **177 passed**. `RISK_DERIVATION.md` regenerated: one new row each in the Impact and Privilege tables; all per-control scores unchanged.
+- **Next:** unchanged.
+
+## 4 November 2026: one catalogue, no staged leftovers
+
+- **One catalogue.** `server2022_catalogue.py` now holds a single `CATALOGUE` of 32 controls in benchmark order and one `SOURCES` table. The four batch catalogues (5, 12, 16 and 32 controls, schemas 1-5) and `evidence_contract()` are gone. Rules, pages and sources are unchanged (checked field by field against the old 32-control catalogue). The evidence identifiers stay `schema_version` 5, `server2022-readonly-v5` and `full1`, because every saved scan carries them.
+- **Evidence loader** accepts only that format. The second, shorter list of effective-context sources (schemas 2-4) and an unused `effective_context()` helper went.
+- **Run register.** `framework.py` lost `LEGACY_STATES`, the `framework_tasks` table and the `state` column (a run is complete when created). The real database was migrated after a backup (`data/backup_before_cleanup_2026-11-04/`): the 16 runs kept their IDs, evidence links, times and row order; the 15 retired stage rows were dropped. A database file in any other layout is refused, never reset.
+- **History.** The "New in this catalogue" case went; two scans always hold the same 32 controls. Stored scans are read back in catalogue order, so old and new scans list controls the same way.
+- **Tests** share one fixture (`tests/evidence_fixture.py`, all 32 compliant) instead of four fixtures built batch on batch. `test_expanded_controls.py` → `test_account_policy_controls.py`, `test_full_controls.py` → `test_catalogue.py`. Tests that only checked old schemas or old run states went; a test for refusing an unknown database layout and one for catalogue/source order were added.
+- **Checks run:**
+  - Python suite **177 passed**. PowerShell runner, collector and cross-check tests **pass**.
+  - All 32 stored real-VM scans re-validated from their raw bytes with the new loader: identical controls, rules, values and statuses for 32/32. All 16 runs open, rank and appear in history.
+  - `RISK_DERIVATION.md` regenerated: same scores, rows now in benchmark order.
+- **Next:** unchanged.
+
+## 4 November 2026: read-only database viewer
+
+- **New tool `scripts/tools/show_database.py`.** It shows what the three SQLite files hold, in readable form:
+  - the files, tables and row counts;
+  - scans with their compliance summary, and one scan control by control;
+  - agentic rounds; one round's plan, deferrals, decisions, verdicts and (`--log`) every agent step;
+  - proposals, drift records, and the raw rows of any table with JSON decoded.
+  
+  Files are opened with SQLite `mode=ro`, so it cannot change or create anything. It does not use the store classes, because their constructors run `CREATE TABLE`.
+- **Checks run:**
+  - `tests/test_show_database.py` (2 new): every view over a simulated round (approve, reject, execute, verify), checked byte for byte that no database file changed, and that missing files are not created.
+  - Python suite **180 passed**.
+  - The tool also ran against the real databases: 32 scans, 18 rounds, 71 proposals.
+- **Next:** unchanged.
 
 ## 3 November 2026: file-era records removed, deep test, real VM check
 

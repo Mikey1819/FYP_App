@@ -15,6 +15,7 @@ The report formula is `R = 6I + 5E + 4P + 3L + 2D` (Section 4.6.2.4). No factor 
 | `misuse_easier` | 3 | unauthorised activity or information disclosure made easier: affects an important security function (4.14a score 3) |
 | `minor_reduction` | 2 | password ageing only: minor reduction in security posture (4.14a score 2) |
 | `detection_only` | 2 | logging or audit visibility only: minor reduction in security posture (4.14a score 2) |
+| `limited_consequence` | 1 | narrowly scoped security function: limited security consequences (4.14a score 1) |
 
 **Privilege Impact (P).** Taken from the accounts, groups or rights the setting governs.
 
@@ -23,6 +24,7 @@ The report formula is `R = 6I + 5E + 4P + 3L + 2D` (Section 4.6.2.4). No factor 
 | `admin_identity_or_stored_credentials` | 5 | exposes the administrator identity or stored credentials: directly affects highly privileged access (4.14c score 5) |
 | `all_local_accounts` | 4 | applies to every local account including the built-in Administrator: may contribute to administrative access (4.14c score 4) |
 | `remote_admin_logon` | 4 | protects remote administrative access to the server: may contribute to administrative access (4.14c score 4) |
+| `standard_user_or_service` | 3 | affects standard user rights or an important system service without reaching administrative access: may affect access to important user or system functions (4.14c score 3) |
 | `guest_or_anonymous` | 2 | affects only Guest or anonymous access: limited user-level functions (4.14c score 2) |
 | `logging_only` | 1 | governs logging only: minimal implications for privileges (4.14c score 1) |
 
@@ -43,18 +45,16 @@ The report formula is `R = 6I + 5E + 4P + 3L + 2D` (Section 4.6.2.4). No factor 
 
 | Control | Title | Consequence (I) | Privilege scope (P) | L | Surface (base E) | Base R with D=1 |
 | --- | --- | --- | --- | --- | --- | --- |
-| 1.1.4 | Minimum password length | `protection_weakened` = 4 | `all_local_accounts` = 4 | 4 | `network_logon` = 3 | 69 |
-| 1.2.2 | Account lockout threshold | `protection_weakened` = 4 | `all_local_accounts` = 4 | 4 | `network_logon` = 3 | 69 |
-| 2.3.1.1 | Guest account enabled | `misuse_easier` = 3 | `guest_or_anonymous` = 2 | 4 | `local_account` = 3 | 55 |
-| 9.3.1 | Public firewall policy EnableFirewall | `critical_protection_lost` = 5 | `remote_admin_logon` = 4 | 4 | `network_boundary` = 4 | 80 |
-| 18.10.57.3.9.4 | NLA policy UserAuthentication | `protection_weakened` = 4 | `remote_admin_logon` = 4 | 4 | `remote_desktop` = 4 | 74 |
 | 1.1.1 | Enforce password history | `misuse_easier` = 3 | `all_local_accounts` = 4 | 4 | `network_logon` = 3 | 63 |
 | 1.1.2 | Maximum password age (days) | `minor_reduction` = 2 | `all_local_accounts` = 4 | 4 | `network_logon` = 3 | 57 |
 | 1.1.3 | Minimum password age (days) | `minor_reduction` = 2 | `all_local_accounts` = 4 | 4 | `network_logon` = 3 | 57 |
+| 1.1.4 | Minimum password length | `protection_weakened` = 4 | `all_local_accounts` = 4 | 4 | `network_logon` = 3 | 69 |
 | 1.1.5 | Password complexity enabled | `protection_weakened` = 4 | `all_local_accounts` = 4 | 4 | `network_logon` = 3 | 69 |
 | 1.1.7 | Reversible password encryption enabled | `critical_protection_lost` = 5 | `admin_identity_or_stored_credentials` = 5 | 4 | `local_secret` = 2 | 74 |
 | 1.2.1 | Account lockout duration (minutes) | `misuse_easier` = 3 | `all_local_accounts` = 4 | 4 | `network_logon` = 3 | 63 |
+| 1.2.2 | Account lockout threshold | `protection_weakened` = 4 | `all_local_accounts` = 4 | 4 | `network_logon` = 3 | 69 |
 | 1.2.4 | Reset lockout counter after (minutes) | `misuse_easier` = 3 | `all_local_accounts` = 4 | 4 | `network_logon` = 3 | 63 |
+| 2.3.1.1 | Guest account enabled | `misuse_easier` = 3 | `guest_or_anonymous` = 2 | 4 | `local_account` = 3 | 55 |
 | 2.3.1.2 | Restrict blank local passwords to console logon | `protection_weakened` = 4 | `all_local_accounts` = 4 | 4 | `network_logon` = 3 | 69 |
 | 2.3.10.1 | Anonymous SID/name translation enabled | `misuse_easier` = 3 | `admin_identity_or_stored_credentials` = 5 | 4 | `network_anonymous` = 4 | 72 |
 | 2.3.10.2 | Block anonymous enumeration of SAM accounts | `misuse_easier` = 3 | `guest_or_anonymous` = 2 | 4 | `network_anonymous` = 4 | 60 |
@@ -63,6 +63,7 @@ The report formula is `R = 6I + 5E + 4P + 3L + 2D` (Section 4.6.2.4). No factor 
 | 9.2.2 | Private firewall policy inbound connections: Block | `protection_weakened` = 4 | `remote_admin_logon` = 4 | 4 | `network_boundary` = 4 | 74 |
 | 9.2.6 | Private firewall policy log dropped packets | `detection_only` = 2 | `logging_only` = 1 | 4 | `detection` = 2 | 40 |
 | 9.2.7 | Private firewall policy log successful connections | `detection_only` = 2 | `logging_only` = 1 | 4 | `detection` = 2 | 40 |
+| 9.3.1 | Public firewall policy EnableFirewall | `critical_protection_lost` = 5 | `remote_admin_logon` = 4 | 4 | `network_boundary` = 4 | 80 |
 | 9.3.2 | Public firewall policy inbound connections: Block | `protection_weakened` = 4 | `remote_admin_logon` = 4 | 4 | `network_boundary` = 4 | 74 |
 | 9.3.6 | Public firewall policy log dropped packets | `detection_only` = 2 | `logging_only` = 1 | 4 | `detection` = 2 | 40 |
 | 9.3.7 | Public firewall policy log successful connections | `detection_only` = 2 | `logging_only` = 1 | 4 | `detection` = 2 | 40 |
@@ -74,6 +75,7 @@ The report formula is `R = 6I + 5E + 4P + 3L + 2D` (Section 4.6.2.4). No factor 
 | 18.10.57.2.2 | Do not allow RDP passwords to be saved | `misuse_easier` = 3 | `admin_identity_or_stored_credentials` = 5 | 4 | `local_secret` = 2 | 62 |
 | 18.10.57.3.9.1 | Always prompt for password upon RDP connection | `misuse_easier` = 3 | `remote_admin_logon` = 4 | 4 | `remote_desktop` = 4 | 68 |
 | 18.10.57.3.9.3 | RDP security layer: SSL | `protection_weakened` = 4 | `remote_admin_logon` = 4 | 4 | `remote_desktop` = 4 | 74 |
+| 18.10.57.3.9.4 | NLA policy UserAuthentication | `protection_weakened` = 4 | `remote_admin_logon` = 4 | 4 | `remote_desktop` = 4 | 74 |
 | 18.10.57.3.9.5 | RDP client connection encryption level: High | `misuse_easier` = 3 | `remote_admin_logon` = 4 | 4 | `remote_desktop` = 4 | 68 |
 
 ## Limitations to state in the report

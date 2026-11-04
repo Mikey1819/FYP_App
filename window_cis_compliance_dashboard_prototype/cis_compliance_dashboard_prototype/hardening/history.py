@@ -13,8 +13,6 @@ from .domain import change_kind, summarise
 
 def describe_change(prior, current):
     """Change kind for one control; status transitions involving Unknown/Error are named explicitly."""
-    if prior is None:
-        return 'New in this catalogue'
     change = change_kind(prior, current)
     if change == 'No comparable evidence' and prior.status != current.status:
         return prior.status.value + ' -> ' + current.status.value
@@ -55,10 +53,10 @@ class HistoryService:
         earlier = {r.control.control_id: r for r in self._record(previous_run_id).assessment.results}
         rows = []
         for current in self._record(current_run_id).assessment.results:
-            prior = earlier.get(current.control.control_id)
+            prior = earlier[current.control.control_id]  # Every stored scan holds the whole catalogue.
             rows.append(dict(control_id=current.control.control_id, title=current.control.title,
-                             before=prior.evidence.value if prior else None, after=current.evidence.value,
-                             status_before=prior.status.value if prior else None, status_after=current.status.value,
+                             before=prior.evidence.value, after=current.evidence.value,
+                             status_before=prior.status.value, status_after=current.status.value,
                              change=describe_change(prior, current)))
         return rows
 
@@ -91,7 +89,7 @@ class HistoryService:
         if previous is None:
             return []
         changes = [c for c in self.compare(previous, run_id)
-                   if c['change'] not in ('Unchanged', 'No comparable evidence', 'New in this catalogue')]
+                   if c['change'] not in ('Unchanged', 'No comparable evidence')]
         target = self.runtime.get(run_id).target_id
         detected = datetime.now(timezone.utc).isoformat()
         with self.store._connection() as db:
