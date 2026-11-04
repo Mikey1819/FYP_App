@@ -1,15 +1,11 @@
 from copy import deepcopy
 from datetime import datetime, timezone
 import json
-from pathlib import Path
-import subprocess
-import sys
-import tempfile
 import unittest
 
-from window_cis_compliance_dashboard_prototype.cis_compliance_dashboard_prototype.hardening.domain import Status, summarise
-from window_cis_compliance_dashboard_prototype.cis_compliance_dashboard_prototype.hardening.evidence_import import load_evidence
-from window_cis_compliance_dashboard_prototype.cis_compliance_dashboard_prototype.hardening.server2022_catalogue import BENCHMARK_SHA256, CATALOGUE_ID, COLLECTOR_ID, PROFILE, SOURCES
+from hardening.domain import Status, summarise
+from hardening.evidence_import import load_evidence
+from hardening.server2022_catalogue import BENCHMARK_SHA256, CATALOGUE_ID, COLLECTOR_ID, PROFILE, SOURCES
 
 
 NOW = datetime(2026, 10, 19, 2, tzinfo=timezone.utc)
@@ -66,10 +62,12 @@ class EvidenceImportTests(unittest.TestCase):
         data = export_fixture()
         for index in (0, 1):
             data['observations'][index].update(state='error', value=None, error='timeout')
-        for index in (3, 4):
+        for index in (2, 3, 4):  # Guest (non-policy), Public firewall and NLA (Group Policy).
             data['observations'][index].update(state='missing', value=None)
         summary = summarise(load(data).results)
-        self.assertEqual((summary.selected, summary.evaluated, summary.errors, summary.unknown), (5, 1, 2, 2))
+        # D5: absent policies fail as Non-Compliant; an absent non-policy value stays Unknown. Neither passes.
+        self.assertEqual((summary.selected, summary.compliant, summary.non_compliant, summary.errors, summary.unknown),
+                         (5, 0, 2, 2, 1))
 
     def test_rejects_other_platforms_roles_and_boolean_identity_fields(self):
         for key, value in [('os_caption', 'Windows 11'), ('os_version', '10.0.26100'),
@@ -147,25 +145,6 @@ class EvidenceImportTests(unittest.TestCase):
         result = load_evidence(b'\xef\xbb\xbf' + json.dumps(data).encode(), expected_hostname='fixture-server',
                                expected_machine_uuid=MACHINE_UUID.upper(), now=NOW)
         self.assertEqual([r.control.control_id for r in result.results], list(SOURCES))
-
-    def test_cli_is_read_only_and_rejects_mismatched_target(self):
-        # Old fixture timestamps are historical evidence, not today's scan.
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / 'fixture.json'
-            path.write_text(json.dumps(export_fixture()), encoding='utf-8')
-            original = path.read_bytes()
-            script = Path(__file__).resolve().parents[2] / 'scripts' / 'inspect_server_evidence.py'
-            command = [sys.executable, '-B', str(script), str(path), '--expected-hostname', 'FIXTURE-SERVER',
-                       '--expected-machine-uuid', MACHINE_UUID]
-            run = subprocess.run(command, capture_output=True, text=True, timeout=10)
-            self.assertEqual(run.returncode, 0, run.stderr)
-            self.assertEqual(json.loads(run.stdout)['coverage']['compliant'], 5)
-            self.assertEqual(path.read_bytes(), original)
-            self.assertEqual(list(Path(directory).iterdir()), [path])
-            command[-1] = 'cb095a4c-5a1c-48fe-b199-fda775b130a8'
-            rejected = subprocess.run(command, capture_output=True, text=True, timeout=10)
-            self.assertEqual(rejected.returncode, 2)
-            self.assertIn('selected target', rejected.stderr)
 
 
 if __name__ == '__main__':

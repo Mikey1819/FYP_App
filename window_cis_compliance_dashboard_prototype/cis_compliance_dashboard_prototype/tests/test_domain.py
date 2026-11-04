@@ -2,11 +2,11 @@ import unittest
 from dataclasses import FrozenInstanceError, replace
 from datetime import timedelta
 
-from window_cis_compliance_dashboard_prototype.cis_compliance_dashboard_prototype.hardening.demo import CATALOGUE, CURRENT_RESULTS, PREVIOUS_RESULTS, RISKS
-from window_cis_compliance_dashboard_prototype.cis_compliance_dashboard_prototype.hardening.domain import (
+from hardening.domain import (
     EvidenceMode, Operator, RiskFactors, Rule, Status, assess, change_kind,
     comparable, drift_factor, prioritise, risk_level, summarise,
 )
+from synthetic_fixtures import CATALOGUE, CURRENT_RESULTS, PREVIOUS_RESULTS, RISKS
 
 
 def with_value(result, value, **changes):
@@ -98,7 +98,8 @@ class HistoryAndRiskTests(unittest.TestCase):
         alternatives = (
             replace(previous, evidence=replace(previous.evidence, target_id="OTHER")),
             replace(previous, evidence=replace(previous.evidence, mode=EvidenceMode.LIVE)),
-            replace(previous, control=replace(previous.control, catalogue_version="other")),
+            replace(previous, control=replace(previous.control, source_reference="Other benchmark edition")),
+            replace(previous, evidence=replace(previous.evidence, source="different collection method")),
             replace(previous, control=replace(previous.control, profile="other")),
             replace(previous, control=replace(previous.control, rule=Rule(Operator.AT_LEAST, 1))),
             replace(previous, evidence=replace(previous.evidence, collected_at=current.evidence.collected_at + timedelta(seconds=1))),
@@ -109,6 +110,12 @@ class HistoryAndRiskTests(unittest.TestCase):
             with self.subTest(previous=other):
                 self.assertFalse(comparable(other, current))
                 self.assertEqual(drift_factor(current, other), 1)
+
+    def test_catalogue_scope_label_alone_does_not_break_history(self):
+        # e.g. the 16-control and 32-control catalogues measure 1.1.4 identically.
+        previous = replace(PREVIOUS_RESULTS[0], control=replace(PREVIOUS_RESULTS[0].control, catalogue_version="other-scope",
+                                                                 title="Reworded title"))
+        self.assertTrue(comparable(previous, CURRENT_RESULTS[0]))
 
     def test_unavailable_and_compliant_results_have_no_risk(self):
         for result in (CURRENT_RESULTS[2], with_value(CURRENT_RESULTS[0], None),

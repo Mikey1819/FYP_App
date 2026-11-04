@@ -2,3 +2,5 @@
 **/__pycache__/
 *.pyc
 cis_compliance_dashboard_prototype/data/
+**/cis_compliance_dashboard_prototype/data/
+**/.venv/

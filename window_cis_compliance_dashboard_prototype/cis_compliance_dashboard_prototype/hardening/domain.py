@@ -24,6 +24,7 @@ class Operator(str, Enum):
     EQUALS = "equals"
     AT_LEAST = "at_least"
     BETWEEN = "between"
+    HAS_FLAGS = "has_flags"  # Audit policy: 1=Success, 2=Failure; "include Success" passes 1 and 3.
 
 
 Scalar = bool | int | str
@@ -41,6 +42,8 @@ class Rule:
             valid = type(self.expected) in (bool, int, str)
         elif self.operator == Operator.AT_LEAST:
             valid = type(self.expected) is int
+        elif self.operator == Operator.HAS_FLAGS:
+            valid = type(self.expected) is int and self.expected > 0
         else:
             valid = (
                 type(self.expected) is tuple
@@ -60,6 +63,8 @@ class Rule:
             return observed == self.expected
         if self.operator == Operator.AT_LEAST:
             return observed >= self.expected
+        if self.operator == Operator.HAS_FLAGS:
+            return observed & self.expected == self.expected
         lower, upper = self.expected
         return lower <= observed <= upper
 
@@ -74,6 +79,9 @@ class Control:
     profile: str
     source_reference: str
     source_verified: bool = False
+    # Decision D5: a Group Policy setting that is absent ("Not configured") fails the CIS
+    # recommendation, which requires it to be set. Other absent values stay Unknown.
+    not_configured_fails: bool = False
 
     def __post_init__(self) -> None:
         if any(not value.strip() for value in (
@@ -118,6 +126,8 @@ def assess(assessment_id: str, control: Control, evidence: Evidence) -> Assessme
         raise ValueError("Evidence belongs to a different control")
     if evidence.error is not None:
         status, detail = Status.ERROR, evidence.error or "Collection failed"
+    elif evidence.value is None and control.not_configured_fails:
+        status, detail = Status.NON_COMPLIANT, "Not configured: the benchmark requires this policy to be set"
     elif evidence.value is None:
         status, detail = Status.UNKNOWN, "No configuration value was collected"
     else:
@@ -164,13 +174,26 @@ def summarise(results: tuple[AssessmentResult, ...]) -> AssessmentSummary:
 VALID_STATUSES = (Status.COMPLIANT, Status.NON_COMPLIANT)
 
 
+def same_measurement(a: Control, b: Control) -> bool:
+    """Same control, benchmark citation (edition, section, pages), profile and rule.
+
+    The catalogue version labels a catalogue's scope (5, 12, 16 or 32 controls); a control
+    whose source, profile and rule are unchanged is the same measurement in every scope.
+    """
+    return (a.control_id == b.control_id and a.rule == b.rule and a.profile == b.profile
+            and a.source_reference == b.source_reference)
+
+
 def comparable(previous: AssessmentResult | None, current: AssessmentResult) -> bool:
     return bool(
         previous is not None
         and previous.assessment_id != current.assessment_id
-        and previous.control == current.control
+        and same_measurement(previous.control, current.control)
+        and previous.evidence.source == current.evidence.source
         and previous.evidence.target_id == current.evidence.target_id
-        and previous.evidence.mode == current.evidence.mode
+        # Imported and Live evidence come from the same collector and contract; only the transport differs.
+        and (previous.evidence.mode == current.evidence.mode
+             or {previous.evidence.mode, current.evidence.mode} == {EvidenceMode.IMPORTED, EvidenceMode.LIVE})
         and previous.evidence.collected_at < current.evidence.collected_at
         and previous.status in VALID_STATUSES
         and current.status in VALID_STATUSES
