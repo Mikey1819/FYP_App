@@ -27,12 +27,21 @@ class RoundReportTests(AgenticTestCase):
         page = round_report(hardening, rounds, rounds[0])
         self.assertNotIn('Not run yet.', page)
         self.assertRegex(page, r'<td>1\.2\.2</td><td>Account lockout threshold: 5</td><td>0 → 5</td>'
-                               r'<td>\d+</td><td>[^<]+</td><td>Approved</td><td>admin01, [0-9-]+ [0-9:]+ UTC</td>'
-                               r'<td>Verified compliant</td>')
+                               r'<td>\d+</td><td>[^<]+</td><td>Approved</td><td>admin01, [0-9-]+ [0-9:]+ MYT</td>'
+                               r'<td>—</td><td>Verified compliant</td>')  # No comment was given.
         self.assertIn('<td>Rejected</td>', page)
         self.assertIn('Configuration changes found by the verification rescan', page)
         self.assertIn('<td>Improvement</td>', page)
         self.assertIn('Remediation Agent', page)
+
+
+class MalaysiaTimeTests(unittest.TestCase):
+    def test_stored_utc_is_shown_in_malaysia_time(self):
+        from datetime import datetime
+        from hardening.ui import FULL, myt
+        self.assertEqual(myt('2026-10-30T12:47:11.575967+00:00', FULL), '2026-10-30 20:47:11')
+        self.assertEqual(myt('2026-10-30T20:30:00+00:00'), '31 Oct 04:30')  # Crosses midnight.
+        self.assertEqual(myt(datetime(2026, 10, 30, 3, 40), FULL), '2026-10-30 11:40:00')  # Naive means UTC.
 
 
 if __name__ == '__main__':

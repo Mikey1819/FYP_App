@@ -1,7 +1,7 @@
 """Strict, offline imported-evidence validation; no OS commands, model or writes.
 
 These files are user-supplied observations, not authenticated remote attestation.
-Risk scoring is deferred until real context/baselines have been reviewed.
+Risk is scored separately, by the deterministic engine in risk.py.
 """
 
 from dataclasses import dataclass

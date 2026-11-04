@@ -1,16 +1,34 @@
-"""Immutable imported snapshots and original bytes, isolated from demo workflows."""
+"""Immutable evidence snapshots (live scans and imported files) and their original bytes."""
 
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
 import sqlite3
 
-from .domain import EvidenceMode, assess, summarise
+from .domain import AssessmentResult, Control, Evidence, EvidenceMode, Operator, Rule, Status, assess, summarise
 from .evidence_import import ImportedAssessment, load_evidence
-from .storage import _decode_result, _encode_result
+
+
+def _encode_result(result):
+    data = asdict(result)
+    data["evidence"]["collected_at"] = result.evidence.collected_at.isoformat()
+    return data
+
+
+def _decode_result(data):
+    control = dict(data["control"])
+    rule = control["rule"]
+    operator = Operator(rule["operator"])
+    expected = tuple(rule["expected"]) if operator == Operator.BETWEEN else rule["expected"]
+    control["rule"] = Rule(operator, expected)
+    evidence = dict(data["evidence"])
+    evidence["collected_at"] = datetime.fromisoformat(evidence["collected_at"])
+    evidence["mode"] = EvidenceMode(evidence["mode"])
+    return AssessmentResult(data["assessment_id"], Control(**control), Evidence(**evidence),
+                            Status(data["status"]), data["detail"])
 
 
 @dataclass(frozen=True)
@@ -21,7 +39,7 @@ class SavedImport:
 
 
 class ImportedEvidenceStore:
-    """A separate database: imports cannot acquire simulated approvals or scores."""
+    """Evidence only: approvals, rounds and drift live in the agentic database."""
 
     def __init__(self, path: str | Path):
         self.path = Path(path)

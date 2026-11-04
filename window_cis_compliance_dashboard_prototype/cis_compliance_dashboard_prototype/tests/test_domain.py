@@ -2,11 +2,11 @@ import unittest
 from dataclasses import FrozenInstanceError, replace
 from datetime import timedelta
 
-from hardening.demo import CATALOGUE, CURRENT_RESULTS, PREVIOUS_RESULTS, RISKS
 from hardening.domain import (
     EvidenceMode, Operator, RiskFactors, Rule, Status, assess, change_kind,
     comparable, drift_factor, prioritise, risk_level, summarise,
 )
+from synthetic_fixtures import CATALOGUE, CURRENT_RESULTS, PREVIOUS_RESULTS, RISKS
 
 
 def with_value(result, value, **changes):

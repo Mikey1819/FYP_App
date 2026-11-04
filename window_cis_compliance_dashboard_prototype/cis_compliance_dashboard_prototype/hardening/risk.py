@@ -89,7 +89,7 @@ FIREWALL_SENSITIVE = {'network_logon', 'network_anonymous', 'remote_desktop', 'l
 
 def _attrs(consequence, scope, surface, rationale):
     # Every selected control is "Level 1 - Member Server" and "(Automated)" in the Stand-alone v2.0.0
-    # entry (see BENCHMARK_MAPPING.md); 1.2.3 (Manual) is not in the catalogue.
+    # entry (see docs/design/BENCHMARK_MAPPING.md); 1.2.3 (Manual) is not in the catalogue.
     return ControlAttributes(consequence, scope, 1, True, surface, rationale)
 
 

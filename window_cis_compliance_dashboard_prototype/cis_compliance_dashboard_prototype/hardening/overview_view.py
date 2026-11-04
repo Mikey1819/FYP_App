@@ -10,20 +10,22 @@ import streamlit as st
 from .action_library import actions_for
 from .agentic import verdict_kind
 from .domain import summarise
-from .framework import AssessmentOrchestrator
+from .framework import AssessmentRuns
 from .history import HistoryService
 from .import_storage import ImportedEvidenceStore
 from .remediation import RemediationStore
 from .risk import analyse
-from .ui import local_time
+from .ui import md_escape, myt
 
 LEVELS = ('Critical', 'High', 'Moderate', 'Low')
-# Ordinal one-hue ramp, darker = more severe; validated light and dark (dataviz validator, --ordinal).
-SEVERITY_RAMP = {'light': ('#0d366b', '#1c5cab', '#3987e5', '#86b6ef'),
-                 'dark': ('#184f95', '#256abf', '#3987e5', '#86b6ef')}
+# Ordinal warm ramp for the cartoon theme, darker = more severe. Bars carry a black outline, so the palest
+# level stays visible on the cream page.
+SEVERITY_RAMP = {'light': ('#9D0208', '#D62828', '#F77F00', '#FCBF49'),
+                 'dark': ('#D62828', '#F77F00', '#FCBF49', '#FFE08A')}
+OUTLINE = '#1C1C1C'
 # Secondary text ink per theme: labels never wear the series colour.
 TEXT_INK = {'light': '#52514e', 'dark': '#c3c2b7'}
-METER_BLUE = '#3987e5'  # Single-hue meter fill, readable on both surfaces.
+METER_INK = '#1C1C1C'  # Meter fill: the theme's black line colour.
 STATUS = {'awaiting_approval': 'Awaiting approval', 'no_fix_proposed': 'No fix proposed',
           'no_findings': 'No findings', 'collection_failed': 'Scan failed', 'scan_not_handed_off': 'Scan not validated',
           'incomplete': 'Stopped early', 'finish': 'Finished', 'next_round': 'Next round recommended',
@@ -47,7 +49,7 @@ def risk_distribution_chart(ranked):
         y=alt.Y('Level:N', sort=list(LEVELS), title=None, axis=alt.Axis(labelFontSize=13, ticks=False, domain=False)),
         x=alt.X('Findings:Q', title='Non-compliant findings', axis=alt.Axis(tickMinStep=1, grid=True)),
         tooltip=[alt.Tooltip('Level:N'), alt.Tooltip('Findings:Q')])
-    bars = base.mark_bar(cornerRadiusEnd=4, size=22).encode(
+    bars = base.mark_bar(cornerRadiusEnd=6, size=22, stroke=OUTLINE, strokeWidth=1.5).encode(
         color=alt.Color('Level:N', scale=scale, legend=None))
     # Count labels in text ink beside each bar: identity never rests on colour alone.
     labels = base.mark_text(align='left', dx=6, fontSize=13, color=TEXT_INK[_theme()]).encode(text='Findings:Q')
@@ -89,14 +91,14 @@ def activity_row(r, store):
         kinds = Counter(verdict_kind(v['verdict']) for v in r['verdicts'] if v['control_id'])
         result = ', '.join(f'{n} {kind}' for kind, n in kinds.items()) or 'Nothing executed'
         activity = 'Remediation and verification'
-    return {'Time': local_time(r['created_at']), 'Activity': activity, 'Result': result, 'Status': status}
+    return {'Time': myt(r['created_at']), 'Activity': activity, 'Result': result, 'Status': status}
 
 
 def render_overview(database_path: Path):
     st.title('Overview')
     try:
         imports = ImportedEvidenceStore(database_path)
-        runtime = AssessmentOrchestrator(imports)
+        runtime = AssessmentRuns(imports)
         store = RemediationStore(database_path.with_name(database_path.stem + '_agentic.sqlite3'), imports)
         history = HistoryService(runtime, store)
         targets = history.targets()
@@ -110,7 +112,7 @@ def render_overview(database_path: Path):
         record = imports.get(runtime.get(latest['run_id']).evidence_sha256)
         results = record.assessment.results
         ranked = analyse(record, history.previous_records(latest['run_id']))
-        st.caption(f"{targets[target]} · latest assessment {local_time(latest['created_at'])} · "
+        st.caption(f"{targets[target]} · latest assessment {myt(latest['created_at'])} · "
                    f"{latest['controls']} controls · CIS Windows Server 2022 Stand-alone v2.0.0, Level 1")
 
         previous = runs[-2] if len(runs) > 1 else None
@@ -148,7 +150,7 @@ def render_overview(database_path: Path):
             st.subheader('Compliance by security area')
             st.dataframe(area_table(results), hide_index=True, column_config={
                 'Compliance': st.column_config.ProgressColumn('Compliance', min_value=0, max_value=100, format='%d%%',
-                                                              color=METER_BLUE, width='small',
+                                                              color=METER_INK, width='small',
                                                               help='Compliant among evaluated controls'),
                 'Compliant': st.column_config.NumberColumn('✓', width='small', help='Compliant'),
                 'Non-compliant': st.column_config.NumberColumn('✗', width='small', help='Non-compliant'),
@@ -172,4 +174,4 @@ def render_overview(database_path: Path):
         else:
             st.caption('No agentic rounds yet for this VM.')
     except (ValueError, OSError, sqlite3.Error) as exc:
-        st.error('Overview: ' + str(exc))
+        st.error('Overview: ' + md_escape(exc))

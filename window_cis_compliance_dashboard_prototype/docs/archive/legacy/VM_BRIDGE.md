@@ -1,6 +1,6 @@
 # VM assessment and approved action exchange
 
-> **Archived 26 October 2026.** Describes the legacy **Evidence upload** page (manual file exchange and the earlier agent team), which was removed on 27 October 2026; its code is in commit `81b9d52` and earlier. Current design: [ARCHITECTURE.md](../../../ARCHITECTURE.md); current status: [PROGRESS.md](../../../PROGRESS.md).
+> **Archived 26 October 2026.** Describes the legacy **Evidence upload** page (manual file exchange and the earlier agent team), which was removed on 27 October 2026; its code is in commit `81b9d52` and earlier. Current design: [ARCHITECTURE.md](../../design/ARCHITECTURE.md); current status: [PROGRESS.md](../../../PROGRESS.md).
 
 Streamlit and local Qwen3 run on the laptop; the collector and guarded executor run inside the lab VM. Files cross the existing VirtualBox shared folder. This is a manual file-mediated connection, not a background remote service or a one-click remote scan.
 
@@ -12,7 +12,7 @@ Collector v2 retains the five policy observations and adds effective Public fire
 
 The normal app shows real imported evidence only, with local AI tool investigation and a labelled deterministic proposal alternative. The model cannot approve or execute. Numeric risk scoring for imports remains unavailable. The old synthetic app is preserved as a separate legacy entry point and is absent from normal navigation.
 
-Historical test (not current state): the first live VM receipt was verified: request `a7f9ce7846df45dd936bd474d3703cb1` changed minimum password length from 0 to 14. Collector v2 also confirms effective firewall enabled and NLA required. The user later reset the minimum back to 0 for repeated testing. A new baseline, proposal, approval and receipt are required for each test. See VM_VALIDATION.md. Do not replay a consumed request. Tests additionally cover passing and failed verification using mocked execution; they do not execute host security commands.
+Historical test (not current state): the first live VM receipt was verified: request `a7f9ce7846df45dd936bd474d3703cb1` changed minimum password length from 0 to 14. Collector v2 also confirms effective firewall enabled and NLA required. The user later reset the minimum back to 0 for repeated testing. A new baseline, proposal, approval and receipt are required for each test. See FIRST_VM_IMPORT_VALIDATION.md. Do not replay a consumed request. Tests additionally cover passing and failed verification using mocked execution; they do not execute host security commands.
 
 ## 1. Copy the updated scripts
 
@@ -92,7 +92,7 @@ If live rehearsal is unfinished, identify that limit. Keep synthetic risk and si
 
 ## References
 
-- [Reviewed CIS mapping](../../../BENCHMARK_MAPPING.md), `1.1.4`, printed pages 38–39.
+- [Reviewed CIS mapping](../../design/BENCHMARK_MAPPING.md), `1.1.4`, printed pages 38–39.
 - [Microsoft Net Accounts reference](https://learn.microsoft.com/en-us/troubleshoot/windows-server/networking/net-commands-on-operating-systems).
 - [Microsoft firewall ActiveStore](https://learn.microsoft.com/en-us/powershell/module/netsecurity/get-netfirewallprofile?view=windowsserver2022-ps).
 - [Microsoft NLA properties](https://learn.microsoft.com/en-us/windows/win32/termserv/win32-tsgeneralsetting).

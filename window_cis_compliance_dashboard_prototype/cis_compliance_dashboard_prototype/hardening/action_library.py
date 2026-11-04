@@ -2,8 +2,8 @@
 
 Python holds only metadata: which control an action fixes, the fixed target value,
 its prerequisites and impact. The implementation lives in a fixed table inside
-scripts/Invoke-RemediationAction.ps1; a request carries an action ID and value, never
-a command. tests/test_action_library.py checks the two tables agree.
+scripts/vm/Invoke-RemediationAction.ps1; a request carries an action ID and value, never
+a command. LibraryParityTests (tests/test_agentic.py) checks the two tables agree.
 """
 from dataclasses import dataclass
 from types import MappingProxyType

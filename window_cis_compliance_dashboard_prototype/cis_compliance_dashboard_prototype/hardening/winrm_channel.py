@@ -13,7 +13,7 @@ from uuid import uuid4
 from .domain import EvidenceMode
 from .evidence_import import load_evidence
 
-COLLECTOR = Path(__file__).resolve().parents[2] / 'scripts' / 'Collect-Server2022Evidence.ps1'
+COLLECTOR = Path(__file__).resolve().parents[2] / 'scripts' / 'vm' / 'Collect-Server2022Evidence.ps1'
 
 DEFAULT_HOST, DEFAULT_PORT = '127.0.0.1', 55985
 IDENTITY_SCRIPT = r'''
@@ -164,7 +164,6 @@ class LiveScanner:
         run = self.runtime.start(output[0].encode('utf-8'), expected_hostname=self.target.hostname,
                                  expected_machine_uuid=self.target.machine_uuid, collection_request_id=request_id,
                                  mode=EvidenceMode.LIVE)
-        run = self.runtime.complete_assessment(run.run_id)
         return dict(request_id=request_id, state='assessment_ready', channel=self.channel,
                     framework_run_id=run.run_id, evidence_sha256=run.evidence_sha256,
                     target_id=run.target_id, collector_sha256=collector_sha256, origin_run_id=origin_run_id)

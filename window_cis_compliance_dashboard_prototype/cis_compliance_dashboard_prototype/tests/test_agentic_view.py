@@ -9,8 +9,9 @@ from streamlit.testing.v1 import AppTest
 
 from hardening import agentic, agentic_view
 from hardening.connection_view import LIVE_TARGET
+from hardening.ui import md_escape
 from hardening.winrm_channel import LiveScanner
-from test_agentic import FakeVm, TeamDouble, call, clients
+from test_agentic import FakeVm, TeamDouble, call, clients, plan
 from test_winrm_channel import MACHINE_UUID, target
 
 APP = Path(__file__).resolve().parents[1] / 'app.py'
@@ -58,12 +59,8 @@ class AgenticPageTests(unittest.TestCase):
         ScriptedModel.team = TeamDouble(clients(t, [
             call('delegate_scanner', t),
             call('delegate_analysis', t),
-            call('submit_plan', t, fixes=[
-                dict(control_id='1.2.2', action_id='REM-1.2.2', reason_code='high_risk'),
-                dict(control_id='1.1.1', action_id='REM-1.1.1', reason_code='low_impact')],
-                skipped=[dict(control_id='2.3.10.3', reason_code='needs_review'),
-                         dict(control_id='1.1.3', reason_code='lower_priority'),
-                         dict(control_id='18.10.57.3.9.4', reason_code='needs_review')])]))
+            plan(t, fixes=[('1.2.2', 'REM-1.2.2', 'high_risk'), ('1.1.1', 'REM-1.1.1', 'low_impact')],
+                 skipped=[('2.3.10.3', 'needs_review'), ('1.1.3', 'lower_priority'), ('18.10.57.3.9.4', 'needs_review')])]))
 
     def _page(self, **state):
         app = AppTest.from_function(agentic_page, default_timeout=60)
@@ -97,7 +94,8 @@ class AgenticPageTests(unittest.TestCase):
         self.assertEqual(len(app.exception), 0, [e.value for e in app.exception])
         self.assertEqual(self.vm.writes, ['1.2.2'])
         self.assertEqual(app.session_state[agentic_view.TAB], 'Results')
-        self.assertTrue(any('Next step (next round)' in i.value for i in app.info))
+        # Stored outcome text is Markdown-escaped on the page: it is data, not formatting.
+        self.assertTrue(any(md_escape('Next step (next round)') in i.value for i in app.info))
         verdicts = [row for frame in app.dataframe for row in frame.value.to_dict('records') if 'Verdict' in row]
         self.assertEqual([v['Verdict'] for v in verdicts], ['Verified compliant'])
         self.assertIn('Run next round', [b.label for b in app.button])
@@ -134,9 +132,8 @@ class AgenticPageTests(unittest.TestCase):
             call('interpret_goal', t, only_areas=[], exclude_areas=['remote_desktop'], exclude_controls=[],
                  focus='none', max_fixes=0, unclear=False),
             call('delegate_scanner', t), call('delegate_analysis', t),
-            call('submit_plan', t, fixes=[dict(control_id='1.2.2', action_id='REM-1.2.2', reason_code='high_risk')],
-                 skipped=[dict(control_id='18.10.57.3.9.4', reason_code='outside_goal')]
-                 + [dict(control_id=c, reason_code='lower_priority') for c in ('2.3.10.3', '1.1.1', '1.1.3')])]))
+            plan(t, fixes=[('1.2.2', 'REM-1.2.2', 'high_risk')],
+                 skipped=[('18.10.57.3.9.4', 'outside_goal')] + [(c, 'lower_priority') for c in ('2.3.10.3', '1.1.1', '1.1.3')])]))
         app = self._page()
         app.text_input(key='agentic_goal').input('Keep RDP usable for remote support').run()
         app.button(key='agentic_run').click().run()

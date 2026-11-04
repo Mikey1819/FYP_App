@@ -9,6 +9,7 @@ from html import escape
 
 from .action_library import LIBRARY
 from .agentic import ANALYSIS, ORCHESTRATOR, REMEDIATION, SCANNER
+from .ui import FULL, myt
 
 BENCHMARK = 'CIS Microsoft Windows Server 2022 Stand-alone Benchmark v2.0.0'
 EVIDENCE = {'Live': 'Live (WinRM, collected by the Scanner Agent)', 'Imported': 'Imported file'}
@@ -56,8 +57,8 @@ def _decision(record):
         return 'Awaiting decision', '—'
     made = record['decision_record'] or {}
     who = made.get('approved_by') or made.get('operator', '—')
-    when = (made.get('approved_at') or made.get('at') or '')[:19].replace('T', ' ')
-    return record['decision'].capitalize(), f'{who}, {when} UTC' if when else who
+    when = made.get('approved_at') or made.get('at')
+    return record['decision'].capitalize(), f'{who}, {myt(when, FULL)} MYT' if when else who
 
 
 def round_report(hardening, rounds, assessment_round, *, now=None):
@@ -75,7 +76,7 @@ def round_report(hardening, rounds, assessment_round, *, now=None):
         title = f'{escape(record.assessment.hostname)} · {len(results)} controls'
         facts = [('Target', f'{record.assessment.hostname} ({record.assessment.target_id})'),
                  ('Benchmark', BENCHMARK), ('Evidence', EVIDENCE.get(mode, mode)),
-                 ('Collected (UTC)', record.assessment.collected_at.isoformat(timespec='seconds')),
+                 ('Collected (MYT, UTC+8)', myt(record.assessment.collected_at, FULL)),
                  ('Evidence SHA-256', record.assessment.source_sha256)]
         cards = ''.join(f'<div class="card"><b>{n}</b><span>{escape(s)}</span></div>' for s, n in counts.items())
         if evaluated:
@@ -85,8 +86,8 @@ def round_report(hardening, rounds, assessment_round, *, now=None):
     if assessment_round.get('goal'):
         facts += [('Administrator goal', assessment_round['goal']['text']),
                   ('Goal read by the Orchestrator as', assessment_round['goal']['read_as'])]
-    facts += [('Round', f"{assessment_round['round_id']} (started {assessment_round['created_at'][:19].replace('T', ' ')} UTC)"),
-              ('Report generated (UTC)', now.isoformat(timespec='seconds'))]
+    facts += [('Round', f"{assessment_round['round_id']} (started {myt(assessment_round['created_at'], FULL)} MYT)"),
+              ('Report generated (MYT, UTC+8)', myt(now, FULL))]
     parts.append('<dl>' + ''.join(f'<dt>{escape(k)}</dt><dd>{escape(str(v))}</dd>' for k, v in facts) + '</dl>')
     parts.append(f'<div class="cards">{cards}</div>')
     parts.append(f'<h2>1. Round outcome</h2><p>{escape(outcome["reason"])}</p>')
@@ -122,10 +123,10 @@ def round_report(hardening, rounds, assessment_round, *, now=None):
         decision, by = _decision(item)
         rows.append((p['rank'], p['control_id'], LIBRARY[p['action_id']].title,
                      f"{shown(p['expected_before'], 'Non-Compliant')} → {p['value']!r}", p['risk_score'], p['reason'],
-                     decision, by, item['verdict'] or '—'))
+                     decision, by, item['comment'] or '—', item['verdict'] or '—'))
     parts.append('<h2>3. Proposed fixes and administrator decisions</h2>'
                  + _table(('Rank', 'Control', 'Library action', 'Change', 'Risk', 'Orchestrator reason', 'Decision',
-                           'By', 'Result'), rows, 'The Orchestrator proposed no fixes in this round.'))
+                           'By', 'Comment', 'Result'), rows, 'The Orchestrator proposed no fixes in this round.'))
 
     verification = next((r for r in reversed(rounds) if r['kind'] == 'verification_scan'
                          and r.get('remediated_run_id') == run_id), None) if run_id else None
