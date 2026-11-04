@@ -103,9 +103,9 @@ def render_overview(database_path: Path):
         history = HistoryService(runtime, store)
         targets = history.targets()
         if not targets:
-            st.info('No assessments yet. Open **Agentic hardening**, connect to the VM and start a round.')
+            st.info('No assessments yet. Connect to a server on the **Servers** page, then start a round in **Agentic hardening**.')
             return
-        target = st.selectbox('VM', list(targets), format_func=lambda t: f'{targets[t]} ({t.removeprefix("windows:")})',
+        target = st.selectbox('Server', list(targets), format_func=lambda t: f'{targets[t]} ({t.removeprefix("windows:")})',
                               key='overview_target') if len(targets) > 1 else next(iter(targets))
         runs = history.runs(target)
         latest = runs[-1]
@@ -172,6 +172,6 @@ def render_overview(database_path: Path):
         if rounds:
             st.dataframe([activity_row(r, store) for r in rounds], hide_index=True)
         else:
-            st.caption('No agentic rounds yet for this VM.')
+            st.caption('No agentic rounds yet for this server.')
     except (ValueError, OSError, sqlite3.Error) as exc:
         st.error('Overview: ' + md_escape(exc))

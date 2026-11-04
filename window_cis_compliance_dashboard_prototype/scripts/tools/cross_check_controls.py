@@ -17,10 +17,11 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'cis_compliance_dashboard_prototype'))
 from hardening.databases import imports_database
 from hardening.import_storage import ImportedEvidenceStore
-from hardening.winrm_channel import DEFAULT_HOST, DEFAULT_PORT, ChannelError, LiveScanner, WinRmTarget
+from hardening.winrm_channel import ChannelError, LiveScanner, WinRmTarget
 
 SCRIPT = Path(__file__).resolve().parents[1] / 'vm' / 'Get-CrossCheckValues.ps1'
 STALE_MINUTES = 60  # A setting may have changed between the scan and the cross-check.
+LAB_HOST, LAB_PORT = '127.0.0.1', 55985  # The lab VM's VirtualBox port forward (docs/vm/VM_CONNECTION_SETUP.md).
 
 
 def same(a, b):
@@ -74,8 +75,8 @@ def main():
     parser.add_argument('--digest', help='stored scan to compare (default: the latest)')
     parser.add_argument('--db', type=Path, default=imports_database())
     parser.add_argument('--out', type=Path, help='also write the Markdown table here')
-    parser.add_argument('--host', default=DEFAULT_HOST)
-    parser.add_argument('--port', type=int, default=DEFAULT_PORT)
+    parser.add_argument('--host', default=LAB_HOST)
+    parser.add_argument('--port', type=int, default=LAB_PORT)
     parser.add_argument('--username', default='Administrator')
     args = parser.parse_args()
     store = ImportedEvidenceStore(args.db)

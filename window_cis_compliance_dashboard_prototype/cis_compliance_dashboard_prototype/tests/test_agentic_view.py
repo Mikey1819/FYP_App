@@ -168,7 +168,7 @@ class AgenticPageTests(unittest.TestCase):
     def test_page_without_connection_asks_to_connect(self):
         app = AppTest.from_function(agentic_page, default_timeout=30).run()
         self.assertEqual(len(app.exception), 0)
-        self.assertTrue(any('Connect to the VM' in i.value for i in app.info))
+        self.assertTrue(any('Connect to a server' in i.value for i in app.info))
 
     def test_app_opens_on_overview_with_empty_state(self):
         app = AppTest.from_file(str(APP), default_timeout=30).run()

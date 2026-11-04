@@ -38,7 +38,8 @@ class FakeSession:
 
 
 def target(**overrides):
-    values = dict(hostname='FIXTURE-SERVER', machine_uuid=MACHINE_UUID, username='Administrator', password='secret')
+    values = dict(hostname='FIXTURE-SERVER', machine_uuid=MACHINE_UUID, username='Administrator', password='secret',
+                  host='127.0.0.1', port=55985)
     values.update(overrides)
     return WinRmTarget(**values)
 
