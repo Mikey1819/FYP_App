@@ -76,7 +76,23 @@ def _round_target(runtime, r):
     return runtime.get(run_id).target_id if run_id else None
 
 
-def activity_row(r, store):
+def latest_assessment_run(store, runtime, target):
+    """The scan of this server's newest assessment round: the only round whose fixes can still be decided."""
+    latest = next((r for r in store.recent_rounds(200) if r['kind'] == 'assessment' and r['framework_run_id']
+                   and _round_target(runtime, r) == target), None)
+    return latest['framework_run_id'] if latest else None
+
+
+def awaiting_you(store, runtime, target):
+    """Undecided fixes the administrator can still act on: those of this server's newest assessment round.
+    Proposals of older rounds belong to scans that a later round replaced; the Agentic page never offers them, so
+    counting them would overstate the work waiting (on 5 November the real data showed 21, while the latest round
+    had none left to decide)."""
+    run_id = latest_assessment_run(store, runtime, target)
+    return sum(p['decision'] is None for p in store.for_run(run_id)) if run_id else 0
+
+
+def activity_row(r, store, latest_run_id=None):
     """One line per stored round, in the terms an administrator would log it."""
     outcome = r.get('outcome') or {}
     status = STATUS.get(outcome.get('outcome'), (outcome.get('outcome') or '—').replace('_', ' '))
@@ -87,7 +103,12 @@ def activity_row(r, store):
         activity = 'Assessment round'
         if outcome.get('outcome') == 'awaiting_approval':  # The stored state is as of the round; decisions came later.
             undecided = sum(p['decision'] is None for p in store.for_run(r['framework_run_id']))
-            status = f'{undecided} awaiting approval' if undecided else 'All decided'
+            if not undecided:
+                status = 'All decided'
+            elif latest_run_id is None or r['framework_run_id'] == latest_run_id:
+                status = f'{undecided} awaiting approval'
+            else:  # Its fixes can no longer be decided: a later round rescanned and proposed again.
+                status = 'Replaced by a later round'
     else:
         kinds = Counter(verdict_kind(v['verdict']) for v in r['verdicts'] if v['control_id'])
         result = ', '.join(f'{n} {kind}' for kind, n in kinds.items()) or 'Nothing executed'
@@ -141,8 +162,8 @@ def render_overview(database_path: Path):
                  else f"{compliance - previous['compliance_percent']:+.0f} pts vs previous")
         proposals = [p for p in store.all_proposals() if p['proposal']['framework_run_id'] in
                      {r['run_id'] for r in runs}]
-        waiting = sum(p['decision'] is None for p in proposals)
-        verified = sum(p['verdict'] == 'Verified compliant' for p in proposals)
+        waiting = awaiting_you(store, runtime, target)
+        verified = sum(p['verdict'] == 'Verified compliant' for p in proposals)  # All rounds: this is history.
         tiles = st.columns(5)
         tiles[0].metric('Compliance (evaluated)', '—' if compliance is None else f'{compliance:.0f}%', delta)
         tiles[1].metric('Non-compliant', latest['non_compliant'])
@@ -150,7 +171,8 @@ def render_overview(database_path: Path):
         top = ranked[0] if ranked else None
         tiles[3].metric('Highest risk', '—' if top is None else top.score, None if top is None else top.level,
                         delta_color='off')
-        tiles[4].metric('Fixes awaiting you', waiting, f'{verified} verified so far', delta_color='off')
+        tiles[4].metric('Fixes awaiting you', waiting, f'{verified} verified so far', delta_color='off',
+                        help='Undecided fixes in the latest round, the ones you can still approve or reject.')
         regressions = [d for d in history.drift_records(target)
                        if d['current_run_id'] == latest['run_id'] and d['change'] == 'Regression']
         if regressions:
@@ -190,7 +212,8 @@ def render_overview(database_path: Path):
         st.subheader('Activity')
         rounds = [r for r in store.recent_rounds(20) if _round_target(runtime, r) in (None, target)][:8]
         if rounds:
-            st.dataframe([activity_row(r, store) for r in rounds], hide_index=True)
+            latest_run = latest_assessment_run(store, runtime, target)
+            st.dataframe([activity_row(r, store, latest_run) for r in rounds], hide_index=True)
         else:
             st.caption('No agentic rounds yet for this VM.')
     except (ValueError, OSError, sqlite3.Error) as exc:

@@ -1201,6 +1201,28 @@ class JudgementTests(AgenticTestCase):
         self.assertEqual(vm.attempts, ['1.2.2', '2.3.10.3', '1.1.1'])
 
 
+class OverviewCountTests(AgenticTestCase):
+    def test_fixes_awaiting_you_counts_only_the_latest_round(self):
+        from hardening.overview_view import awaiting_you
+        first = self.standard_round(FakeVm()).run_round()  # Two proposals, never decided.
+        self.assertEqual(awaiting_you(self.store, self.runtime, self.target_id), 2)
+        second = self.standard_round(FakeVm()).run_round()  # A new scan replaces the first round.
+        self.assertEqual(awaiting_you(self.store, self.runtime, self.target_id), 2, 'not 4: old proposals are not offered')
+        self.approve_all(second['framework_run_id'])
+        self.assertEqual(awaiting_you(self.store, self.runtime, self.target_id), 0)
+        self.assertEqual(sum(p['decision'] is None for p in self.store.for_run(first['framework_run_id'])), 2)
+        self.assertEqual(awaiting_you(self.store, self.runtime, 'windows:11111111-2222-3333-4444-555555555555'), 0)
+
+    def test_activity_marks_an_older_undecided_round_as_replaced(self):
+        from hardening.overview_view import activity_row, latest_assessment_run
+        first = self.standard_round(FakeVm()).run_round()
+        self.standard_round(FakeVm()).run_round()
+        latest = latest_assessment_run(self.store, self.runtime, self.target_id)
+        rows = {r['round_id']: activity_row(r, self.store, latest)['Status'] for r in self.store.recent_rounds(10)}
+        self.assertEqual(rows[first['round_id']], 'Replaced by a later round')
+        self.assertEqual(sorted(rows.values()), ['2 awaiting approval', 'Replaced by a later round'])
+
+
 class ApprovedActionExecutorTests(AgenticTestCase):
     def proposed(self, vm):
         hardening = self.standard_round(vm)
