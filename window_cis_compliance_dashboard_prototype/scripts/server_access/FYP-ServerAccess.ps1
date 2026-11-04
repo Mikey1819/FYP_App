@@ -28,6 +28,84 @@ $BuiltInRules = @('WINRM-HTTP-In-TCP', 'WINRM-HTTP-In-TCP-PUBLIC')
 $PolicyKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
 $WinRmPort = 5985
 
+# ---------------------------------------------------------------------------------------------------------------
+# Pairing messages. The same rules as hardening/pairing.py in the dashboard; both are tested against the examples
+# in pairing_vectors.json (same folder). The code is never sent: each side proves it knows the code with an
+# HMAC-SHA256 signature keyed by it.
+# ---------------------------------------------------------------------------------------------------------------
+$PairingPort = 47815        # UDP, local network only.
+$PairingVersion = 1
+$PairingMaxMessage = 1024   # Bytes.
+$FindKeys = @('laptop_name', 'mac', 'nonce_l', 'type', 'v')
+$StrictUtf8 = New-Object Text.UTF8Encoding($false, $true)  # Throws on invalid bytes instead of guessing.
+
+function Test-PairingCode([string]$Code) { return $Code -cmatch '^\d{9}$' }
+
+function New-RandomBytes([int]$Count) {
+    $bytes = New-Object byte[] $Count
+    $rng = [Security.Cryptography.RandomNumberGenerator]::Create()
+    try { $rng.GetBytes($bytes) } finally { $rng.Dispose() }
+    return ,$bytes
+}
+
+function ConvertTo-Hex([byte[]]$Bytes) { return (($Bytes | ForEach-Object { $_.ToString('x2') }) -join '') }
+
+function New-PairingCode {
+    # 9 random digits. Bytes 250-255 are skipped so every digit is equally likely.
+    $digits = ''
+    while ($digits.Length -lt 9) {
+        foreach ($b in (New-RandomBytes 16)) { if ($b -lt 250 -and $digits.Length -lt 9) { $digits += [string]($b % 10) } }
+    }
+    return $digits
+}
+
+function New-Nonce { return ConvertTo-Hex (New-RandomBytes 16) }  # 128 random bits, used once.
+
+function Get-PairingMac([string]$Code, [object[]]$Fields) {
+    if (-not (Test-PairingCode $Code)) { throw 'The pairing code must be 9 digits.' }
+    $hmac = New-Object Security.Cryptography.HMACSHA256 (, [Text.Encoding]::ASCII.GetBytes('FYP-PAIR-v1:' + $Code))
+    try {
+        $text = ($Fields | ForEach-Object { [string]$_ }) -join "`n"
+        return ConvertTo-Hex $hmac.ComputeHash([Text.Encoding]::UTF8.GetBytes($text))
+    } finally { $hmac.Dispose() }
+}
+
+function Test-SameText([string]$A, [string]$B) {
+    # Compares every character, so the time taken does not reveal how much of a signature was right.
+    if ($A.Length -ne $B.Length) { return $false }
+    $difference = 0
+    for ($i = 0; $i -lt $A.Length; $i++) { $difference = $difference -bor ([int]$A[$i] -bxor [int]$B[$i]) }
+    return $difference -eq 0
+}
+
+function Read-PairFind([byte[]]$Raw, [string]$Code) {
+    # A laptop's question. Throws 'not_ours' for anything that is not a well-formed find message (not counted as a
+    # guess), and 'wrong_code' when the format is right but the proof is not (counted as a wrong attempt).
+    if ($null -eq $Raw -or $Raw.Length -gt $PairingMaxMessage) { throw 'not_ours' }
+    try { $message = $StrictUtf8.GetString($Raw) | ConvertFrom-Json } catch { throw 'not_ours' }
+    if ($null -eq $message -or $message -isnot [pscustomobject]) { throw 'not_ours' }
+    # ForEach-Object, not .Name: under strict mode .Name on an empty list ('{}') throws a different error.
+    $names = @($message.PSObject.Properties | ForEach-Object { $_.Name } | Sort-Object)
+    if (($names -join ',') -cne ($FindKeys -join ',')) { throw 'not_ours' }
+    if ($message.type -cne 'find' -or $message.v -isnot [int] -or $message.v -ne $PairingVersion) { throw 'not_ours' }
+    foreach ($text in @($message.nonce_l, $message.laptop_name, $message.mac)) { if ($text -isnot [string]) { throw 'not_ours' } }
+    if ($message.nonce_l -cnotmatch '^[0-9a-f]{32}$' -or $message.mac -cnotmatch '^[0-9a-f]{64}$' -or
+        $message.laptop_name -cnotmatch '^[A-Za-z0-9._-]{1,63}$') { throw 'not_ours' }
+    $expected = Get-PairingMac $Code @('find', $PairingVersion, $message.nonce_l, $message.laptop_name)
+    if (-not (Test-SameText $expected $message.mac)) { throw 'wrong_code' }
+    return $message
+}
+
+function New-PairFound([string]$Code, [string]$NonceL, [string]$HostName, [string]$MachineUuid, [int]$Port,
+                       [string]$PairingId, [string]$NonceS) {
+    # The answer to one checked question: who this server is, and the proof that it knows the code too.
+    $uuid = ([guid]$MachineUuid).ToString()
+    $message = [ordered]@{ v = $PairingVersion; type = 'found'; nonce_l = $NonceL; nonce_s = $NonceS
+        hostname = $HostName; machine_uuid = $uuid; port = $Port; pairing_id = $PairingId }
+    $message.mac = Get-PairingMac $Code @('found', $PairingVersion, $NonceL, $NonceS, $HostName, $uuid, $Port, $PairingId)
+    return ,[Text.Encoding]::UTF8.GetBytes(($message | ConvertTo-Json -Compress))
+}
+
 function Test-ScannerAddress([string]$Address) {
     # Exactly one IPv4 unicast address (the admin laptop): never a range, "Any", loopback or multicast.
     $parsed = $null

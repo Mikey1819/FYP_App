@@ -38,6 +38,33 @@ $noListener = [pscustomobject]@{ winrm_running = $true; winrm_start_mode = 'Auto
                                  builtin_rules = $rules; token_filter_policy = $null }
 Assert-True ((New-AccessState $noListener '192.168.56.1' $now).helper_enabled_remoting) 'running without a listener counts as off'
 
+# Pairing messages: the same examples the dashboard's Python tests use (pairing_vectors.json).
+$vectors = Get-Content "$PSScriptRoot\pairing_vectors.json" -Raw | ConvertFrom-Json
+$f = $vectors.find; $g = $vectors.found
+Assert-True ((Get-PairingMac $vectors.code @('find', 1, $f.nonce_l, $f.laptop_name)) -ceq $f.mac) 'find signature matches Python'
+Assert-True ((Get-PairingMac $vectors.code @('found', 1, $g.nonce_l, $g.nonce_s, $g.hostname, $g.machine_uuid, $g.port,
+    $g.pairing_id)) -ceq $g.mac) 'found signature matches Python'
+$found = New-PairFound $vectors.code $g.nonce_l $g.hostname $g.machine_uuid.ToUpper() $g.port $g.pairing_id $g.nonce_s
+$foundBack = [Text.Encoding]::UTF8.GetString($found) | ConvertFrom-Json
+Assert-True ($foundBack.mac -ceq $g.mac -and $foundBack.machine_uuid -ceq $g.machine_uuid) 'built answer carries the same signature'
+$question = Read-PairFind ([Text.Encoding]::UTF8.GetBytes($f.raw)) $vectors.code
+Assert-True ($question.laptop_name -ceq 'DESKTOP-KHOO') 'accepts the Python-built question'
+function Get-PairError([byte[]]$Raw, [string]$Code) { try { $null = Read-PairFind $Raw $Code; 'accepted' } catch { $_.Exception.Message } }
+$raw = [Text.Encoding]::UTF8.GetBytes($f.raw)
+Assert-True ((Get-PairError $raw $vectors.wrong_code) -ceq 'wrong_code') 'a wrong code is a counted wrong attempt'
+$tampered = [Text.Encoding]::UTF8.GetBytes($f.raw.Replace('DESKTOP-KHOO', 'DESKTOP-EVIL'))
+Assert-True ((Get-PairError $tampered $vectors.code) -ceq 'wrong_code') 'a changed field breaks the signature'
+foreach ($bad in @('hello', '{}', '[]', 'null', '{"v":1,"type":"found"}', $f.raw.Replace('"v":1', '"v":2'),
+                   $f.raw.Replace('"v":1', '"v":true'), $f.raw.Replace('"v":1', '"v":1,"extra":1'),
+                   $f.raw.Replace('DESKTOP-KHOO', 'DESK TOP'), ('x' * 2000))) {
+    Assert-True ((Get-PairError ([Text.Encoding]::UTF8.GetBytes($bad)) $vectors.code) -ceq 'not_ours') "ignores '$($bad.Substring(0, [Math]::Min(30, $bad.Length)))'"
+}
+Assert-True ((Get-PairError ([byte[]](0xC3, 0x28)) $vectors.code) -ceq 'not_ours') 'ignores invalid UTF-8'
+$codes = @(1..20 | ForEach-Object { New-PairingCode })
+Assert-True (@($codes | Where-Object { $_ -cmatch '^\d{9}$' }).Count -eq 20) 'codes are 9 digits'
+Assert-True (@($codes | Sort-Object -Unique).Count -gt 15) 'codes are random'
+Assert-True ((New-Nonce) -cmatch '^[0-9a-f]{32}$') 'nonce is 128 bits of hex'
+
 if (([Environment]::OSVersion.Platform -eq 'Win32NT')) {
     $form = New-HelperForm
     $buttons = @($form.Controls | Where-Object { $_ -is [Windows.Forms.Button] } | ForEach-Object { $_.Text })
@@ -45,4 +72,4 @@ if (([Environment]::OSVersion.Platform -eq 'Win32NT')) {
     Assert-True (@($form.Controls | Where-Object { $_.Tag -is [scriptblock] }).Count -eq 3) 'each button carries its action'
     $form.Dispose()
 }
-Write-Host 'PASS: server access helper address, workstation, state and revert-plan checks; window builds (fixtures only).'
+Write-Host 'PASS: server access helper address, workstation, state, revert-plan and pairing-message checks; window builds (fixtures only).'
