@@ -18,7 +18,7 @@ from hardening.remediation import RUNNER, ApprovedActionExecutor, RemediationSto
 from hardening.risk import analyse
 from hardening.winrm_channel import IDENTITY_SCRIPT, LiveScanner
 from test_investigation import MockClient
-from test_full_controls import full_fixture
+from evidence_fixture import evidence_fixture
 from test_winrm_channel import IDENTITY, target
 
 # The registered lab VM as observed on 26 October 2026 (live WinRM scan), used as fixture state.
@@ -32,7 +32,7 @@ class FakeVm:
     def __init__(self, state=LAB_STATE, *, fail_action=False, firewall=True, error_controls=(), revert_controls=()):
         # fail_action: every write fails (True, or the failure message the runner reports).
         # revert_controls: the write succeeds but something sets the old value straight back.
-        self.values = {o['control_id']: o['value'] for o in full_fixture()['observations']}
+        self.values = {o['control_id']: o['value'] for o in evidence_fixture()['observations']}
         self.values.update(state)
         self.fail_action, self.firewall, self.error_controls = fail_action, firewall, set(error_controls)
         self.revert_controls = set(revert_controls)
@@ -42,7 +42,7 @@ class FakeVm:
         return self
 
     def evidence(self):
-        doc = full_fixture()
+        doc = evidence_fixture()
         stamp = datetime.now(timezone.utc).isoformat()
         doc['started_at'] = doc['completed_at'] = stamp
         for row in doc['observations']:
@@ -1287,8 +1287,8 @@ class RiskEngineTests(AgenticTestCase):
 class RiskDerivationTests(unittest.TestCase):
     def test_every_catalogue_control_has_attributes_and_no_hand_assigned_factor(self):
         from hardening.risk import ATTRIBUTES, CONSEQUENCE, LIKELIHOOD, PRIVILEGE_SCOPE, derive
-        from hardening.server2022_catalogue import FULL_CATALOGUE
-        self.assertEqual({c.control_id for c in FULL_CATALOGUE}, set(ATTRIBUTES))
+        from hardening.server2022_catalogue import CATALOGUE
+        self.assertEqual({c.control_id for c in CATALOGUE}, set(ATTRIBUTES))
         for control_id, attributes in ATTRIBUTES.items():
             derivation = derive(control_id)
             self.assertEqual(derivation.impact, CONSEQUENCE[attributes.consequence][0])

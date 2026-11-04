@@ -1534,7 +1534,7 @@ class AgenticHardening:
         log = InvestigationLog(self.store)
         return [log.get(i) for (i,) in rows]
 
-
+# Explain with local AI
 def explain_finding(finding, client=None, *, timeout=60):
     """FR17: short human-readable explanation. Output is unverified text; it changes nothing."""
     client = client or OllamaClient()

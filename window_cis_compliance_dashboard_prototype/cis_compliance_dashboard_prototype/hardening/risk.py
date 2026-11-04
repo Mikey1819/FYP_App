@@ -17,28 +17,49 @@ PRIORITY = {'Critical': 1, 'High': 2, 'Moderate': 3, 'Low': 4}
 # Security Impact (I) from the consequence named in the benchmark Rationale/Impact text (Table 4.15),
 # scored with the Table 4.14a wording. Logging-only consequences score lower, as Table 4.15 states.
 CONSEQUENCE = {
+    # Firewall off; passwords stored reversibly
     'critical_protection_lost': (5, 'credentials recoverable or the network boundary disabled: '
                                     'severe compromise of critical security functions (4.14a score 5)'),
+    # Short password; no lockout; no NLA
     'protection_weakened': (4, 'authentication or network protection weakened: may significantly affect '
                                'system security (4.14a score 4)'),
+    # Anonymous enumeration; Guest enabled
     'misuse_easier': (3, 'unauthorised activity or information disclosure made easier: affects an important '
                          'security function (4.14a score 3)'),
+#   minor_reduction - weak password ageing (1.1.2, 1.1.3) keeps a stolen or reused password valid for longer
+#                     but does not break authentication: "minor reduction in the security posture" (score 2).
+#   detection_only  - firewall logging and audit settings (9.x.6/7, 17.x) leave an attack unrecorded but open
+#                     no way in: also a minor reduction (score 2). The other factors stay at their minimums
+#                     (P = logging_only 1, E = detection 2), so these controls still rank last, at R = 40.
     'minor_reduction': (2, 'password ageing only: minor reduction in security posture (4.14a score 2)'),
     'detection_only': (2, 'logging or audit visibility only: minor reduction in security posture (4.14a score 2)'),
+    # They stay separate keys so each finding states its own reason and either can be rescored on its own. ^^
+   
+    # baseline security setting, so none is judged to have only a narrow, limited security effect. (almost no effect)
+    'limited_consequence': (1, 'narrowly scoped security function: limited security consequences (4.14a score 1)'),
 }
 # Privilege Impact (P) from the accounts, groups or rights the setting governs (Table 4.15), Table 4.14c wording.
 PRIVILEGE_SCOPE = {
+    # Reveals the Administrator name; stored passwords
     'admin_identity_or_stored_credentials': (5, 'exposes the administrator identity or stored credentials: directly '
                                                 'affects highly privileged access (4.14c score 5)'),
+    # Password policy (covers Administrator too); RDP
     'all_local_accounts': (4, 'applies to every local account including the built-in Administrator: may '
                               'contribute to administrative access (4.14c score 4)'),
     'remote_admin_logon': (4, 'protects remote administrative access to the server: may contribute to '
                               'administrative access (4.14c score 4)'),
+    # Affect important user or system function
+    'standard_user_or_service': (3, 'affects standard user rights or an important system service without '
+                                    'reaching administrative access: may affect access to important user or '
+                                    'system functions (4.14c score 3)'),
+    # Guest account; anonymous enumeration
     'guest_or_anonymous': (2, 'affects only Guest or anonymous access: limited user-level functions (4.14c score 2)'),
+    # Audit and logging
     'logging_only': (1, 'governs logging only: minimal implications for privileges (4.14c score 1)'),
 }
 # Likelihood (L) from Profile Level + Assessment Status (Table 4.15): Level 1 and Automated apply more
 # broadly and are more commonly checked/misconfigured, so they score higher.
+# True = Automated, False = Manual.
 LIKELIHOOD = {(1, True): 4, (1, False): 3, (2, True): 3, (2, False): 2}
 
 
@@ -219,21 +240,28 @@ def analyse(record, previous_records=()):
     context = effective_context(record.raw)
     ranked = []
     for result in record.assessment.results:
+        # Skip everything that is not non-compliant
         if result.status != Status.NON_COMPLIANT:
             continue
+        # Skip Control that has no recorded attributes (not in the benchmark mapping)
         if result.control.control_id not in ATTRIBUTES:
-            continue  # No recorded attributes: never invent a score.
+            continue  
+        # derive(): work out I, P and L from the control's attributes in ATTRIBUTES.
         derivation = derive(result.control.control_id)
+        # exposure(): work out E. If the effective firewall is off, E goes up by 1.
         e, e_reason = exposure(derivation.surface, context, result.control.control_id, result.evidence.value)
         previous = next((p for older in previous_records for p in older.assessment.results
                          if comparable(p, result)), None)
         d = drift_factor(result, previous)
         d_reason = ('No previous comparable assessment (D=1).' if previous is None else
                     f'Previous comparable value {previous.evidence.value!r} was {previous.status.value} (D={d}).')
+        # RiskFactors from domain.py (IEPLD)
         factors = RiskFactors(derivation.impact, e, derivation.privilege, derivation.likelihood, d)
         ranked.append(RankedFinding(result.control.control_id, result.control.title, result.control.area,
             result.evidence.value, rule_text(result.control.rule), factors.as_dict(), factors.score,
             factors.level, PRIORITY[factors.level], e_reason, d_reason, derivation.rationale,
             derivation.reasons))
     # Highest score first; stable tie rule: control ID.
+    # -f.score sort from high to low
+    # f.control_id if 2 finding have the same score, they are sorted by control_id in ascending order
     return sorted(ranked, key=lambda f: (-f.score, f.control_id))

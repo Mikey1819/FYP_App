@@ -45,7 +45,7 @@ Switching pages keeps the connection, the session and its results. After a brows
 
 ## Checks
 
-From `cis_compliance_dashboard_prototype` (178 tests on 3 November 2026; fixtures and a simulated VM only, nothing touches a real machine):
+From `cis_compliance_dashboard_prototype` (177 tests on 4 November 2026; fixtures and a simulated VM only, nothing touches a real machine):
 
 ```powershell
 $env:TEMP = Join-Path (Get-Location) 'data\test_tmp'; $env:TMP = $env:TEMP
@@ -83,7 +83,16 @@ The SQLite files live under `cis_compliance_dashboard_prototype/data/`. `CIS_DAS
 - `preview_imports_framework.sqlite3`: assessment runs.
 - `preview_imports_agentic.sqlite3`: rounds, proposals, decisions, receipts, drift records and every agent trace.
 
+Every column and JSON field is described in [DATABASE_SCHEMA.md](docs/design/DATABASE_SCHEMA.md).
+
 Audit tables refuse updates and deletes. VM passwords stay in session memory only.
+
+To see what is stored, use the read-only viewer. It opens every file read-only and cannot change anything. Run `--help` for every command.
+
+```powershell
+.\cis_compliance_dashboard_prototype\.venv\Scripts\python.exe scripts\tools\show_database.py              # files, tables, latest scans and rounds
+.\cis_compliance_dashboard_prototype\.venv\Scripts\python.exe scripts\tools\show_database.py round <ID> --log
+```
 
 Non-UI client (no model, no VM): `python -m hardening.framework --database data\preview_imports.sqlite3 --run <run_id>` prints a stored run's results and deterministic risk ranking; `--evidence file.json --hostname … --machine-uuid …` assesses an evidence file.
 

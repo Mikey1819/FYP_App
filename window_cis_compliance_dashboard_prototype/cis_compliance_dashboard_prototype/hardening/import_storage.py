@@ -10,6 +10,10 @@ import sqlite3
 
 from .domain import AssessmentResult, Control, Evidence, EvidenceMode, Operator, Rule, Status, assess, summarise
 from .evidence_import import ImportedAssessment, load_evidence
+from .server2022_catalogue import CATALOGUE
+
+# Results are always read back in catalogue order, whatever order a snapshot was saved in.
+ORDER = {c.control_id: i for i, c in enumerate(CATALOGUE)}
 
 
 def _encode_result(result):
@@ -103,7 +107,8 @@ class ImportedEvidenceStore:
         digest, hostname, target_id, collected_at, imported_at, snapshot, raw = row
         if hashlib.sha256(raw).hexdigest() != digest:
             raise ValueError('Stored source bytes failed integrity check')
-        results = tuple(_decode_result(r) for r in json.loads(snapshot))
+        results = tuple(sorted((_decode_result(r) for r in json.loads(snapshot)),
+                               key=lambda r: ORDER[r.control.control_id]))
         summarise(results)
         if not results or any(r.evidence.target_id != target_id or r.evidence.mode not in (EvidenceMode.IMPORTED, EvidenceMode.LIVE)
                               or r.assessment_id != 'import-' + digest

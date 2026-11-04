@@ -29,6 +29,7 @@ class LibraryAction:
                 and typed
                 and result.control.rule.matches(self.target_value))
 
+# Do other control need fixing first? 1.2.1 and 1.2.4 require 1.2.2 to be compliant first, otherwise the lockout policy is not fully applied.
     def blocked_by(self, results) -> list[str]:
         """Prerequisite controls that are not yet compliant in the same assessment."""
         status = {r.control.control_id: r.status for r in results}
