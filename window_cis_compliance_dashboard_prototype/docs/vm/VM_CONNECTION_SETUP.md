@@ -1,4 +1,4 @@
-# Agent connection to the lab VM (PowerShell Remoting)
+# Agent connection to a server (PowerShell Remoting)
 
 The Scanner Agent reaches the VM itself over WinRM. Nobody copies scripts in or JSON out. It sends only the repository's fixed collector ([scripts/vm/Collect-Server2022Evidence.ps1](../../scripts/vm/Collect-Server2022Evidence.ps1)) with typed parameters. Model text is never sent to the VM. The Remediation Agent uses the same channel for its read-only precheck and for approved actions.
 
@@ -37,33 +37,48 @@ Restoring `Clean_Server2022_Before_Hardening` undoes this setup. Run it again af
 
 Check: `Invoke-WebRequest http://127.0.0.1:55985/wsman -Method Post` should fail with **401**. A 401 means the WinRM listener answered and wants a login; no answer at all means the forward or `Enable-PSRemoting` is missing.
 
-## Reaching a server by its network address: the access helper
+## Pairing a server: the server access helper
 
-> **Optional.** It is not needed for the lab VM through the port forward (`127.0.0.1:55985`); the one-time setup above already covers that. Use it only to scan by network address: another server, or the VM through a host-only adapter instead of the port forward.
+For any server reached by its network address, including the lab VM through a **host-only or bridged adapter**, the server access helper pairs the server with the laptop. Design: [LAN_PAIRING_DESIGN.md](../design/LAN_PAIRING_DESIGN.md). The lab VM through the NAT port forward (`127.0.0.1:55985`) does not need the helper: add it **By address** (below).
 
-The connection form takes any **WinRM host** and port. The collector and runner still accept only a stand-alone Windows Server 2022 that matches the registered hostname and UUID.
-
-The helper lives in its own folder, [scripts/server_access/](../../scripts/server_access/): `FYP-ServerAccess.ps1`, `Start-ServerAccess.cmd`, the README and the fixture test `test_server_access.ps1`. The connection form offers the first three as **Download helper (.zip)**, under the expander *Scanning by network address? Optional server access helper*. On the server, as administrator:
+The helper lives in [scripts/server_access/](../../scripts/server_access/): `FYP-ServerAccess.ps1`, `Start-ServerAccess.cmd`, the README, the shared pairing examples (`pairing_vectors.json`) and the fixture test `test_server_access.ps1`. The **Servers** page offers the first three as **Download helper (.zip)**. On the server, as administrator:
 
 1. Check `Get-FileHash .\FYP-ServerAccess.ps1` against the SHA-256 shown under the download button.
-2. Double-click `Start-ServerAccess.cmd`.
-3. The window shows the computer name, UUID and IPv4 addresses for the form.
-4. Click **Allow scanning** with the laptop's address. For the VirtualBox host-only network this is usually `192.168.56.1`.
-5. Scan.
-6. Click **Revert changes**.
+2. Double-click `Start-ServerAccess.cmd` and click **Start pairing**. The window shows a one-time 9-digit code. It works once, for 10 minutes, and only while the window shows it. On Server Core: `FYP-ServerAccess.ps1 -Action Pair`.
+3. On the laptop: **Servers → Add a server → With a pairing code**, type the code, **Find server**, then log in with the built-in Administrator account.
+4. Check the server from **Agentic hardening**.
+5. When finished, click **Revert changes** on the server.
 
-**Allow** saves the current state to `C:\ProgramData\FYP-ServerAccess\state.json` first. It then adds one rule, `FYP-ServerAccess-WinRM`, that admits only that address on TCP 5985. If Remoting was off, it also runs `Enable-PSRemoting` and puts the built-in WinRM firewall rules and `LocalAccountTokenFilterPolicy` back as they were.
+**What pairing changes on the server:**
+- Before its first change, the helper saves the server's state to `C:\ProgramData\FYP-ServerAccess\state.json`. The folder is readable by Administrators and SYSTEM only.
+- If Remoting was off, it runs `Enable-PSRemoting` and puts the built-in WinRM firewall rules and `LocalAccountTokenFilterPolicy` back as they were.
+- While a code is shown, a temporary rule `FYP-ServerAccess-Pairing` admits the local subnet on UDP 47815.
+- On the right code, it records the laptop in `pairings.json` and sets one rule, `FYP-ServerAccess-WinRM`, that admits **only the paired laptops' addresses** on TCP 5985 (at most 10).
+- A laptop that pairs again replaces its old address.
+- After 5 wrong codes from one address, or 20 in total, pairing stops.
 
-**Revert** undoes only what Allow changed. Anything that was already on stays on.
+**Revert** removes both rules and the pairing records, and undoes only what the helper changed. Anything that was already on stays on.
 
-The helper refuses to run on a workstation, never changes a CIS setting, never enables Basic login or unencrypted traffic, and never handles a password. Its tests (`scripts/server_access/test_server_access.ps1`) use fixtures only. **Allow** and **Revert** have not yet been run on the VM.
+**From the dashboard** (Servers → *Who can reach …*, while connected), the helper's own text runs over WinRM. It can list the paired laptops, disconnect one, or close every laptop's access. Closing all access does not turn Remoting off, because that would cut the session doing it. The page then says to click Revert on the server.
+
+**Fallback when the network blocks pairing** (some guest or campus Wi-Fi stops devices talking to each other): on the server, `FYP-ServerAccess.ps1 -Action Allow -ScannerAddress <laptop address>`. Then add the server **By address**.
+
+The helper refuses to run on a workstation, never changes a CIS setting, never enables Basic login or unencrypted traffic, and never handles a password. Its tests use fixtures and UDP on the laptop's own address only. **Start pairing, Allow and Revert have not yet been run on a real server.**
+
+### Testing pairing with the lab VM
+
+The NAT port forward does not carry the pairing broadcast. For a pairing test, give the VM a second network adapter: **Host-only** (laptop `192.168.56.1`), or **Bridged** to the Wi-Fi to test exactly what a client does. Keep the NAT forward for the usual runs.
 
 ## Use it
 
-1. Start the dashboard (`.\.venv\Scripts\python.exe -m streamlit run app.py` from the application folder).
-2. Open **Agentic hardening**. In **Connect to the VM**, enter computer name `WIN-VFT30DUDRHQ` and UUID `e5d10741-f200-4292-a099-e6be76032f4e`, keep host `127.0.0.1` and port `55985`, and enter the Administrator password.
-3. Choose **Connect and check identity**. The dashboard checks the hostname, machine UUID and administrator token before anything else. Once connected, the form folds into a status line with **Disconnect**, and the sidebar shows the connection on every page.
-4. **Start agentic round**: the Orchestrator delegates the Scanner Agent, which collects over this channel. After you approve fixes, **Execute approved fixes… → Confirm and execute** uses the same channel for the Remediation Agent's precheck, the approved actions and the verification rescan.
+1. Start the dashboard: `.\.venv\Scripts\python.exe -s launch.py` from the application folder, or `Start.cmd` in the client package.
+2. Open **Servers**.
+   - **A paired server:** *Add a server → With a pairing code*, as above.
+   - **The lab VM through the port forward:** *Add a server → By address*, address `127.0.0.1`, port `55985`, the Administrator account and password.
+
+   The dashboard reads the hostname and machine UUID from the server itself, checks the administrator token and that it is a stand-alone Server 2022, and saves the server under **My servers**. Next time, pick it there and type the password: every connection checks that the same hostname and UUID answer.
+3. Once connected, the sidebar shows the server on every page, and **Disconnect** (top of the Servers and Agentic pages) ends the session without changing anything on the server.
+4. **Agentic hardening → Start agentic round**: the Orchestrator delegates the Scanner Agent, which collects over this channel. After you approve fixes, **Execute approved fixes… → Confirm and execute** uses the same channel for the Remediation Agent's precheck, the approved actions and the verification rescan.
 
 The password stays in the Streamlit session's memory only. It is never written to SQLite, logs, prompts or traces.
 
@@ -71,11 +86,14 @@ The password stays in the Streamlit session's memory only. It is never written t
 
 | State | Meaning |
 | --- | --- |
-| `unreachable` | Nothing answered: the VM is off, `Enable-PSRemoting` hasn't been run, or the port forward is missing |
+| `unreachable` | Nothing answered: the server is off, its address changed, access was reverted, or (lab VM) the port forward or `Enable-PSRemoting` is missing. For a paired server: Start pairing on it and **Re-pair** |
 | `auth_failed` | Wrong username or password |
 | `not_admin` | Connected, but without an administrator token (use built-in Administrator) |
-| `wrong_target` | The machine answering is not the registered hostname and UUID. Nothing is collected |
-| `collection_failed` | The collector threw inside the VM (e.g. unsupported OS). No assessment is created |
+| `wrong_target` | The machine answering is not the saved hostname and UUID, or not the one that answered the pairing code. Nothing is collected or saved |
+| `unsupported_target` | Not a stand-alone Windows Server 2022 (another version, a workstation, or joined to a domain). Not saved |
+| `pairing_not_confirmed` | The server's own records do not hold this pairing for this laptop. Start pairing again and use the new code |
+| `collection_failed` | The collector threw on the server. No assessment is created |
+| *No server answered with this code* | The code expired or was mistyped, pairing was stopped on the server, or the laptop is not on the same network as the server |
 
 ## Limits and design notes
 
