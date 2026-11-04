@@ -14,4 +14,4 @@ cd window_cis_compliance_dashboard_prototype\cis_compliance_dashboard_prototype
 .\.venv\Scripts\python.exe -m streamlit run app.py
 ```
 
-Then open **Agentic hardening** and connect to the VM. One-time VM setup is in [VM_CONNECTION.md](window_cis_compliance_dashboard_prototype/VM_CONNECTION.md). Current status and next tasks are in [PROGRESS.md](window_cis_compliance_dashboard_prototype/PROGRESS.md).
+Then open **Agentic hardening** and connect to the VM. One-time VM setup is in [VM_CONNECTION_SETUP.md](window_cis_compliance_dashboard_prototype/docs/vm/VM_CONNECTION_SETUP.md). Current status and next tasks are in [PROGRESS.md](window_cis_compliance_dashboard_prototype/PROGRESS.md).

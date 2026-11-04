@@ -1,8 +1,8 @@
 # First read-only evidence from the VirtualBox lab
 
-> **Archived 26 October 2026.** Describes the legacy **Evidence upload** page (manual file exchange and the earlier agent team), which was removed on 27 October 2026; its code is in commit `81b9d52` and earlier. Current design: [ARCHITECTURE.md](../../../ARCHITECTURE.md); current status: [PROGRESS.md](../../../PROGRESS.md).
+> **Archived 26 October 2026.** Describes the legacy **Evidence upload** page (manual file exchange and the earlier agent team), which was removed on 27 October 2026; its code is in commit `81b9d52` and earlier. Current design: [ARCHITECTURE.md](../../design/ARCHITECTURE.md); current status: [PROGRESS.md](../../../PROGRESS.md).
 
-Historical VM validation covers the original five controls; see [VM_VALIDATION.md](../../../VM_VALIDATION.md). Collector v4 now assesses 16 controls in [BENCHMARK_MAPPING.md](../../../BENCHMARK_MAPPING.md), retaining effective firewall/NLA context. Its eleven added checks still need independent VM comparison. Legacy v1/v2 files retain five checks; v3 retains twelve. Follow [VM_BRIDGE.md](VM_BRIDGE.md) for the approved password-length request/receipt flow.
+Historical VM validation covers the original five controls; see [FIRST_VM_IMPORT_VALIDATION.md](../../evaluation/FIRST_VM_IMPORT_VALIDATION.md). Collector v4 now assesses 16 controls in [BENCHMARK_MAPPING.md](../../design/BENCHMARK_MAPPING.md), retaining effective firewall/NLA context. Its eleven added checks still need independent VM comparison. Legacy v1/v2 files retain five checks; v3 retains twelve. Follow [VM_BRIDGE.md](VM_BRIDGE.md) for the approved password-length request/receipt flow.
 
 To use the expansion, copy the updated `Collect-Server2022Evidence.ps1` from the exchange folder into `C:\FYP` inside the VM. Run the following there as Administrator, then copy the new JSON back to the exchange folder and upload it in the dashboard:
 
@@ -84,7 +84,7 @@ The CLI remains available for a read-only inspection without saving:
 The assistant will compare the displayed hostname/UUID with the file and run this command from the Windows project folder (`window_cis_compliance_dashboard_prototype`), replacing the two placeholders with the actual confirmed values:
 
 ```powershell
-.\cis_compliance_dashboard_prototype\.venv\Scripts\python.exe -B scripts\inspect_server_evidence.py cis_compliance_dashboard_prototype\data\vm_exchange\server-evidence.json --expected-hostname "VM_COMPUTER_NAME" --expected-machine-uuid "VM_UUID"
+.\cis_compliance_dashboard_prototype\.venv\Scripts\python.exe -B scripts\tools\inspect_server_evidence.py cis_compliance_dashboard_prototype\data\vm_exchange\server-evidence.json --expected-hostname "VM_COMPUTER_NAME" --expected-machine-uuid "VM_UUID"
 ```
 
 The CLI returns checked/selected coverage, Compliant/Non-Compliant/Error/Unknown and source references. It never changes Windows or writes a database. Original export bytes must be preserved. A schema-valid export is not proof that every collector matches the benchmark: complete the independent manual checks in BENCHMARK_MAPPING.md, resolve discrepancies and record timings before A11 is complete. Do not present results from five selected controls as full CIS compliance.
@@ -100,7 +100,7 @@ From the application folder:
 From the Windows project folder (`window_cis_compliance_dashboard_prototype`):
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\test_collector_helpers.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\vm\test_collector_helpers.ps1
 ```
 
 The PowerShell helper tests load the collector with `-FunctionsOnly` and use fixture data; they do not query the host's security configuration or run secedit. No local host collection should be used as a substitute for the VM test. PDF review packages installed in the project venv are authoring tools only; the dashboard and importer do not depend on them.

@@ -39,11 +39,10 @@ PROMPTS = {
         'collection failure, call submit_plan with empty fixes and skipped; if it stopped without a handoff '
         '(retry_allowed), call delegate_scanner once more. If the analysis lists rescan_requested, '
         'you may call delegate_scanner once more and then delegate_analysis again. 3) Call submit_plan once with '
-        'your whole decision about the must_decide findings only (never gaps). fixes: findings to fix now, in '
-        'execution order, each {control_id, action_id, reason_code}: action_id from that finding\'s actions and '
-        'reason_code from its fix_codes. A finding with blocked_until_compliant cannot be fixed yet: fix its '
-        'prerequisite and skip it. skipped: every other must_decide finding, each {control_id, reason_code} with '
-        'reason_code from its skip_codes. Every must_decide control appears exactly once. Choose which to fix and '
+        'decisions: exactly one entry per must_decide finding (never gaps). To fix it now: {control_id, decision: '
+        '"fix", action_id from that finding\'s actions, reason_code from its fix_codes}; fixes run in the order '
+        'listed. To defer it: {control_id, decision: "defer", reason_code from its defer_codes}. A finding with '
+        'blocked_until_compliant cannot be fixed yet: fix its prerequisite and defer it. Choose which to fix and '
         'their order yourself, weighing the facts of each finding; a plan is not approval: the administrator decides.',
     SCANNER: COMMON + 'You are the Scanner Agent. Call scan_target first to collect evidence from the VM over WinRM. '
         'Then call read_coverage. If any control is in Error state you may call rescan once: Error can be transient, '
@@ -90,11 +89,28 @@ SKIP_REASONS = {'outside_goal': 'Outside the administrator goal ({goal})',
                 'needs_review': 'Operational impact needs administrator review first',
                 'lower_priority': 'Lower priority; deferred to a later round',
                 'keeps_reverting': 'Reverted {reverted} times after earlier fixes; find what changes it back before '
-                                   'fixing it again'}
+                                   'fixing it again',
+                'not_decided': 'Not decided by the Orchestrator this round; deferred by code'}
+# Written by code only, never offered to the model: a deferral without a fitting code, or a finding left out.
+CODE_ONLY_DEFERS = ('not_decided',)
+# What each plan code means, shown to the Orchestrator with the codes. Real qwen3:8b read low_impact as "the
+# finding matters little": it tried it as a defer code and left out findings whose only fix code it was (31 Oct).
+PLAN_CODE_MEANINGS = {
+    'high_risk': 'the finding is High or Critical risk',
+    'unblocks_other': 'fixing it lets other findings resolve',
+    'improves_detection': 'it restores security auditing or logging',
+    'low_impact': 'the change itself is safe and unlikely to disrupt users or services (a reason TO fix)',
+    'serves_goal': "it matches the administrator goal's focus",
+    'lower_priority': 'less urgent than the fixes chosen this round',
+    'needs_review': "the change's operational impact needs the administrator's review first",
+    'waits_for_prerequisite': 'it cannot be fixed until its prerequisite is compliant',
+    'keeps_reverting': 'it was reverted after earlier fixes; find the cause first',
+    'outside_goal': 'the administrator goal excludes it'}
 # Most specific first: flags are kept in this order, and high_risk only repeats what the ranking already shows.
 ATTENTION = {'keeps_reverting': 'reverted {reverted} times after being fixed; find what changes it back',
              'regression': 'regressed since the previous assessment', 'unblocks_other': 'fixing it unblocks {waiting}',
              'manual_fix_needed': 'no library action: needs a manual fix', 'high_risk': 'high-priority finding'}
+KNOWN_CODES = set(FIX_REASONS) | set(SKIP_REASONS) | set(ATTENTION)  # Echoed in summaries; anything else is not.
 TRIAGE = {'rescan': 'collection error; Scanner asked to collect again',
           'resolves_with_prerequisite': 'expected to resolve once {prerequisite} is fixed',
           'manual_review': 'review manually'}
@@ -199,6 +215,23 @@ def check_goal(arguments):
     return goal
 
 
+PLAN_FIELDS = ('control_id', 'decision', 'action_id', 'reason_code')
+
+
+def plan_list(controls, actions, codes, max_items=40):
+    """The submit_plan argument: one object per finding; action_id only when it is fixed."""
+    def field(values, description):
+        return {'type': 'string', **({'enum': values} if values else {}), 'description': description}
+    return {'type': 'array', 'maxItems': max_items, 'items': {
+        'type': 'object', 'additionalProperties': False, 'required': ['control_id', 'decision', 'reason_code'],
+        'properties': dict(control_id=field(controls, 'A must_decide finding.'),
+                           decision=field(['fix', 'defer'], 'fix now, or defer to a later round.'),
+                           action_id=field(actions, "Only for fix: one of that finding's actions."),
+                           reason_code=field(codes, 'For fix one of its fix_codes; for defer one of its defer_codes. '
+                                             'Meanings: ' + '; '.join(f'{c} = {PLAN_CODE_MEANINGS[c]}' for c in codes)
+                                             + '.'))}}
+
+
 def coded_list(fields, enums, max_items=40):
     """Array-of-object argument; `enums` gives a field's allowed values once they are known."""
     properties = {f: {'type': 'string', **({'enum': enums[f]} if enums.get(f) else {})} for f in fields}
@@ -219,6 +252,25 @@ def check_entries(entries, keys, label, codes, limit=40):
             raise ValueError(f'{label} values must be short non-empty strings')
         if entry[code_key] not in codes:
             raise ValueError(f"{entry[code_key][:30]} is not a {label} {code_key}; use one of {', '.join(sorted(codes))}")
+    return entries
+
+
+def check_decisions(entries, limit=40):
+    """Shape check for the plan: one {control_id, decision, reason_code} entry per finding, plus action_id to fix."""
+    if type(entries) is not list or len(entries) > limit:
+        raise ValueError(f'decisions must be a list of at most {limit} entries')
+    for entry in entries:
+        keys = set(entry) if type(entry) is dict else None
+        if keys is None or not {'control_id', 'decision', 'reason_code'} <= keys <= set(PLAN_FIELDS):
+            received = ', '.join(sorted(keys)) if keys is not None else type(entry).__name__
+            raise ValueError('Each decisions entry needs control_id, decision and reason_code, plus action_id to fix; '
+                             f'received {received}')
+        if any(type(v) is not str or not v.strip() or len(v) > 40 for v in entry.values()):
+            raise ValueError('decisions values must be short non-empty strings')
+        if entry['decision'] not in ('fix', 'defer'):
+            raise ValueError(f"decision must be fix or defer, not {entry['decision'][:20]}")
+        if entry['decision'] == 'fix' and 'action_id' not in entry:
+            raise ValueError(f"{entry['control_id'][:20]}: a fix needs action_id from that finding's actions")
     return entries
 
 
@@ -245,6 +297,16 @@ def reversions(control_id, record, previous_records):
     statuses += [r.status for r in record.assessment.results if r.control.control_id == control_id]
     statuses = [s for s in statuses if s in (Status.COMPLIANT, Status.NON_COMPLIANT)]
     return sum(a == Status.COMPLIANT and b == Status.NON_COMPLIANT for a, b in zip(statuses, statuses[1:]))
+
+
+# Coordinator statuses whose summary can be the model's own prose (its final answer or a Scanner reason).
+MODEL_TEXT_STATUSES = ('Completed', 'No tool evidence', 'No structured decision')
+
+
+def stop_text(finished):
+    """Why an agent stopped, in code-written words only: outcome sentences never carry model prose."""
+    status = finished['status']
+    return status if status in MODEL_TEXT_STATUSES else f"{status} ({finished['summary']})"
 
 
 def verdict_kind(verdict):
@@ -507,7 +569,7 @@ class AnalysisTools(_RoleTools):
         if ranked is None:
             raise ValueError(control[:20] + ' is not a scored finding; use check_history for other controls')
         finding = next(f for f in self.analysis['findings'] if f['control_id'] == control)
-        # I and P are named by their benchmark attribute only; the full rule text is in RISK_DERIVATION.md.
+        # I and P are named by their benchmark attribute only; the full rule text is in docs/design/RISK_DERIVATION.md.
         return dict(control_id=control, title=ranked['title'], observed=ranked['observed'], required=ranked['rule'],
                     score=ranked['score'], factors=ranked['factors'],
                     derivation=dict(I=ranked['factor_reasons']['I'].split(':')[0],
@@ -853,10 +915,11 @@ class OrchestratorTools(_RoleTools):
             + json.dumps(goal_text) + '. 0) Call interpret_goal first: express the goal with its fields only, '
             'leaving a field empty when the goal says nothing about it; unclear=true if the fields cannot express '
             'it. Then continue with the numbered steps. Findings outside the goal are listed in outside_goal; code '
-            "skips them, so leave them out of submit_plan. Give serves_goal to fixes for the goal's focus and put "
+            "defers them, so leave them out of submit_plan. Give serves_goal to fixes for the goal's focus and put "
             'them first.')
         self.scanner_outcome, self.analysis, self.analysis_outcome, self.record = None, None, None, None
         self.proposals, self.scans, self.ignored_skips, self.previous = [], 0, [], []
+        self.undecided, self.replaced_codes = [], []
 
     def goal_record(self):
         if not self.goal_text:
@@ -890,7 +953,8 @@ class OrchestratorTools(_RoleTools):
         actions = sorted({a for c in controls for a in decisions[c]['usable']})
         # Without a goal the goal codes are never true, so they are not offered (no-goal rounds stay as before).
         fix_codes = sorted(c for c in FIX_REASONS if self.goal_text or c not in GOAL_CODES)
-        skip_codes = sorted(c for c in SKIP_REASONS if self.goal_text or c not in GOAL_CODES)
+        skip_codes = sorted(c for c in SKIP_REASONS if (self.goal_text or c not in GOAL_CODES)
+                            and c not in CODE_ONLY_DEFERS)
         areas = {'type': 'array', 'maxItems': 5, 'items': {'type': 'string', 'enum': list(GOAL_AREAS)}}
         changeable = '; '.join(f'{c} {title}' for c, title in sorted(GOAL_CONTROLS.items()))
         return [tool('interpret_goal', 'Translate the administrator goal into constraints, once, before anything '
@@ -911,12 +975,9 @@ class OrchestratorTools(_RoleTools):
                               'the goal; then leave them all empty.'}),
                 tool('delegate_scanner', 'Delegate collection and coverage review to the Scanner Agent.', t),
                 tool('delegate_analysis', 'Delegate risk analysis of the Scanner handoff to the Analysis Agent.', t),
-                tool('submit_plan', 'Submit the whole decision once: fixes in execution order, and every other '
-                     'must_decide finding in skipped with a reason code.', t,
-                     fixes=coded_list(('control_id', 'action_id', 'reason_code'),
-                                      dict(control_id=controls, action_id=actions, reason_code=fix_codes)),
-                     skipped=coded_list(('control_id', 'reason_code'),
-                                        dict(control_id=controls, reason_code=skip_codes)))]
+                tool('submit_plan', 'Submit the whole decision once: exactly one entry per must_decide finding, '
+                     'fix or defer; a finding you do not fix still needs a defer entry. Fixes run in the order listed.', t,
+                     decisions=plan_list(controls, actions, sorted(set(fix_codes) | set(skip_codes))))]
 
     def _decisions(self):
         """Findings the Orchestrator must decide: those with at least one library action."""
@@ -956,7 +1017,7 @@ class OrchestratorTools(_RoleTools):
     def _codes(self, control, decisions):
         _, facts = self._facts(control, decisions)
         fix = [c for c in FIX_REASONS if facts.get(c, True)] if decisions[control]['usable'] else []
-        skip = [c for c in SKIP_REASONS if facts.get(c, True)]
+        skip = [c for c in SKIP_REASONS if facts.get(c, True) and c not in CODE_ONLY_DEFERS]
         return fix, skip
 
     def _reason(self, entry, decisions):
@@ -975,50 +1036,65 @@ class OrchestratorTools(_RoleTools):
                                focus=GOAL_FOCUS.get((self.goal or {}).get('focus')),
                                goal=describe_goal(self.goal) if self.goal else '')
 
-    def _validate_plan(self, fixes, skipped):
+    def _validate_plan(self, entries):
         decisions = self._decisions() if self.analysis else {}
         hidden = [c for c in GOAL_CODES if not self.goal_text]  # Goal codes exist only in rounds with a goal.
-        fixes = check_entries(fixes, ('control_id', 'action_id', 'reason_code'), 'fixes',
-                              [c for c in FIX_REASONS if c not in hidden])
-        skipped = check_entries(skipped, ('control_id', 'reason_code'), 'skipped',
-                                [c for c in SKIP_REASONS if c not in hidden])
-        # Skipping a control that has nothing to decide (a gap) is a no-op: it is ignored and recorded rather than
-        # failing the whole plan (real qwen3:8b did this in 2 of 4 probes). A fix for such a control is still refused.
-        self.ignored_skips = [e['control_id'] for e in skipped if e['control_id'] not in decisions]
-        skipped = [e for e in skipped if e['control_id'] in decisions]
-        # Real qwen3:8b listed 1.2.2 in both when it could fix it again or defer it as keeps_reverting (29 Oct
-        # evaluation), and repeated the plan after a generic duplicate error: name the choice it must make.
-        both = sorted({e['control_id'] for e in fixes} & {e['control_id'] for e in skipped})
-        if both:
-            raise ValueError(f"{', '.join(both)} is in both fixes and skipped: decide to fix it now or to defer it, "
-                             'not both')
+        codes = {'fix': [c for c in FIX_REASONS if c not in hidden],
+                 'defer': [c for c in SKIP_REASONS if c not in hidden and c not in CODE_ONLY_DEFERS]}
+        entries = check_decisions(entries)
+        outside = self._outside_goal(decisions)
+        # Deferring a control that has nothing to decide (a gap, or a finding without a library action) is a no-op:
+        # it is ignored and recorded rather than failing the plan, whatever its code (real qwen3:8b did this in 2 of 4
+        # probes, and gave such findings attention codes in the 30 Oct goal evaluation). A fix for one is refused.
+        self.ignored_skips = [e['control_id'] for e in entries if e['decision'] == 'defer' and e['control_id'] not in decisions]
+        entries = [e for e in entries if e['decision'] == 'fix' or e['control_id'] in decisions]
         seen = set()
-        for entry in fixes + skipped:
+        for entry in entries:
             control = entry['control_id']
             if control not in decisions:
                 raise ValueError(f'{control[:20]} is not in must_decide (gaps and assessment-only findings have no fix)')
+            # One list makes "fix and defer" impossible to express; a second entry for a finding is the same
+            # conflict (real qwen3:8b listed 7 findings in both of the earlier two lists on the real VM, 31 Oct).
             if control in seen:
-                raise ValueError(f'{control} appears more than once; decide each finding exactly once')
+                raise ValueError(f'{control} has more than one decision: give each finding exactly one, fix or defer')
             seen.add(control)
+            if entry['decision'] == 'fix' and entry['reason_code'] not in codes['fix']:
+                raise ValueError(f"{entry['reason_code'][:30]} is not a fix reason_code; use one of "
+                                 + ', '.join(sorted(codes['fix'])))
+        fixes = [dict(control_id=e['control_id'], action_id=e['action_id'], reason_code=e['reason_code'])
+                 for e in entries if e['decision'] == 'fix']
+        # Strict on what can lead to a write, lenient on what cannot: a deferral proposes nothing, so it never fails
+        # the plan. Code defers findings outside the goal itself. A deferral whose code is not a true defer code, and a
+        # finding left out, are deferred as not_decided and named in the summary. Real qwen3:8b kept failing the lab
+        # plan this way after the one-list redesign (31 Oct: 1.1.3 and NLA left out, then low_impact as a defer code).
+        skipped, self.replaced_codes = [], []
+        for entry in entries:
+            if entry['decision'] != 'defer':
+                continue
+            control, code = entry['control_id'], entry['reason_code']
+            if control in outside:
+                code = 'outside_goal'
+            elif code not in codes['defer'] or not self._facts(control, decisions)[1].get(code, True):
+                self.replaced_codes.append((control, code))
+                code = 'not_decided'
+            skipped.append(dict(control_id=control, reason_code=code))
         for entry in fixes:
             decision = decisions[entry['control_id']]
             if entry['action_id'] not in decision['usable']:
                 hint = (f"it waits for {', '.join(decision['waits_for'])} to be compliant" if decision['waits_for']
                         else f"use one of {', '.join(decision['usable'])}")
                 raise ValueError(f"{entry['action_id'][:30]} cannot fix {entry['control_id']} now; {hint}")
-        outside = self._outside_goal(decisions)
         skipped += [dict(control_id=c, reason_code='outside_goal') for c in outside if c not in seen]
-        missing = [c for c in decisions if c not in seen and c not in outside]
-        if missing:
-            raise ValueError('Every must_decide finding needs a fix or a skip reason; missing: ' + ', '.join(missing))
+        self.undecided = [c for c in decisions if c not in seen and c not in outside]
+        skipped += [dict(control_id=c, reason_code='not_decided') for c in self.undecided]
         refused = [e['control_id'] for e in fixes if e['control_id'] in outside]
         if refused:
             raise ValueError(f"{', '.join(refused)} is outside the administrator goal ({describe_goal(self.goal)}); "
-                             'leave it out: code skips it')
+                             'leave it out: code defers it')
         limit = self.goal['max_fixes'] if self.goal and not self.goal['unclear'] else 0
         if limit and len(fixes) > limit:
             raise ValueError(f'The administrator goal allows at most {limit} fix(es) and you listed {len(fixes)}: '
-                             f'keep the {limit} you judge most important and skip the rest with lower_priority')
+                             f'keep the {limit} you judge most important and defer the rest with lower_priority')
         # New dicts: the logged model arguments stay exactly as the model sent them.
         return ([dict(e, reason=self._reason(e, decisions)) for e in fixes],
                 [dict(e, reason=self._reason(e, decisions)) for e in skipped], decisions)
@@ -1039,8 +1115,14 @@ class OrchestratorTools(_RoleTools):
             controls = [self.store.get(p)['proposal']['control_id'] for p in self.proposals]
             parts.append('Proposed for your approval, in order: ' + ', '.join(
                 f"{c} ({scores[c]['level']} {scores[c]['score']})" for c in controls) + '.')
-        if skipped:
-            parts.append('Deferred by the Orchestrator: ' + ', '.join(s['control_id'] for s in skipped) + '.')
+        chosen = [s['control_id'] for s in skipped if s['reason_code'] != 'not_decided']
+        if chosen:
+            parts.append('Deferred by the Orchestrator: ' + ', '.join(chosen) + '.')
+        if self.undecided:
+            parts.append('Left out of the plan, so deferred by code: ' + ', '.join(self.undecided) + '.')
+        if self.replaced_codes:
+            parts.append('Deferred with a reason that did not fit, so recorded as not decided: ' + ', '.join(
+                f'{c} ({code if code in KNOWN_CODES else "unknown code"})' for c, code in self.replaced_codes) + '.')
         no_action = [f['control_id'] for f in self.analysis['findings'] if not f['candidate_actions']]
         no_action += self.analysis['unscored_non_compliant']
         if no_action:
@@ -1096,12 +1178,12 @@ class OrchestratorTools(_RoleTools):
                 raise ValueError('Analysis already completed for this scan')
             return self._delegate_analysis()
         if name == 'submit_plan':
-            arguments = self._args(name, arguments, lists=('fixes', 'skipped'))
+            arguments = self._args(name, arguments, lists=('decisions',))
             if self.scanner_outcome is None:
                 raise ValueError('Delegate the Scanner before submitting a plan')
             if self.scanner_outcome['outcome'] == 'handoff_analysis' and self.analysis is None:
                 raise ValueError('Delegate the Analysis Agent before submitting a plan')
-            fixes, skipped, decisions = self._validate_plan(arguments['fixes'], arguments['skipped'])
+            fixes, skipped, decisions = self._validate_plan(arguments['decisions'])
             # The plan is validated as a whole first, so a rejected plan stores nothing.
             for rank, entry in enumerate(fixes, 1):
                 proposal = self.store.propose(session_id=self.rounds.session_id, framework_run_id=self.framework_run_id,
@@ -1121,7 +1203,7 @@ class OrchestratorTools(_RoleTools):
         # A cold first request after another agent ran took over 60 s on the laptop (27 Oct evaluation).
         child, finished = self._child(SCANNER, tools, steps=6, calls=8, seconds=180, request=120)
         self.scans += 1
-        outcome = tools.terminal_outcome or dict(outcome='incomplete', reason=finished['summary'])
+        outcome = tools.terminal_outcome or dict(outcome='incomplete', reason=stop_text(finished))
         if outcome['outcome'] == 'handoff_analysis':
             self.scanner_outcome, self.framework_run_id, self.record = outcome, outcome['framework_run_id'], tools.record
             self.analysis = self.analysis_outcome = None  # A new scan needs a new analysis.
@@ -1142,7 +1224,7 @@ class OrchestratorTools(_RoleTools):
         # Scores are deterministic (D2): if the agent stopped early, code still computes the same ranking.
         self.analysis = tools.analysis or risk_analysis(self.record, previous)
         self.analysis_outcome = tools.terminal_outcome or dict(
-            outcome='incomplete', reason='Analysis Agent stopped without a decision: ' + finished['summary'],
+            outcome='incomplete', reason='Analysis Agent stopped without a decision: ' + stop_text(finished),
             attention=[], gap_triage=[], rescan_requested=[])
         must_decide = []
         decisions = self._decisions()
@@ -1152,7 +1234,7 @@ class OrchestratorTools(_RoleTools):
                 continue
             fix_codes, skip_codes = self._codes(control, decisions)
             entry = dict(control_id=control, level=decision['finding']['level'], score=decision['finding']['score'],
-                         actions=decision['usable'], fix_codes=fix_codes, skip_codes=skip_codes)
+                         actions=decision['usable'], fix_codes=fix_codes, defer_codes=skip_codes)
             if decision['waits_for']:
                 entry['blocked_until_compliant'] = decision['waits_for']
             reverted = reversions(control, self.record, previous)
@@ -1270,7 +1352,7 @@ class OrchestratorReviewTools(_RoleTools):
             if tools.record is not None:  # Collected evidence counts even if the agent did not hand off.
                 self.verification = self._scan_facts(tools.framework_run_id)
             else:
-                self.verification = dict(framework_run_id=None, reason=tools.failure or finished['summary'])
+                self.verification = dict(framework_run_id=None, reason=tools.failure or stop_text(finished))
             facts = self._facts()
             return dict(agent=SCANNER, status=finished['status'],
                         verification_run_id=self.verification['framework_run_id'],
@@ -1331,8 +1413,10 @@ class AgenticHardening:
         return int(self.deadline - time.monotonic())
 
     def previous_records(self, framework_run_id, limit=10):
-        """Earlier runs for the same target, newest first, for drift (D) comparison."""
-        return self.history.previous_records(framework_run_id, limit)
+        """Earlier runs for the same target, newest first, for drift (D) comparison. This round's other scans are
+        not history: the Scanner's own rescan replaced them minutes ago."""
+        return self.history.previous_records(framework_run_id, limit,
+                                             exclude=[r for r in self.scanned_runs if r != framework_run_id])
 
     def _start(self, session_id):
         self.session_id, self.round_id = session_id or uuid4().hex, uuid4().hex
@@ -1347,15 +1431,18 @@ class AgenticHardening:
             raise ValueError(f'The goal is limited to {MAX_GOAL_CHARS} characters')
         self._start(session_id)
         tools = OrchestratorTools(self, goal)
+        # A third attempt for the plan: real qwen3:8b usually corrects the error it is shown but sometimes makes a
+        # new one (31 Oct lab check: a defer with a fix code, then two findings left out). Refusals change nothing.
         result = Coordinator(self.client_factory(ORCHESTRATOR), tools, limits=Limits(
-            steps=12, calls=16, seconds=self.seconds, request_seconds=240)).run()
+            steps=12, calls=16, seconds=self.seconds, request_seconds=240, invalid=3)).run()
         outcome = tools.terminal_outcome or dict(outcome='incomplete', proposals=list(tools.proposals),
-            reason='The Orchestrator stopped without finishing the round: ' + result['events'][-1]['data']['summary'])
+            reason='The Orchestrator stopped without finishing the round: ' + stop_text(result['events'][-1]['data']))
         for run_id in self.scanned_runs:
             self.history.record_drift(run_id)
         self.store.add_round(self.session_id, 'assessment', tools.framework_run_id, round_id=self.round_id,
                              orchestrator_run_id=result['run_id'], children=dict(self.children), outcome=outcome,
-                             analysis=tools.analysis, analysis_outcome=tools.analysis_outcome, goal=tools.goal_record())
+                             analysis=tools.analysis, analysis_outcome=tools.analysis_outcome, goal=tools.goal_record(),
+                             scanned_runs=list(self.scanned_runs))
         return dict(session_id=self.session_id, round_id=self.round_id, framework_run_id=tools.framework_run_id,
                     outcome=outcome, orchestrator_run_id=result['run_id'], goal=tools.goal_record())
 
@@ -1383,7 +1470,7 @@ class AgenticHardening:
             verification = tools.verification and tools.verification['framework_run_id']
             outcome = tools.terminal_outcome or dict(outcome='incomplete', reason=(
                 (tools.remediation or {}).get('reason', 'Nothing was executed.') + ' The Orchestrator stopped '
-                'without deciding the next step: ' + result['events'][-1]['data']['summary']))
+                'without deciding the next step: ' + stop_text(result['events'][-1]['data'])))
         if verification is None and any(verdict_kind(v['verdict']) != 'refused' for v in verdicts):
             # A possible write must never stay unobserved: code runs the verification scan itself.
             try:
@@ -1402,14 +1489,33 @@ class AgenticHardening:
         return dict(verdicts=verdicts, verification_run_id=verification, outcome=outcome, round_id=self.round_id)
 
     def _execute_without_ai(self, run_id):
+        """The administrator's no-model path, with the Remediation Agent's guards: one read-only precheck, then each
+        approved request in rank order. A request that is not ready (value changed since approval, or prerequisite
+        not compliant) is closed unexecuted, as the agent's skip_fix would close it."""
         executor, verdicts = ApprovedActionExecutor(self.store, self.scanner), []
+        try:
+            observed = self.scanner.observe().results
+        except ChannelError as exc:  # Nothing is executed and every approval stays open.
+            return [dict(proposal_id=None, control_id=None, action_id=None,
+                         verdict='Refused before execution: the VM could not be prechecked (' + exc.state + ')')]
+        by_id = {r.control.control_id: r for r in observed}
         for record in self.store.for_run(run_id):
             if record['decision'] == 'approved' and record['verdict'] is None:
                 proposal = record['proposal']
-                try:
-                    verdict = executor.execute(proposal['request_id'])
-                except (ValueError, ChannelError) as exc:
-                    verdict = 'Refused before execution: ' + str(exc)[:200]
+                current = by_id.get(proposal['control_id'])
+                blocked = LIBRARY[proposal['action_id']].blocked_by(observed)
+                if current is None or not _same_value(current.evidence.value, proposal['expected_before']):
+                    verdict = self.store.record_refusal(proposal['request_id'], 'skipped', 'precheck without AI: '
+                                                        + REMEDIATION_SKIPS['precondition_changed'])
+                elif blocked:
+                    verdict = self.store.record_refusal(proposal['request_id'], 'skipped', 'precheck without AI: '
+                                                        + REMEDIATION_SKIPS['prerequisite_not_met'] + ' ('
+                                                        + ', '.join(blocked) + ')')
+                else:
+                    try:
+                        verdict = executor.execute(proposal['request_id'])
+                    except (ValueError, ChannelError) as exc:
+                        verdict = 'Refused before execution: ' + str(exc)[:200]
                 verdicts.append(dict(proposal_id=proposal['request_id'], control_id=proposal['control_id'],
                                      action_id=proposal['action_id'], verdict=verdict))
                 if verdict_kind(verdict) == 'uncertain':
@@ -1421,10 +1527,12 @@ class AgenticHardening:
         return self.history.compare(before_run_id, after_run_id)
 
     def traces(self, round_id):
+        # Filtered in SQL: every page view reads the traces of one or two rounds, not the whole history.
         with self.store._connection() as db:
-            rows = db.execute('SELECT run_id,payload FROM investigation_runs ORDER BY rowid').fetchall()
+            rows = db.execute("SELECT run_id FROM investigation_runs WHERE json_extract(payload, '$.team_id')=? "
+                              'ORDER BY rowid', (round_id,)).fetchall()
         log = InvestigationLog(self.store)
-        return [log.get(i) for i, raw in rows if json.loads(raw).get('team_id') == round_id]
+        return [log.get(i) for (i,) in rows]
 
 
 def explain_finding(finding, client=None, *, timeout=60):

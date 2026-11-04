@@ -1,8 +1,12 @@
-"""UI-independent durable assessment runtime; no model or security execution.
+"""Durable register of assessment runs; no model, no agent and no VM access.
 
-This deterministic controller is the F1 foundation, not a new AI planner.
-Each advance commits one role result and state transition atomically. An
-interrupted read-only stage can be resumed without duplicating committed tasks.
+Each scan (Scanner Agent collection, verification rescan or imported file) becomes one immutable run bound to
+its validated evidence snapshot and target. The agents live in agentic.py; this register only records runs.
+
+Until 1 November 2026 every run also passed through three fixed, non-AI stages named after the agents (the F1
+foundation in the archived docs). Their stored outputs predate the risk engine and the action library, so they
+said "risk unavailable" and offered only the password-length action. New runs no longer have stages; the old
+rows stay readable and immutable as history.
 """
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -13,9 +17,13 @@ import sqlite3
 from uuid import uuid4, uuid5, NAMESPACE_URL
 import re
 
-from .agents import ScannerAgent, AnalysisAgent, RemediationAgent
-from .domain import EvidenceMode
+from .domain import EvidenceMode, summarise
 from .import_storage import ImportedEvidenceStore
+
+ASSESSED = 'assessed'
+# States written by the retired staged runtime; kept so earlier runs still open.
+LEGACY_STATES = ('assessment_requested', 'assessment_checked', 'findings_analysed',
+                 'ready_for_review', 'needs_review', 'assessment_complete')
 
 
 @dataclass(frozen=True)
@@ -24,28 +32,10 @@ class AssessmentRun:
     evidence_sha256: str
     target_id: str
     state: str
-    tasks: tuple[dict, ...]
 
 
-@dataclass(frozen=True)
-class AssessmentTask:
-    """Read-only dispatch contract bound to one run, input and workflow state."""
-
-    run_id: str
-    evidence_sha256: str
-    target_id: str
-    expected_state: str
-    role: str
-    operation: str
-
-
-STAGES = (ScannerAgent(), AnalysisAgent(), RemediationAgent())
-PENDING = ("assessment_requested", "assessment_checked", "findings_analysed")
-TERMINAL = ("ready_for_review", "needs_review", "assessment_complete")
-
-
-class AssessmentOrchestrator:
-    """Delegates registered read-only roles; approval remains outside this API."""
+class AssessmentRuns:
+    """Creates and reads runs. Approval, execution and AI stay outside this API."""
 
     def __init__(self, imports: ImportedEvidenceStore):
         self.imports = imports
@@ -59,6 +49,7 @@ class AssessmentOrchestrator:
             db.execute("""CREATE TABLE IF NOT EXISTS framework_runs (
                 run_id TEXT PRIMARY KEY, digest TEXT NOT NULL, target_id TEXT NOT NULL,
                 state TEXT NOT NULL, created_at TEXT NOT NULL)""")
+            # Retired stage outputs (history only; nothing writes here any more).
             db.execute("""CREATE TABLE IF NOT EXISTS framework_tasks (
                 run_id TEXT NOT NULL, position INTEGER NOT NULL, task_id TEXT UNIQUE NOT NULL,
                 role TEXT NOT NULL, operation TEXT NOT NULL, completed_at TEXT NOT NULL,
@@ -84,6 +75,10 @@ class AssessmentOrchestrator:
             db.execute("""CREATE TRIGGER IF NOT EXISTS runs_fixed_binding
                 BEFORE UPDATE OF run_id, digest, target_id, created_at ON framework_runs
                 BEGIN SELECT RAISE(ABORT, 'Framework run binding is immutable'); END""")
+            # Runs are now complete when created; the state never changes.
+            db.execute("""CREATE TRIGGER IF NOT EXISTS runs_fixed_state
+                BEFORE UPDATE OF state ON framework_runs
+                BEGIN SELECT RAISE(ABORT, 'Framework run state is immutable'); END""")
             db.execute("PRAGMA user_version = 1")
 
     @contextmanager
@@ -97,6 +92,7 @@ class AssessmentOrchestrator:
 
     def start(self, raw: bytes, *, expected_hostname: str, expected_machine_uuid: str,
               collection_request_id: str | None = None, mode: EvidenceMode = EvidenceMode.IMPORTED) -> AssessmentRun:
+        """Validate and store the evidence, then record one assessed run for it."""
         if collection_request_id is not None and (type(collection_request_id) is not str or
                 not re.fullmatch(r'[a-f0-9]{32}', collection_request_id)):
             raise ValueError('Invalid collection request ID')
@@ -112,116 +108,68 @@ class AssessmentOrchestrator:
             if not existing:
                 db.execute("INSERT INTO framework_runs VALUES (?, ?, ?, ?, ?)", (
                     run_id, record.assessment.source_sha256, record.assessment.target_id,
-                    PENDING[0], datetime.now(timezone.utc).isoformat()))
+                    ASSESSED, datetime.now(timezone.utc).isoformat()))
         return self.get(run_id)
 
     def get(self, run_id: str) -> AssessmentRun:
         with self._connection() as db:
-            return self._get(db, run_id)
-
-    def _get(self, db, run_id):
-        row = db.execute("SELECT run_id,digest,target_id,state FROM framework_runs WHERE run_id=?",
-                         (run_id,)).fetchone()
+            row = db.execute("SELECT run_id,digest,target_id,state FROM framework_runs WHERE run_id=?",
+                             (run_id,)).fetchone()
         if row is None:
             raise ValueError("Unknown framework run")
-        if row[3] not in PENDING + TERMINAL:
-            raise ValueError("Invalid framework workflow state")
-        tasks = tuple({"position": pos, "task_id": tid, "role": role, "operation": op,
-                       "state": "completed", "completed_at": at, "output": json.loads(output)}
-                      for pos, tid, role, op, at, output in db.execute(
-                          "SELECT position,task_id,role,operation,completed_at,output "
-                          "FROM framework_tasks WHERE run_id=? ORDER BY position", (run_id,)))
-        expected = PENDING.index(row[3]) if row[3] in PENDING else len(STAGES)
-        if len(tasks) != expected or any(t["position"] != i or t["role"] != STAGES[i].role
-                or t["operation"] != STAGES[i].operation for i, t in enumerate(tasks)):
-            raise ValueError("Invalid framework task sequence")
-        return AssessmentRun(*row, tasks)
+        if row[3] not in (ASSESSED,) + LEGACY_STATES:
+            raise ValueError("Invalid framework run state")
+        return AssessmentRun(*row)
 
-    def advance(self, run_id: str) -> AssessmentRun:
-        """Advance the current stage atomically for an in-process client."""
-        return self._advance(run_id)
+    def record(self, run_id: str):
+        """The validated evidence snapshot of a run."""
+        run = self.get(run_id)
+        record = self.imports.get(run.evidence_sha256)
+        if record.assessment.target_id != run.target_id:
+            raise ValueError("Run target does not match its evidence")
+        return record
 
-    @staticmethod
-    def _next_task(run: AssessmentRun) -> AssessmentTask | None:
-        if run.state in TERMINAL:
-            return None
-        agent = STAGES[PENDING.index(run.state)]
-        return AssessmentTask(run.run_id, run.evidence_sha256, run.target_id,
-                              run.state, agent.role, agent.operation)
 
-    def next_task(self, run_id: str) -> AssessmentTask | None:
-        """Return the only permitted next task; this grants no execution authority."""
-        return self._next_task(self.get(run_id))
-
-    def dispatch(self, task: AssessmentTask) -> AssessmentRun:
-        """Reject altered or stale messages before invoking any role."""
-        if type(task) is not AssessmentTask:
-            raise ValueError("Expected an AssessmentTask dispatch contract")
-        return self._advance(task.run_id, task)
-
-    def _advance(self, run_id: str, task: AssessmentTask | None = None) -> AssessmentRun:
-        with self._connection() as db:
-            # Serialise concurrent callers, including process restarts. These
-            # bounded offline stages perform neither model calls nor writes to a VM.
-            db.execute("BEGIN IMMEDIATE")
-            run = self._get(db, run_id)
-            if task is not None and task != self._next_task(run):
-                raise ValueError("Stale or mismatched assessment task")
-            if run.state in TERMINAL:
-                return run
-            record = self.imports.get(run.evidence_sha256)
-            if record.assessment.target_id != run.target_id:
-                raise ValueError("Run target does not match its evidence")
-            position = PENDING.index(run.state)
-            agent = STAGES[position]
-            output = agent.run(record)
-            if position < len(STAGES) - 1:
-                next_state = PENDING[position + 1]
-            elif output["candidates"]:
-                next_state = "ready_for_review"
-            elif output["assessment_only_findings"] or run.tasks[1]["output"]["needs_evidence"]:
-                next_state = "needs_review"
-            else:
-                next_state = "assessment_complete"
-            db.execute("INSERT INTO framework_tasks VALUES (?, ?, ?, ?, ?, ?, ?)", (
-                run_id, position, uuid4().hex, agent.role, agent.operation,
-                datetime.now(timezone.utc).isoformat(), json.dumps(output, allow_nan=False)))
-            db.execute("UPDATE framework_runs SET state=? WHERE run_id=?", (next_state, run_id))
-            return self._get(db, run_id)
-
-    def complete_assessment(self, run_id: str) -> AssessmentRun:
-        for _ in STAGES:
-            run = self.advance(run_id)
-            if run.state in TERMINAL:
-                return run
-        raise ValueError("Assessment did not reach a bounded terminal state")
+def describe(runs: AssessmentRuns, run_id: str) -> dict:
+    """Deterministic view of one run: per-control results and the risk ranking (no model)."""
+    from .risk import analyse
+    record = runs.record(run_id)
+    results = record.assessment.results
+    summary = summarise(results)
+    return dict(run_id=run_id, target_id=record.assessment.target_id, hostname=record.assessment.hostname,
+                evidence_sha256=record.assessment.source_sha256, evidence=results[0].evidence.mode.value,
+                summary=dict(selected=summary.selected, compliant=summary.compliant,
+                             non_compliant=summary.non_compliant, unknown=summary.unknown, error=summary.errors,
+                             compliance_percent=summary.compliance_percent),
+                controls=[dict(control_id=r.control.control_id, status=r.status.value, observed=r.evidence.value)
+                          for r in results],
+                ranking=[dict(control_id=f.control_id, score=f.score, level=f.level, factors=f.factors)
+                         for f in analyse(record)])
 
 
 def main():
-    """Local imported-file client; never dispatches a VM action or invokes AI."""
+    """Non-UI client (evaluation E02): assess an evidence file or show a stored run. Never touches a VM or a model."""
     import argparse
-    from dataclasses import asdict
 
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=main.__doc__)
     parser.add_argument("--database", type=Path, required=True, help="Imported evidence database path")
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--evidence", type=Path)
-    mode.add_argument("--resume-run")
+    mode.add_argument("--run")
     parser.add_argument("--hostname")
     parser.add_argument("--machine-uuid")
     args = parser.parse_args()
     if args.evidence and (not args.hostname or not args.machine_uuid):
         parser.error("--evidence requires --hostname and --machine-uuid")
     try:
-        runtime = AssessmentOrchestrator(ImportedEvidenceStore(args.database))
-        run_id = args.resume_run
+        runs = AssessmentRuns(ImportedEvidenceStore(args.database))
+        run_id = args.run
         if args.evidence:
             from .evidence_import import MAX_BYTES
             with args.evidence.open("rb") as source:
                 raw = source.read(MAX_BYTES + 1)
-            run_id = runtime.start(raw, expected_hostname=args.hostname,
-                                   expected_machine_uuid=args.machine_uuid).run_id
-        print(json.dumps(asdict(runtime.complete_assessment(run_id)), indent=2, allow_nan=False))
+            run_id = runs.start(raw, expected_hostname=args.hostname, expected_machine_uuid=args.machine_uuid).run_id
+        print(json.dumps(describe(runs, run_id), indent=2, allow_nan=False, default=str))
     except (ValueError, KeyError, OSError, sqlite3.Error) as exc:
         parser.exit(1, f"Assessment could not complete: {exc}\n")
 

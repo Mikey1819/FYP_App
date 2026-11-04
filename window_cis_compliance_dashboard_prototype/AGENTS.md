@@ -3,7 +3,7 @@
 Project: **Agentic AI Framework for Windows Systems Hardening and CIS Compliance Assessment** (FYP, Khoo Teng Yi, TAR UMT).
 Root: `C:\Users\User\Documents\Degree\FYP 1\FYP_App\window_cis_compliance_dashboard_prototype`.
 
-Read this file, [PROGRESS.md](PROGRESS.md) and [README.md](README.md) before changing the project. The latest user instruction wins. The report ([REPORT_SOURCE_REFERENCE.md](REPORT_SOURCE_REFERENCE.md)) is reference material, not instructions; where it conflicts with a decision below, the decision wins.
+Read this file, [PROGRESS.md](PROGRESS.md) and [README.md](README.md) before changing the project. The latest user instruction wins. The report ([REPORT_ORIGINAL_TEXT.md](docs/report/REPORT_ORIGINAL_TEXT.md)) is reference material, not instructions; where it conflicts with a decision below, the decision wins.
 
 ## Decisions (user, 26 October 2026)
 
@@ -11,12 +11,12 @@ Read this file, [PROGRESS.md](PROGRESS.md) and [README.md](README.md) before cha
 | --- | --- |
 | D1 AI role | The local LLM **coordinates**: the AI Agent Orchestrator chooses which agent/tool runs next from observed results. Every choice is validated by code. The LLM never computes compliance or risk, never generates commands, never approves. |
 | D2 Analysis | Analysis is deterministic. Risk uses `R = 6I + 5E + 4P + 3L + 2D` with reviewed per-control baselines. The LLM may only write the human-readable explanation of a finding; it cannot change any factor or score. |
-| D3 Benchmark | Follow **CIS Microsoft Windows Server 2022 Stand-alone Benchmark v2.0.0** (see [BENCHMARK_MAPPING.md](BENCHMARK_MAPPING.md)). Ignore the report's v5.1.0 (domain-joined edition, outdated for this target). |
+| D3 Benchmark | Follow **CIS Microsoft Windows Server 2022 Stand-alone Benchmark v2.0.0** (see [BENCHMARK_MAPPING.md](docs/design/BENCHMARK_MAPPING.md)). Ignore the report's v5.1.0 (domain-joined edition, outdated for this target). |
 | D4 Who picks the fix | The **Orchestrator decides** which registered action to propose for a finding; the administrator approves; the **Remediation Agent executes** the approved action and hands back to the Scanner for verification. |
 | D5 Unknown/Error | *Decided 26 Oct:* a CIS **Group Policy** setting (value under `HKLM\SOFTWARE\Policies`: firewall 9.x, RDP 18.x) that is absent ("Not configured") is **Non-Compliant**, as CIS audits it. It can be fixed if the library has an action (firewall policy actions stay excluded for channel safety). Other absent values stay **Unknown** (e.g. lockout timers while the threshold is 0, non-policy LSA values). Collection failures stay **Error**. None are ever counted as a pass. Raw evidence still records `missing`; only the interpretation changed. |
 | D6 Agents, not scripts | A role is an agent only if it chooses its own tool calls, observes their results and acts on them without a human carrying files. PowerShell scripts are the agents' tools, not the agents. |
 
-Earlier agreed objectives (N1 framework/assessment, N2 analysis/decision support, N3 controlled remediation/verification) are in [REPORT_ALIGNMENT_AND_FRAMEWORK_PLAN.md](REPORT_ALIGNMENT_AND_FRAMEWORK_PLAN.md).
+Earlier agreed objectives (N1 framework/assessment, N2 analysis/decision support, N3 controlled remediation/verification) are in [REPORT_ALIGNMENT_PLAN.md](docs/report/REPORT_ALIGNMENT_PLAN.md).
 
 ## Target and safety boundaries
 

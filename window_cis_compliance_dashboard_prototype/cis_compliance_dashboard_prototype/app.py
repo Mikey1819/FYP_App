@@ -6,7 +6,7 @@ from hardening.databases import imports_database
 from hardening.history_view import render_history
 from hardening.ollama_client import OllamaClient, model_available
 from hardening.overview_view import render_overview
-from hardening.ui import md_escape
+from hardening.ui import CARTOON_CSS, md_escape
 
 st.set_page_config(page_title="VM Hardening Workspace", page_icon=":material/shield:", layout="wide")
 
@@ -45,6 +45,7 @@ def main():
                                    url_path="agentic"),
                            st.Page(history_page, title="History and drift", icon=":material/history:",
                                    url_path="history")])
+    st.html(CARTOON_CSS)
     with st.sidebar:
         st.markdown('### VM Hardening Workspace')
         _status_panel()

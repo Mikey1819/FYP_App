@@ -15,15 +15,15 @@ import sqlite3
 import uuid
 
 from .action_library import LIBRARY
-from .domain import Status
+from .domain import EvidenceMode, Status
 from .evidence_import import _no_duplicates, _object, _time, encode, load_evidence
 from .winrm_channel import ChannelError
 
 APP = Path(__file__).resolve().parents[1]
-RUNNER = APP.parent / 'scripts' / 'Invoke-RemediationAction.ps1'
+RUNNER = APP.parent / 'scripts' / 'vm' / 'Invoke-RemediationAction.ps1'
 APPROVAL_LIFETIME = timedelta(hours=1)
 CLOCK_SKEW = timedelta(minutes=5)
-TABLES = ('rem_proposals', 'rem_decisions', 'rem_receipts', 'agentic_rounds', 'drift_records',
+TABLES = ('rem_proposals', 'rem_decisions', 'rem_comments', 'rem_receipts', 'agentic_rounds', 'drift_records',
           'investigation_runs', 'investigation_events')
 
 
@@ -44,6 +44,9 @@ class RemediationStore:
         with self._connection() as db:
             db.execute('CREATE TABLE IF NOT EXISTS rem_proposals (id TEXT PRIMARY KEY, run_id TEXT NOT NULL, payload BLOB NOT NULL)')
             db.execute('CREATE TABLE IF NOT EXISTS rem_decisions (id TEXT PRIMARY KEY, decision TEXT NOT NULL, payload BLOB NOT NULL)')
+            # The administrator's optional comment on a decision (report Table 4.10). Kept apart from the decision:
+            # an approval's bytes are the exact request the VM runner checks by hash.
+            db.execute('CREATE TABLE IF NOT EXISTS rem_comments (id TEXT PRIMARY KEY, payload TEXT NOT NULL)')
             db.execute('CREATE TABLE IF NOT EXISTS rem_receipts (id TEXT PRIMARY KEY, payload BLOB NOT NULL, verdict TEXT NOT NULL)')
             db.execute('''CREATE TABLE IF NOT EXISTS agentic_rounds (id TEXT PRIMARY KEY, session_id TEXT NOT NULL,
                 created_at TEXT NOT NULL, payload TEXT NOT NULL)''')
@@ -94,6 +97,18 @@ class RemediationStore:
                               (limit,)).fetchall()
         return [dict(round_id=i, created_at=c, **json.loads(p)) for i, c, p in rows]
 
+    def superseded_runs(self):
+        """Scans of an assessment round other than the one the round analysed (a rescan replaced it, or the
+        Scanner never handed it off)."""
+        with self._connection() as db:
+            rows = db.execute("SELECT payload FROM agentic_rounds WHERE json_extract(payload, '$.kind')='assessment' "
+                              "AND json_extract(payload, '$.scanned_runs') IS NOT NULL").fetchall()
+        superseded = set()
+        for (payload,) in rows:
+            round_ = json.loads(payload)
+            superseded |= set(round_['scanned_runs']) - {round_['framework_run_id']}
+        return superseded
+
     def all_proposals(self):
         with self._connection() as db:
             ids = [r[0] for r in db.execute('SELECT id FROM rem_proposals ORDER BY rowid')]
@@ -132,9 +147,13 @@ class RemediationStore:
                 raise ValueError('Unknown remediation proposal')
             decision = db.execute('SELECT decision,payload FROM rem_decisions WHERE id=?', (proposal_id,)).fetchone()
             receipt = db.execute('SELECT verdict,payload FROM rem_receipts WHERE id=?', (proposal_id,)).fetchone()
+            comment = db.execute('SELECT payload FROM rem_comments WHERE id=?', (proposal_id,)).fetchone()
+        record = json.loads(decision[1]) if decision else None
+        # Rejections before 1 Nov 2026 kept their comment only inside the decision record.
+        note = json.loads(comment[0])['comment'] if comment else ((record or {}).get('comment') or None)
         return dict(proposal=json.loads(row[0]), decision=decision[0] if decision else None,
                     request=decision[1] if decision and decision[0] == 'approved' else None,
-                    decision_record=json.loads(decision[1]) if decision else None,
+                    decision_record=record, comment=note,
                     verdict=receipt[0] if receipt else None, receipt=receipt[1] if receipt else None)
 
     def for_run(self, framework_run_id):
@@ -159,9 +178,13 @@ class RemediationStore:
             payload = encode(request)
         else:
             payload = encode(dict(operator=operator.strip(), comment=str(comment)[:500], at=now.isoformat()))
+        note = str(comment or '').strip()[:500]
         with self._connection() as db:
             db.execute('INSERT INTO rem_decisions VALUES (?,?,?)',
                        (proposal_id, 'approved' if approve else 'rejected', payload))
+            if note:
+                db.execute('INSERT INTO rem_comments VALUES (?,?)', (proposal_id, json.dumps(
+                    dict(comment=note, operator=operator.strip(), at=now.isoformat()))))
         return payload if approve else None
 
     def record_refusal(self, proposal_id, state, detail):
@@ -215,9 +238,9 @@ class RemediationStore:
             raise ValueError('Successful execution requires fresh verification evidence')
         with self._connection() as db:
             db.execute('INSERT INTO rem_receipts VALUES (?,?,?)', (data['request_id'], raw, verdict))
-        for evidence, _ in decoded.values():
+        for evidence, _ in decoded.values():  # The runner read it over WinRM, so it is Live evidence.
             self.imports.save(evidence, expected_hostname=request['hostname'],
-                              expected_machine_uuid=request['machine_uuid'], now=now)
+                              expected_machine_uuid=request['machine_uuid'], now=now, mode=EvidenceMode.LIVE)
         return verdict
 
 

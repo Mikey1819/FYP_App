@@ -42,7 +42,7 @@ This is the **next-stage design**, not implemented multi-platform support. The c
 
 ## Smallest next implementation milestone
 
-Start with read-only evidence imported from the installed lab VM, avoiding a remote access service for the first integration. Source review and the guarded collector/strict offline importer are implemented and fixture-tested. On 19 October the user confirmed the collector is visible in VM Explorer after shared-folder setup. The first JSON export has now been returned, validated and saved; see VM_VALIDATION.md for actual results and remaining manual comparisons. The separate Imported VM Assessments page and immutable storage are integrated and fixture-tested. Capture exact machine identity in the first export and compare all selected results with independent manual observations before claiming A11. Follow VM_EVIDENCE.md for collection and import.
+Start with read-only evidence imported from the installed lab VM, avoiding a remote access service for the first integration. Source review and the guarded collector/strict offline importer are implemented and fixture-tested. On 19 October the user confirmed the collector is visible in VM Explorer after shared-folder setup. The first JSON export has now been returned, validated and saved; see FIRST_VM_IMPORT_VALIDATION.md for actual results and remaining manual comparisons. The separate Imported VM Assessments page and immutable storage are integrated and fixture-tested. Capture exact machine identity in the first export and compare all selected results with independent manual observations before claiming A11. Follow VM_EVIDENCE.md for collection and import.
 
 Before collector implementation, record:
 

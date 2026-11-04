@@ -4,13 +4,14 @@ import sqlite3
 
 import streamlit as st
 
-from .framework import AssessmentOrchestrator
+from .framework import AssessmentRuns
 from .history import HistoryService
 from .import_storage import ImportedEvidenceStore
 from .remediation import RemediationStore
+from .ui import FULL, md_escape, myt
 
 def _label(run):
-    return f"{run['created_at'][:19].replace('T', ' ')} UTC · {run['run_id'][:8]}"
+    return f"{myt(run['created_at'], FULL)} MYT · {run['run_id'][:8]}"
 
 
 def render_history(database_path: Path):
@@ -20,7 +21,7 @@ def render_history(database_path: Path):
                'profile, rule and collection method are identical.')
     try:
         imports = ImportedEvidenceStore(database_path)
-        runtime = AssessmentOrchestrator(imports)
+        runtime = AssessmentRuns(imports)
         store = RemediationStore(database_path.with_name(database_path.stem + '_agentic.sqlite3'), imports)
         history = HistoryService(runtime, store)
         targets = history.targets()
@@ -30,11 +31,16 @@ def render_history(database_path: Path):
         target = st.selectbox('VM', list(targets), format_func=lambda t: f'{targets[t]} ({t.removeprefix("windows:")})',
                               key='history_target')
         runs = history.runs(target)
-        for run in runs:  # Idempotent: fills in drift for any run recorded before this page existed.
-            history.record_drift(run['run_id'])
+        # Rounds record drift as they scan; this fills in runs recorded before the page existed. Idempotent, and done
+        # once per browser session, because comparing every run on every page view grows with the history.
+        checked = st.session_state.setdefault('history_drift_checked', set())
+        for run in runs:
+            if run['run_id'] not in checked:
+                history.record_drift(run['run_id'])
+                checked.add(run['run_id'])
 
         st.subheader('Assessment history')
-        st.dataframe([{'Assessed (UTC)': r['created_at'][:19].replace('T', ' '), 'Run': r['run_id'][:8],
+        st.dataframe([{'Assessed (MYT)': myt(r['created_at'], FULL), 'Run': r['run_id'][:8],
                        'Evidence': {'Live': 'Live (WinRM)', 'Imported': 'Imported file'}[r['evidence']],
                        'Controls': r['controls'], 'Compliant': r['compliant'], 'Non-compliant': r['non_compliant'],
                        'Unknown': r['unknown'], 'Error': r['error'],
@@ -51,7 +57,7 @@ def render_history(database_path: Path):
             regressions = sum(r['change'] == 'Regression' for r in records)
             if regressions:
                 st.warning(f'{regressions} regression(s): a control that was compliant became non-compliant.')
-            st.dataframe([{'Detected (UTC)': r['detected_at'][:19].replace('T', ' '),
+            st.dataframe([{'Detected (MYT)': myt(r['detected_at'], FULL),
                            'Control': r['control_id'], 'Title': r['title'], 'Before': repr(r['before']),
                            'After': repr(r['after']), 'Change': r['change'],
                            'Runs': r['previous_run_id'][:8] + ' → ' + r['current_run_id'][:8]} for r in records],
@@ -74,4 +80,4 @@ def render_history(database_path: Path):
                                'Before': repr(r['before']), 'After': repr(r['after']), 'Change': r['change']}
                               for r in shown] or [{'Change': 'No differences'}], hide_index=True)
     except (ValueError, OSError, sqlite3.Error) as exc:
-        st.error('History: ' + str(exc))
+        st.error('History: ' + md_escape(exc))

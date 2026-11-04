@@ -5,12 +5,15 @@ and validates every call itself. The loop bounds steps, calls, time and invalid 
 """
 
 from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 import json
 import re
 import time
 import uuid
 
-from .workflow import _now
+
+def _now():
+    return datetime.now(timezone.utc).isoformat()
 
 
 @dataclass(frozen=True)
@@ -19,11 +22,12 @@ class Limits:
     calls: int = 10
     seconds: int = 240
     request_seconds: int = 90
+    invalid: int = 2  # Invalid calls before the run stops; a refused call has no effect.
 
     def __post_init__(self):
         # 600 s matches NFR06 (assessment and verification within 10 minutes); one local request may need 240 s
         # on laptop-class hardware when switching agents evicts the model's prompt cache.
-        for name, maximum in (("steps", 12), ("calls", 16), ("seconds", 600), ("request_seconds", 240)):
+        for name, maximum in (("steps", 12), ("calls", 16), ("seconds", 600), ("request_seconds", 240), ("invalid", 3)):
             value = getattr(self, name)
             if type(value) is not int or not 1 <= value <= maximum:
                 raise ValueError("Investigation limits must be positive bounded integers")
@@ -155,8 +159,9 @@ class Coordinator:
                 if terminal is not None:
                     status, summary, stop = 'Completed', terminal['reason'], True
                     break
-                if invalid_count >= 2:
-                    status, summary, stop = "Invalid calls blocked", "Investigation stopped after two invalid tool calls.", True
+                if invalid_count >= self.limits.invalid:
+                    status, summary, stop = ("Invalid calls blocked",
+                                             f"Investigation stopped after {self.limits.invalid} invalid tool calls.", True)
                     break
             if stop:
                 break

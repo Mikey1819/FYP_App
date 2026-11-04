@@ -1,4 +1,4 @@
-"""Cross-check comparison against a stored fixture scan, from a file and over a simulated WinRM session. No VM."""
+"""Cross-check comparison against a stored fixture scan, over a simulated WinRM session. No VM."""
 from contextlib import redirect_stderr, redirect_stdout
 import importlib.util
 import io
@@ -15,7 +15,7 @@ from test_evidence_import import MACHINE_UUID, NOW
 from test_full_controls import full_fixture
 from test_winrm_channel import IDENTITY, FakeSession
 
-SCRIPT = Path(__file__).resolve().parents[2] / 'scripts' / 'cross_check_controls.py'
+SCRIPT = Path(__file__).resolve().parents[2] / 'scripts' / 'tools' / 'cross_check_controls.py'
 spec = importlib.util.spec_from_file_location('cross_check_controls', SCRIPT)
 cross_check = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(cross_check)
@@ -52,35 +52,33 @@ class CrossCheckTests(unittest.TestCase):
             cross_check.main()
         return output.getvalue()
 
-    def run_file(self):
-        path = self.folder / 'crosscheck.json'
-        path.write_text(json.dumps(self.report), encoding='utf-8')
-        return self.run_script('--file', str(path))
+    def run_live(self):
+        session = CrossCheckSession(self.report)
+        with patch.object(cross_check, 'getpass', return_value='secret'), \
+                patch.object(cross_check, 'LiveScanner', lambda runtime, target: LiveScanner(
+                    runtime, target, session_factory=session)):
+            return self.run_script(), session
 
     def test_matching_values_agree_and_changed_values_are_flagged(self):
-        self.assertIn('**32 of 32 controls agree.**', self.run_file())
+        self.assertIn('**32 of 32 controls agree.**', self.run_live()[0])
         rows = self.report['rows']
         next(r for r in rows if r['control_id'] == '1.1.4')['value'] = 7
         guest = next(r for r in rows if r['control_id'] == '2.3.1.1')
         guest['value'] = int(guest['value'])  # Same number, different type: not an agreement.
         rows[:] = [r for r in rows if r['control_id'] != '17.5.4']
-        output = self.run_file()
+        output = self.run_live()[0]
         self.assertIn('**29 of 32 controls agree.**', output)
         self.assertRegex(output, r'\| 1\.1\.4 \| \d+ \| 7 \| .* \| \*\*Disagree\*\* \|')
         self.assertIn('missing from cross-check', output)
         self.assertIn('minutes apart', output)
 
     def test_live_mode_checks_identity_before_running_the_read_only_script(self):
-        session = CrossCheckSession(self.report)
-        with patch.object(cross_check, 'getpass', return_value='secret'), \
-                patch.object(cross_check, 'LiveScanner', lambda runtime, target: LiveScanner(
-                    runtime, target, session_factory=session)):
-            output = self.run_script()
+        output, session = self.run_live()
         self.assertIn('**32 of 32 controls agree.**', output)
         self.assertEqual(session.target.machine_uuid, MACHINE_UUID)
         (first, _), (second, parameters) = session.calls
         self.assertNotEqual(first, second)
-        self.assertEqual(parameters, {'EmitJson': True})
+        self.assertIsNone(parameters)  # The script takes no parameters: it always returns JSON.
 
     def test_live_mode_stops_on_the_wrong_vm(self):
         session = CrossCheckSession(self.report, identity=dict(IDENTITY, hostname='OTHER'))

@@ -6,7 +6,7 @@ import unittest
 
 from hardening.domain import EvidenceMode
 from hardening.evidence_import import encode
-from hardening.framework import AssessmentOrchestrator
+from hardening.framework import AssessmentRuns
 from hardening.import_storage import ImportedEvidenceStore
 from hardening.winrm_channel import COLLECTOR, IDENTITY_SCRIPT, ChannelError, LiveScanner, WinRmTarget
 from test_evidence_import import MACHINE_UUID
@@ -47,7 +47,7 @@ def target(**overrides):
 class LiveScannerTests(unittest.TestCase):
     def setUp(self):
         folder = tempfile.TemporaryDirectory(); self.addCleanup(folder.cleanup)
-        self.runtime = AssessmentOrchestrator(ImportedEvidenceStore(Path(folder.name) / 'imports.sqlite3'))
+        self.runtime = AssessmentRuns(ImportedEvidenceStore(Path(folder.name) / 'imports.sqlite3'))
 
     def scanner(self, session):
         return LiveScanner(self.runtime, target(), session_factory=session)
@@ -62,14 +62,13 @@ class LiveScannerTests(unittest.TestCase):
         self.assertEqual(parameters, {'ExpectedComputerName': 'FIXTURE-SERVER', 'EmitJson': True})
         run = self.runtime.get(result['framework_run_id'])
         self.assertEqual(run.evidence_sha256, result['evidence_sha256'])
-        self.assertTrue(run.tasks, 'Scan must produce an assessed framework run')
+        self.assertEqual(run.state, 'assessed', 'Scan must produce an assessed framework run')
 
     def test_channel_evidence_is_stored_as_live_and_a_file_as_imported(self):
         result = self.scanner(FakeSession()).request('FIXTURE-SERVER', MACHINE_UUID)
         run = self.runtime.get(result['framework_run_id'])
         record = self.runtime.imports.get(run.evidence_sha256)
         self.assertEqual({r.evidence.mode for r in record.assessment.results}, {EvidenceMode.LIVE})
-        self.assertEqual(run.tasks[0]['output']['collection'], 'Collected live over WinRM by the Scanner Agent')
         precheck = self.scanner(FakeSession()).observe()
         self.assertEqual({r.evidence.mode for r in precheck.results}, {EvidenceMode.LIVE})
         upload = full_fixture()

@@ -5,7 +5,7 @@ from .domain import Control, Operator, Rule
 
 CATALOGUE_ID = "cis-server2022-standalone-2.0.0-preview1"
 BENCHMARK = "CIS Microsoft Windows Server 2022 Stand-alone Benchmark v2.0.0"
-# Fingerprint of the one reviewed PDF file (catalogue-level provenance, see BENCHMARK_MAPPING.md).
+# Fingerprint of the one reviewed PDF file (catalogue-level provenance, see docs/design/BENCHMARK_MAPPING.md).
 # Evidence files carry it so the importer can reject evidence made for another benchmark's catalogue.
 BENCHMARK_SHA256 = "474f467dd90b5cd50598589e427c2360502b8d25e633f729efd89f44662c5d1d"
 PROFILE = "Level 1 - Member Server"  # Exact label in the Stand-alone PDF, printed p28.

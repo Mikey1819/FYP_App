@@ -6,11 +6,11 @@ import tempfile
 import unittest
 
 from hardening.domain import Status, summarise
-from hardening.evidence_import import CONTEXT_SOURCES, encode
-from hardening.framework import AssessmentOrchestrator
+from hardening.evidence_import import CONTEXT_SOURCES
+from hardening.framework import AssessmentRuns, describe
 from hardening.import_storage import ImportedEvidenceStore
 from hardening.server2022_catalogue import EXPANDED_CATALOGUE_ID, EXPANDED_SOURCES
-from test_evidence_import import export_fixture, load, MACHINE_UUID, NOW
+from test_evidence_import import export_fixture, load, MACHINE_UUID
 
 
 def expanded_fixture():
@@ -86,26 +86,24 @@ class ExpandedControlTests(unittest.TestCase):
             data = expanded_fixture(); observation(data, identifier)['value'] = -1
             with self.assertRaises(ValueError): load(data)
 
-    def test_framework_restart_preserves_twelve_checks_and_one_supported_action(self):
+    def test_framework_restart_preserves_twelve_checks_and_ranks_both_findings(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / 'imports.sqlite3'
             data = expanded_fixture()
             observation(data, '1.1.4')['value'] = 0
             observation(data, '1.1.1')['value'] = 0
-            runtime = AssessmentOrchestrator(ImportedEvidenceStore(path))
+            runtime = AssessmentRuns(ImportedEvidenceStore(path))
             run = runtime.start(json.dumps(data).encode(), expected_hostname='FIXTURE-SERVER',
                                 expected_machine_uuid=MACHINE_UUID)
-            runtime = AssessmentOrchestrator(ImportedEvidenceStore(path))
-            done = runtime.complete_assessment(run.run_id)
-            self.assertEqual(done.state, 'ready_for_review')
-            self.assertEqual(len(done.tasks[-1]['output']['candidates']), 1)
-            self.assertEqual(done.tasks[-1]['output']['candidates'][0]['control_id'], '1.1.4')
-            record = runtime.imports.get(run.evidence_sha256)
+            runtime = AssessmentRuns(ImportedEvidenceStore(path))
+            self.assertEqual(runtime.get(run.run_id).state, 'assessed')
+            self.assertEqual({f['control_id'] for f in describe(runtime, run.run_id)['ranking']}, {'1.1.4', '1.1.1'})
+            record = runtime.record(run.run_id)
             self.assertEqual(len(record.assessment.results), 12)
             self.assertEqual(json.loads(record.raw), data)
 
     def test_powershell_account_records_match_python_contract(self):
-        script = Path(__file__).resolve().parents[2] / 'scripts' / 'Collect-Server2022Evidence.ps1'
+        script = Path(__file__).resolve().parents[2] / 'scripts' / 'vm' / 'Collect-Server2022Evidence.ps1'
         data = expanded_fixture()
         lines = ['[System Access]'] + [r['source'].split('/')[-1] + '=' + str(r['value'])
             for r in data['observations'] if r['source'].startswith('secedit-export:')]

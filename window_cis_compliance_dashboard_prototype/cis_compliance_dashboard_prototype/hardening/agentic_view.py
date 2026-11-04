@@ -11,11 +11,11 @@ from .action_library import LIBRARY
 from .agentic import (ANALYSIS, MAX_GOAL_CHARS, ORCHESTRATOR, REMEDIATION, SCANNER, AgenticHardening, explain_finding,
                       verdict_kind)
 from .connection_view import render_connection
-from .framework import AssessmentOrchestrator
+from .framework import AssessmentRuns
 from .import_storage import ImportedEvidenceStore
 from .remediation import RemediationStore
 from .round_report import round_analysis, round_report, shown
-from .ui import VERDICT_COLOR, badge, level_badge, local_time, md_escape
+from .ui import VERDICT_COLOR, badge, level_badge, md_escape, myt
 from .winrm_channel import ChannelError, LiveScanner
 
 # Plain session keys (not widget keys), so they survive switching to another page and back.
@@ -25,6 +25,7 @@ CONFIRM = 'agentic_confirm'
 TAB = 'agentic_tab'
 ROUND_VIEW = 'agentic_round_view'
 GOAL = 'agentic_goal'
+COMMENT = 'agentic_comment'
 
 TABS = ('Fixes', 'Risk ranking', 'Controls', 'Results', 'Agent log')
 STEPS = ('Scan', 'Analyse', 'Plan', 'Approve', 'Execute', 'Verify')
@@ -41,7 +42,7 @@ AGENT_ORDER = {ORCHESTRATOR: 0, SCANNER: 1, ANALYSIS: 2, REMEDIATION: 3}
 
 def _services(database_path, target):
     imports = ImportedEvidenceStore(database_path)
-    runtime = AssessmentOrchestrator(imports)
+    runtime = AssessmentRuns(imports)
     store = RemediationStore(database_path.with_name(database_path.stem + '_agentic.sqlite3'), imports)
     return runtime, store, AgenticHardening(runtime, store, LiveScanner(runtime, target))
 
@@ -153,7 +154,7 @@ def _show_start(hardening, store, runtime, target):
     if previous:
         state = _round_state(store, store.rounds(previous['session_id']), previous)
         open_items = len(state['undecided']) + len(state['pending'])
-        st.caption(f"Earlier session on {target.hostname}: last round {local_time(previous['created_at'])}"
+        st.caption(f"Earlier session on {md_escape(target.hostname)}: last round {myt(previous['created_at'])}"
                    + (f', {open_items} fix(es) still open.' if open_items else '.'))
     goal = _goal_input()
     with st.container(horizontal=True):
@@ -169,7 +170,7 @@ def _choose_round(assessments):
     if len(assessments) == 1:
         return assessments[0]
     count = len(assessments)
-    labels = {r['round_id']: f"Round {n} · {local_time(r['created_at'])}" + (' (latest)' if n == count else '')
+    labels = {r['round_id']: f"Round {n} · {myt(r['created_at'])}" + (' (latest)' if n == count else '')
               for n, r in enumerate(assessments, 1)}
     chosen = st.selectbox('Round', [r['round_id'] for r in reversed(assessments)], format_func=labels.get,
                           key=ROUND_VIEW, width=320)
@@ -204,7 +205,7 @@ def _action_bar(hardening, session_id, latest, state, rounds, target):
         if state['undecided']:
             st.markdown(f"{len(state['undecided'])} proposed fix(es) need your decision in **Fixes**.")
         st.download_button('Round report', round_report(hardening, rounds, latest), icon=':material/download:',
-                           file_name='cis-round-' + target.hostname + '-' + latest['created_at'][:16].replace(':', '')
+                           file_name='cis-round-' + target.hostname + '-' + myt(latest['created_at'], '%Y-%m-%dT%H%M')
                            + '.html', mime='text/html', key='agentic_report',
                            help='Self-contained HTML record of this round. Open it in a browser to print to PDF.')
         if st.button('New session', key='agentic_reset', type='tertiary'):
@@ -222,9 +223,9 @@ def _confirm_execution(hardening, session_id, state, target):
         rows.append({'Rank': p['rank'], 'Control': p['control_id'], 'Change': LIBRARY[p['action_id']].title,
                      'Current value': shown(p['expected_before'], 'Non-Compliant'),
                      'Approved by': approval['approved_by'],
-                     'Approval valid until': local_time(approval['expires_at']) + (' (expired)' if expired else '')})
+                     'Approval valid until': myt(approval['expires_at']) + (' (expired)' if expired else '')})
     with st.container(border=True):
-        st.markdown(f'**Confirm: change {len(rows)} setting(s) on {target.hostname}**')
+        st.markdown(f'**Confirm: change {len(rows)} setting(s) on {md_escape(target.hostname)}**')
         st.dataframe(rows, hide_index=True)
         st.caption('The Remediation Agent prechecks each value and skips anything that changed since the scan. '
                    'A fresh Scanner rescan verifies the result. Expired approvals are refused. '
@@ -241,7 +242,7 @@ def _confirm_execution(hardening, session_id, state, target):
                 st.rerun()
 
 
-def _decision_cell(store, record, operator, editable):
+def _decision_cell(store, record, operator, comment, editable):
     p = record['proposal']
     if record['verdict']:
         kind = verdict_kind(record['verdict'])
@@ -254,7 +255,7 @@ def _decision_cell(store, record, operator, editable):
             st.markdown(badge('Approval expired', 'orange'))
         else:
             st.markdown(badge('Approved', 'blue'))
-        st.caption(f"by {md_escape(approval['approved_by'])}, valid until {local_time(approval['expires_at'])}")
+        st.caption(f"by {md_escape(approval['approved_by'])}, valid until {myt(approval['expires_at'])}")
     elif record['decision'] == 'rejected':
         st.markdown(badge('Rejected'))
         st.caption('by ' + md_escape(record['decision_record']['operator']))
@@ -265,11 +266,15 @@ def _decision_cell(store, record, operator, editable):
             ready = bool(operator.strip())
             hint = None if ready else 'Enter your name above first'
             if st.button('Approve', key='agentic_approve_' + p['request_id'], disabled=not ready, help=hint):
-                store.decide(p['request_id'], approve=True, operator=operator)
+                store.decide(p['request_id'], approve=True, operator=operator, comment=comment)
+                st.session_state.pop(COMMENT, None)
                 st.rerun()
             if st.button('Reject', key='agentic_reject_' + p['request_id'], disabled=not ready, help=hint):
-                store.decide(p['request_id'], approve=False, operator=operator)
+                store.decide(p['request_id'], approve=False, operator=operator, comment=comment)
+                st.session_state.pop(COMMENT, None)
                 st.rerun()
+    if record['comment']:
+        st.caption('Comment: ' + md_escape(record['comment']))
 
 
 def _show_fixes(store, assessment_round, state, analysis, *, editable):
@@ -285,7 +290,7 @@ def _show_fixes(store, assessment_round, state, analysis, *, editable):
         st.caption('Orchestrator summary: ' + md_escape(outcome['reason']))
     if not state['records']:
         st.info('The Orchestrator proposed no fixes in this round.')
-    operator = ''
+    operator = comment = ''
     if editable and state['undecided']:
         with st.container(horizontal=True, vertical_alignment='bottom'):
             operator = st.text_input('Your name (recorded with each decision)', key='agentic_operator',
@@ -293,9 +298,12 @@ def _show_fixes(store, assessment_round, state, analysis, *, editable):
             ready = bool(operator.strip())
             approve_all = st.button('Approve all undecided', key='agentic_approve_all', disabled=not ready)
             reject_all = st.button('Reject all undecided', key='agentic_reject_all', disabled=not ready)
+        comment = st.text_input('Comment (optional, recorded with your next decision)', key=COMMENT, max_chars=500,
+                                placeholder='e.g. Approved for the Saturday maintenance window')
         if approve_all or reject_all:
             for record in state['undecided']:
-                store.decide(record['proposal']['request_id'], approve=approve_all, operator=operator)
+                store.decide(record['proposal']['request_id'], approve=approve_all, operator=operator, comment=comment)
+            st.session_state.pop(COMMENT, None)
             st.rerun()
         st.caption('Each approval is bound to that exact request on this VM and expires after one hour.')
     levels = {f['control_id']: f['level'] for f in (analysis or {}).get('ranked', [])}
@@ -311,7 +319,7 @@ def _show_fixes(store, assessment_round, state, analysis, *, editable):
                          f"{p['action_id']} · {action.impact}")
             left.caption('Why the Orchestrator chose it: ' + md_escape(p['reason']))
             with right:
-                _decision_cell(store, record, operator, editable)
+                _decision_cell(store, record, operator, comment, editable)
     if outcome.get('skipped'):
         st.markdown('**Not proposed this round**')
         st.dataframe([{'Control': s['control_id'], 'Reason': s['reason']} for s in outcome['skipped']],
@@ -350,7 +358,7 @@ def _show_risk(analysis, round_id, outcome):
                'The Analysis Agent can flag findings but cannot change a score.')
     complete = bool(outcome) and outcome['outcome'] == 'analysis_complete'
     if outcome and not complete:
-        st.warning(outcome['reason'] + ' The ranking below is unaffected.')
+        st.warning(md_escape(outcome['reason']) + ' The ranking below is unaffected.')
     flags = {a['control_id']: a['reason'] for a in outcome['attention']} if complete else {}
     ranked = analysis['ranked']
     if not ranked:
@@ -399,7 +407,7 @@ def _show_results(hardening, assessment_round, state):
     outcome = verification.get('outcome')
     if outcome:
         show = {'finish': st.success, 'next_round': st.info, 'fallback': st.info}.get(outcome['outcome'], st.warning)
-        show(outcome['reason'])
+        show(md_escape(outcome['reason']))
     st.markdown('**Verdicts**')
     st.dataframe([{'Control': v['control_id'], 'Action': v['action_id'], 'Verdict': v['verdict']}
                   for v in verification['verdicts']] or [{'Verdict': 'Nothing was executed'}], hide_index=True)
@@ -462,7 +470,7 @@ def render_agentic(database_path: Path):
     try:
         target = render_connection(key='agentic')
     except (ValueError, ChannelError) as exc:
-        st.error(str(exc))
+        st.error(md_escape(exc))
         target = None
     if target is None:
         st.info('Connect to the VM to start an agentic round.')
@@ -488,7 +496,7 @@ def render_agentic(database_path: Path):
         analysis = round_analysis(hardening, viewing) if viewing['framework_run_id'] else None
         _show_progress(_steps(viewing, state, analysis), state['verification'])
         if viewing['outcome']['outcome'] not in PLANNED:
-            st.warning(viewing['outcome']['reason'])
+            st.warning(md_escape(viewing['outcome']['reason']))
         if is_latest:
             _action_bar(hardening, session_id, latest, state, rounds, target)
             if state['pending'] and st.session_state.get(CONFIRM) == latest['round_id']:
@@ -513,6 +521,6 @@ def render_agentic(database_path: Path):
             _show_agent_log(hardening, [('Assessment phase', viewing)]
                             + ([('Remediation phase', state['verification'])] if state['verification'] else []))
     except ChannelError as exc:
-        st.error('VM channel (' + exc.state + '): ' + exc.detail)
+        st.error('VM channel (' + exc.state + '): ' + md_escape(exc.detail))
     except (ValueError, OSError, sqlite3.Error) as exc:
-        st.error('Agentic workflow: ' + str(exc))
+        st.error('Agentic workflow: ' + md_escape(exc))

@@ -8,10 +8,10 @@ import unittest
 
 from hardening.domain import Status, summarise
 from hardening.evidence_import import encode
-from hardening.framework import AssessmentOrchestrator
+from hardening.framework import AssessmentRuns
 from hardening.import_storage import ImportedEvidenceStore
 from hardening.server2022_catalogue import LOCAL_SECURITY_CATALOGUE_ID, LATEST_SOURCES
-from test_evidence_import import export_fixture, load, MACHINE_UUID, NOW
+from test_evidence_import import export_fixture, load, MACHINE_UUID
 from test_expanded_controls import expanded_fixture, observation
 
 
@@ -72,19 +72,17 @@ class LocalSecurityTests(unittest.TestCase):
     def test_framework_stores_expansion_without_granting_new_actions(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / 'imports.sqlite3'
-            runtime = AssessmentOrchestrator(ImportedEvidenceStore(path))
+            runtime = AssessmentRuns(ImportedEvidenceStore(path))
             data = local_security_fixture()
             observation(data, '2.3.1.2')['value'] = 0
             run = runtime.start(encode(data), expected_hostname='FIXTURE-SERVER', expected_machine_uuid=MACHINE_UUID)
-            done = runtime.complete_assessment(run.run_id)
-            self.assertEqual(done.state, 'needs_review')
-            self.assertEqual(done.tasks[-1]['output']['candidates'], [])
+            self.assertEqual(runtime.get(run.run_id).state, 'assessed')
             reopened = ImportedEvidenceStore(path).get(run.evidence_sha256)
             self.assertEqual(reopened.raw, encode(data))
             self.assertEqual(len(reopened.assessment.results), 16)
 
     def test_powershell_sources_and_independent_failure_records(self):
-        collector = Path(__file__).resolve().parents[2] / 'scripts' / 'Collect-Server2022Evidence.ps1'
+        collector = Path(__file__).resolve().parents[2] / 'scripts' / 'vm' / 'Collect-Server2022Evidence.ps1'
         command = "$ErrorActionPreference='Stop'\n. '" + str(collector).replace("'", "''") + "' -FunctionsOnly\n"
         command += r"""
 function Read-PolicyDword {
