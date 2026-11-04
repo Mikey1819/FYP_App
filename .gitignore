@@ -4,3 +4,4 @@
 cis_compliance_dashboard_prototype/data/
 **/cis_compliance_dashboard_prototype/data/
 **/.venv/
+window_cis_compliance_dashboard_prototype/dist/
