@@ -133,6 +133,7 @@ def assess(assessment_id: str, control: Control, evidence: Evidence) -> Assessme
     else:
         try:
             passed = control.rule.matches(evidence.value)
+            # Compliant or Non Compliant: the benchmark's rule is satisfied or not by the observed value. The evidence's value is what the collector found on the target system, and the control's rule is what the benchmark says that
             status = Status.COMPLIANT if passed else Status.NON_COMPLIANT
             detail = "Observed value satisfies the rule" if passed else "Observed value does not satisfy the rule"
         except ValueError as error:
@@ -148,6 +149,7 @@ class AssessmentSummary:
     errors: int
     unknown: int
 
+# Compliant + non_compliant, Error and Unknown are left out of the percentage
     @property
     def evaluated(self) -> int:
         return self.compliant + self.non_compliant
@@ -156,13 +158,14 @@ class AssessmentSummary:
     def compliance_percent(self) -> float | None:
         return 100 * self.compliant / self.evaluated if self.evaluated else None
 
-
+# Make sure that the control cannot be counted twice
 def summarise(results: tuple[AssessmentResult, ...]) -> AssessmentSummary:
     if len({result.control.control_id for result in results}) != len(results):
         raise ValueError("An assessment cannot count the same control twice")
     if len({(r.assessment_id, r.evidence.target_id, r.evidence.mode) for r in results}) > 1:
         raise ValueError("Do not combine different assessments, targets or evidence modes")
     return AssessmentSummary(
+        # Selected, Compliant, Non-Compliant, Error, Unknown
         len(results),
         sum(r.status == Status.COMPLIANT for r in results),
         sum(r.status == Status.NON_COMPLIANT for r in results),
@@ -175,11 +178,7 @@ VALID_STATUSES = (Status.COMPLIANT, Status.NON_COMPLIANT)
 
 
 def same_measurement(a: Control, b: Control) -> bool:
-    """Same control, benchmark citation (edition, section, pages), profile and rule.
-
-    The catalogue version labels a catalogue's scope (5, 12, 16 or 32 controls); a control
-    whose source, profile and rule are unchanged is the same measurement in every scope.
-    """
+    """Same control, benchmark citation (edition, section, pages), profile and rule."""
     return (a.control_id == b.control_id and a.rule == b.rule and a.profile == b.profile
             and a.source_reference == b.source_reference)
 

@@ -1,6 +1,6 @@
 # Benchmark mapping: CIS Server 2022 Stand-alone v2.0.0 (32 controls)
 
-This is the authoritative record of which controls are assessed, against which benchmark text, and with which rule. Sections are dated and were added as the catalogue grew from 5 (19 October) to 32 controls (26 October). It records source review, not a successful VM assessment or CIS certification. The original synthetic demo-v1 catalogue and historical scores remain unchanged.
+This is the authoritative record of which controls are assessed, against which benchmark text, and with which rule. The code holds them as one catalogue of 32 controls (`hardening/server2022_catalogue.py`). The sections below are dated: they record the source review of each group of controls as it was added, from 5 (19 October) to 32 controls (26 October). It records source review, not a successful VM assessment or CIS certification. The original synthetic demo-v1 catalogue and historical scores remain unchanged.
 
 ## Edition decision (26 October 2026)
 
@@ -13,7 +13,7 @@ This Stand-alone v2.0.0 edition is the project baseline (decision D3 in [AGENTS.
 - File: 5,098,178 bytes, 918 PDF pages; SHA-256 `474f467dd90b5cd50598589e427c2360502b8d25e633f729efd89f44662c5d1d`.
 - Printed page 23 (PDF page 24) explicitly scopes this edition to standalone systems. It states that CIS tested the guide on Datacenter edition; our Standard Evaluation VM still needs selected-control validation.
 - Exact profile label: **Level 1 - Member Server**, printed page 28 (PDF page 29). Preserve this source label even though the edition's audience is standalone. Do not interpret the label as authorization to join a domain.
-- Catalogue ID: `cis-server2022-standalone-2.0.0-preview1`.
+- Catalogue ID: `cis-server2022-standalone-2.0.0-full1`; evidence format `schema_version` 5, collector `server2022-readonly-v5`. These identifiers are stored in every saved scan, so they stay fixed. (The groups below first shipped under their own IDs and schema numbers 1-4; those were merged into this one catalogue on 4 November 2026.)
 - Reviewed content: cover, scope/profile and complete selected recommendation/audit sections. Eleven relevant pages rendered and visually inspected; relevant section text extracted with PyMuPDF. No full 918-page review is claimed. Images stay in ignored `data/benchmark_review/` and the source PDF is not copied into the repository.
 
 ## Five selected controls
@@ -39,7 +39,7 @@ Important distinctions:
 
 ## Account-policy expansion, 24 October 2026
 
-Schema 3 uses `cis-server2022-standalone-2.0.0-account1`: the original five plus these seven Automated, Level 1 checks from the same PDF/hash. Recommendation and audit text were extracted; the rendered lockout-duration recommendation was also visually checked. New mappings are implemented and fixture-tested, not yet independently compared against the VM UI. Schema 1/2 retain the original five-control catalogue.
+These seven Automated, Level 1 checks come from the same PDF/hash. Recommendation and audit text were extracted; the rendered lockout-duration recommendation was also visually checked. New mappings are implemented and fixture-tested, not yet independently compared against the VM UI.
 
 | Source ID | Added check | Comparison | Printed pages | System Access export key |
 | --- | --- | --- | --- | --- |
@@ -57,7 +57,7 @@ Manual validation: compare the first five added readings in `secpol.msc` -> Acco
 
 ## Local security expansion, 24 October 2026
 
-Schema 4 uses `cis-server2022-standalone-2.0.0-local1` and adds these four Automated, Level 1 settings to the previous twelve. Recommendation/audit text was reviewed in the same source PDF; printed page 179 was rendered and visually checked. Implementation is fixture-tested; independent VM comparison is pending.
+These four Automated, Level 1 settings were added to the previous twelve. Recommendation/audit text was reviewed in the same source PDF; printed page 179 was rendered and visually checked. Implementation is fixture-tested; independent VM comparison is pending.
 
 | Source ID | Added check | Comparison | Printed pages | Observation |
 | --- | --- | --- | --- | --- |
@@ -132,7 +132,7 @@ The PDF's Group Policy paths include a Policies segment used in its editor examp
 
 The single-file PowerShell collector performs local CIM reads, a bounded `secedit /export`, and read-only 64-bit registry access. It writes temporary export/log files and a new JSON file, removes only its known temporary files and refuses output overwrite. It does not configure security policy, enable RDP/WinRM, or execute model-generated commands.
 
-The offline importer requires explicitly selected hostname/UUID; checks supported OS/build/role, schema, catalogue/hash/profile, all required unique records (five for schema 1/2, twelve for schema 3, sixteen for schema 4, thirty-two for schema 5), sources, timestamps and exact scalar types. Imported files are user-supplied observations, not cryptographically authenticated attestation. Hashes identify bytes and do not prove collection authenticity. The CLI evaluates without writing the dashboard database.
+The offline importer requires explicitly selected hostname/UUID; checks supported OS/build/role, schema, catalogue/hash/profile, all 32 required unique records, sources, timestamps and exact scalar types. Imported files are user-supplied observations, not cryptographically authenticated attestation. Hashes identify bytes and do not prove collection authenticity. The CLI evaluates without writing the dashboard database.
 
 Fixture tests cover parser/comparison/error/target boundaries. Separate imported-evidence dashboard/storage integration is fixture-tested. The first user-run VM export is received and validated, with collector-reported duration 0.342834s; see FIRST_VM_IMPORT_VALIDATION.md. Independent manual agreement remains pending.
 

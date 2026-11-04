@@ -149,7 +149,7 @@ class RemediationStore:
             receipt = db.execute('SELECT verdict,payload FROM rem_receipts WHERE id=?', (proposal_id,)).fetchone()
             comment = db.execute('SELECT payload FROM rem_comments WHERE id=?', (proposal_id,)).fetchone()
         record = json.loads(decision[1]) if decision else None
-        # Rejections before 1 Nov 2026 kept their comment only inside the decision record.
+        # A rejection record carries its own comment; an approval's comment is kept apart (its bytes are the request).
         note = json.loads(comment[0])['comment'] if comment else ((record or {}).get('comment') or None)
         return dict(proposal=json.loads(row[0]), decision=decision[0] if decision else None,
                     request=decision[1] if decision and decision[0] == 'approved' else None,

@@ -11,7 +11,7 @@ OUT = ROOT / 'docs' / 'design' / 'RISK_DERIVATION.md'
 sys.path.insert(0, str(ROOT / 'cis_compliance_dashboard_prototype'))
 from hardening.risk import (ATTRIBUTES, BASELINE_VERSION, CONSEQUENCE, EFFECTIVE_PROTECTION, LIKELIHOOD,  # noqa: E402
                             PRIVILEGE_SCOPE, SURFACE_EXPOSURE, derive)
-from hardening.server2022_catalogue import FULL_CATALOGUE  # noqa: E402
+from hardening.server2022_catalogue import CATALOGUE  # noqa: E402
 
 
 def main():
@@ -46,7 +46,7 @@ def main():
         '| Control | Title | Consequence (I) | Privilege scope (P) | L | Surface (base E) | Base R with D=1 |',
         '| --- | --- | --- | --- | --- | --- | --- |',
     ]
-    for control in FULL_CATALOGUE:
+    for control in CATALOGUE:
         a, d = ATTRIBUTES[control.control_id], derive(control.control_id)
         e = SURFACE_EXPOSURE[a.surface]
         score = 6 * d.impact + 5 * e + 4 * d.privilege + 3 * d.likelihood + 2
