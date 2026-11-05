@@ -1,0 +1,11 @@
+.venv-integration/
+.integration-tmp/
+.superpowers/
+**/__pycache__/
+**/*.pyc
+**/data/
+**/artifacts/
+**/screenshots/
+.env
+.env.*
+**/secrets.toml
