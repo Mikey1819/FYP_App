@@ -1,0 +1,17 @@
+{
+  "protected": [],
+  "authorized_ui": [
+    "cis_compliance_dashboard_prototype/app.py",
+    "cis_compliance_dashboard_prototype/hardening/agentic_view.py",
+    "cis_compliance_dashboard_prototype/hardening/connection_view.py",
+    "cis_compliance_dashboard_prototype/hardening/history_view.py",
+    "cis_compliance_dashboard_prototype/hardening/overview_view.py"
+  ],
+  "metadata": [
+    "PROGRESS.md"
+  ],
+  "missing": [],
+  "base_commit": "af43fbccaea5a5818396a376468afb44bd439c40",
+  "diff_sha256": "0270ac73676cbd4f52119aa0ffcbb8313b0d620e056d2615a47fd7f19e9dcd78",
+  "verification": "227 tests passed in 51.467s; no protected/missing source"
+}

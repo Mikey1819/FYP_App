@@ -477,3 +477,8 @@ PowerShell script tests were **not re-run**: the `-ExecutionPolicy Bypass` comma
 3. **User review of risk attributes** in [RISK_DERIVATION.md](docs/design/RISK_DERIVATION.md); regenerate the doc after any change.
 4. Firewall policy actions: design a channel-safety precheck before adding them to the library.
 5. Independent comparison in the VM: run `scripts/tools/cross_check_controls.py` during the trial (runbook Part C) and check 1.1.5, 1.1.7 and 2.3.10.1 in secpol.msc.
+
+
+## 6 November 2026 — unified integration checkpoint (in progress)
+
+The existing app is extended on integrate/unified-vm-hardening; no push, deployment or VM writes. See cis_compliance_dashboard_prototype/docs/INTEGRATION_PROGRESS.md for task-by-task status. Latest full Python fixture run: 227 passed in 51.467s, including the original Windows suite. Protected engine/script hashes are unchanged. Real SCAP source pins and all 30 Ubuntu predicate definitions are now present with synthetic tests; complete Ubuntu collection, storage/risk/agents, all 30 remediation families, recovery and live validation remain outstanding. Ubuntu assessment and all live mutation gates remain closed.

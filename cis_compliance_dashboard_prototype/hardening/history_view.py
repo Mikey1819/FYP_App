@@ -9,6 +9,7 @@ from .history import HistoryService
 from .import_storage import ImportedEvidenceStore
 from .remediation import RemediationStore
 from .ui import FULL, md_escape, myt
+from system.history import active_history
 
 def _label(run):
     return f"{myt(run['created_at'], FULL)} MYT · {run['run_id'][:8]}"
@@ -20,17 +21,31 @@ def render_history(database_path: Path):
                'the same VM and records every change once. Changes are compared only when the benchmark source, '
                'profile, rule and collection method are identical.')
     try:
+        backend, shared_rows = active_history(st.session_state, limit=1000)
+        if backend and backend.session.identity.platform != 'windows':
+            from system.ui.components import render_history_rows
+            st.caption(md_escape(backend.session.identity.hostname) + ' · verified Ubuntu target')
+            render_history_rows(backend, shared_rows)
+            return
         imports = ImportedEvidenceStore(database_path)
         runtime = AssessmentRuns(imports)
         store = RemediationStore(database_path.with_name(database_path.stem + '_agentic.sqlite3'), imports)
         history = HistoryService(runtime, store)
         targets = history.targets()
+        if backend:
+            targets = {t: name for t, name in targets.items() if t == backend.session.target_id}
         if not targets:
             st.info('No assessments yet. Run an agentic round or a scan first.')
             return
         target = st.selectbox('VM', list(targets), format_func=lambda t: f'{targets[t]} ({t.removeprefix("windows:")})',
                               key='history_target')
         runs = history.runs(target)
+        if backend:
+            allowed = {r.run_reference.record_id for r in shared_rows}
+            runs = [r for r in runs if r['run_id'] in allowed]
+            if not runs:
+                st.info('No assessments yet for this verified target and registration epoch.')
+                return
         # Rounds record drift as they scan; this fills in runs recorded before the page existed. Idempotent, and done
         # once per browser session, because comparing every run on every page view grows with the history.
         checked = st.session_state.setdefault('history_drift_checked', set())
@@ -51,6 +66,8 @@ def render_history(database_path: Path):
 
         st.subheader('Detected configuration drift')
         records = history.drift_records(target)
+        if backend:
+            records = [r for r in records if r['previous_run_id'] in allowed and r['current_run_id'] in allowed]
         if not records:
             st.info('No drift detected between consecutive assessments.')
         else:

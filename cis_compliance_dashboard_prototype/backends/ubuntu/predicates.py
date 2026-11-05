@@ -1,0 +1,262 @@
+"""Deterministic compound predicates for the selected PDF recommendations.
+
+Inputs are sanitized, typed observations from a separately validated collector bundle.
+This module neither runs probes nor approves applicability/site policies. Until that
+collector and source-review gate passes, these predicates are fixture-only.
+"""
+from dataclasses import dataclass
+from system.contracts import ComplianceStatus as Status
+
+
+@dataclass(frozen=True)
+class Check:
+    name: str
+    state: str
+    reason: str = ''
+
+
+@dataclass(frozen=True)
+class Assessment:
+    control_id: str
+    status: Status
+    checks: tuple[Check, ...]
+
+
+def combine(control_id, checks):
+    checks = tuple(checks)
+    states = {c.state for c in checks}
+    # A confirmed failure establishes NC even if another subcheck could not be collected.
+    status = (Status.NON_COMPLIANT if 'fail' in states else Status.ERROR if 'error' in states
+              else Status.UNKNOWN if not checks or states & {'missing', 'conflict', 'manual'}
+              or states == {'inapplicable'} else Status.COMPLIANT)
+    return Assessment(control_id, status, checks)
+
+
+class Facts:
+    def __init__(self, observations):
+        self.observations = observations
+        self.checks = []
+
+    def read(self, key):
+        observation = self.observations.get(key)
+        if observation is None:
+            self.checks.append(Check(key, 'missing', 'Required observation absent'))
+            return None
+        state = observation['state']
+        if state != 'ok':
+            self.checks.append(Check(key, state, 'Observation is unresolved'))
+            return None
+        return observation['value']
+
+    def test(self, key, predicate):
+        value = self.read(key)
+        if value is not None:
+            self.checks.append(Check(key, 'pass' if predicate(value) else 'fail'))
+        return value
+
+
+SYSCTL = {
+    '1.5.1': {'kernel.randomize_va_space': 2},
+    '3.3.1': {'net.ipv4.ip_forward': 0, 'net.ipv6.conf.all.forwarding': 0},
+    '3.3.2': {'net.ipv4.conf.all.send_redirects': 0, 'net.ipv4.conf.default.send_redirects': 0},
+    '3.3.8': {f'net.{family}.conf.{scope}.accept_source_route': 0
+              for family in ('ipv4', 'ipv6') for scope in ('all', 'default')},
+}
+PACKAGES = {'1.3.1.1': ('apparmor', 'apparmor-utils'), '1.5.4': ('prelink',),
+            '6.3.1.1': ('auditd', 'audispd-plugins')}
+SSH = {'5.1.20': ('permitrootlogin',), '5.1.19': ('permitemptypasswords',),
+       '5.1.16': ('maxauthtries',), '5.1.7': ('clientaliveinterval','clientalivecountmax'),
+       '5.1.10': ('hostbasedauthentication',), '5.1.21': ('permituserenvironment',)}
+IDENTITY_PATHS = frozenset(('/etc/group','/etc/passwd','/etc/gshadow','/etc/shadow',
+    '/etc/security/opasswd','/etc/nsswitch.conf','/etc/pam.conf','/etc/pam.d'))
+
+
+def _sysctl(facts, expected):
+    ipv6 = facts.read('ipv6_enabled') if any('ipv6' in k for k in expected) else True
+    for name, value in expected.items():
+        if 'ipv6' in name and ipv6 is not True:
+            if ipv6 is False:
+                facts.checks.append(Check(name, 'inapplicable', 'IPv6 affirmatively disabled'))
+            continue
+        facts.test('runtime.'+name, lambda actual, expected=value: actual == expected)
+        facts.test('persistent.'+name, lambda actual, expected=value: actual == expected)
+    # This is emitted by the resolver only after inspecting all load sources, including UFW.
+    supported = facts.read('sysctl_resolution')
+    if supported is not None:
+        facts.checks.append(Check('sysctl_resolution', 'pass' if supported == 'complete' else 'missing',
+                                 'Effective persistence must be fully resolved'))
+
+
+def _accounts(facts, field, predicate):
+    facts.test('default.'+field, predicate)
+    complete = facts.read('account_inventory')
+    if complete is not None:
+        facts.checks.append(Check('account_inventory', 'pass' if complete == 'complete' else 'missing'))
+    accounts = facts.read('accounts')
+    if accounts is not None:
+        for account in accounts:
+            if not account['password_bearing']:
+                continue
+            value = account[field]
+            good = predicate(value) and (field != 'maximum' or value > account['minimum'])
+            facts.checks.append(Check('account.'+str(account['uid'])+'.'+field, 'pass' if good else 'fail'))
+        if not accounts:
+            facts.checks.append(Check('accounts', 'pass', 'Complete inventory contains no password-bearing accounts'))
+
+
+def _rules_cover(rules, *, paths=(), syscalls=(), arch=None, privileged=None, uid_min=None):
+    # A semantic normalized rule contains exact tokens; never substring-match a path.
+    if privileged is not None:
+        return any(r['action'] == 'always,exit' and r['path'] == privileged and 'x' in r['permissions']
+                   and r['auid_min'] == uid_min and r['exclude_unset'] for r in rules)
+    for path in paths:
+        if not any(r['path'] == path and {'w','a'} <= set(r['permissions']) and r['key']
+                   and r['action'] in ('watch', 'always,exit') for r in rules):
+            return False
+    covered = {s for r in rules if r['action'] == 'always,exit' and r['arch'] == arch and r['key']
+               and r['unrestricted'] for s in r['syscalls']}
+    return set(syscalls) <= covered
+
+
+def evaluate(control_id, observations, *, reviewed_avahi_retention=False):
+    """Validated observations only; errors never interpolate raw evidence into diagnostics."""
+    from .evidence import validate_observations
+    observations = validate_observations(control_id, observations)
+    f = Facts(observations)
+    if control_id in PACKAGES:
+        for package in PACKAGES[control_id]:
+            f.test('package.'+package, lambda value: value == ('absent' if control_id == '1.5.4' else 'installed'))
+    elif control_id in SYSCTL:
+        _sysctl(f, SYSCTL[control_id])
+    elif control_id == '1.2.2.1':
+        fresh = f.read('metadata_fresh')
+        updates = f.read('pending_updates')
+        f.read('held_packages')
+        f.read('reboot_required')
+        if fresh is False:
+            f.checks.append(Check('metadata_fresh', 'missing', 'Stale package metadata cannot establish current state'))
+        if updates is not None and updates > 0:
+            f.checks.append(Check('pending_updates', 'fail', 'Outstanding updates require review'))
+        f.checks.append(Check('manual_review', 'manual', 'Bound human patch review is required; machine evidence alone cannot pass'))
+    elif control_id == '1.5.3':
+        _sysctl(f, {'fs.suid_dumpable': 0})
+        f.test('hard_core_limits', lambda limits: '*' in limits and all(v == 0 for v in limits.values()))
+        installed = f.read('systemd_coredump_installed')
+        if installed is True:
+            f.test('coredump_storage', lambda value: value == 'none')
+            f.test('coredump_process_size_max', lambda value: value == 0)
+        elif installed is False:
+            f.checks.append(Check('systemd_coredump', 'inapplicable', 'Package absent'))
+    elif control_id == '2.1.2':
+        package = f.read('package.avahi-daemon')
+        if package == 'absent':
+            f.checks.append(Check('avahi_absent', 'pass'))
+        elif package == 'installed':
+            if not reviewed_avahi_retention:
+                f.checks.append(Check('avahi_retention', 'manual', 'Dependency need and site-policy exception require review'))
+            for unit in ('avahi-daemon.service','avahi-daemon.socket'):
+                f.test(unit+'.active', lambda value: value == 'inactive')
+                f.test(unit+'.enabled', lambda value: value in ('disabled','masked'))
+    elif control_id == '5.3.3.2.2':
+        resolution = f.read('pam_resolution')
+        if resolution is not None:
+            f.checks.append(Check('pam_resolution', 'pass' if resolution == 'complete' else 'missing'))
+        f.test('effective_minlen', lambda values: bool(values) and all(v >= 14 for v in values.values()))
+    elif control_id in ('5.4.1.1','5.4.1.3','5.4.1.5'):
+        field, predicate = {'5.4.1.1': ('maximum', lambda v: 1 <= v <= 365),
+                            '5.4.1.3': ('warning', lambda v: v >= 7),
+                            '5.4.1.5': ('inactive', lambda v: 0 <= v <= 45)}[control_id]
+        _accounts(f, field, predicate)
+        if field == 'maximum':
+            minimum, maximum = f.read('default.minimum'), f.read('default.maximum')
+            if minimum is not None and maximum is not None:
+                f.checks.append(Check('default.age_consistency', 'pass' if maximum > minimum else 'fail'))
+    elif control_id in ('5.2.2','5.2.3'):
+        f.test('sudoers_syntax_valid', lambda v: v)
+        resolved = f.read('sudoers_resolution')
+        if resolved is not None:
+            f.checks.append(Check('sudoers_resolution','pass' if resolved == 'complete' else 'missing'))
+        if control_id == '5.2.2':
+            f.test('sudoers_use_pty', lambda values: bool(values) and 'enabled' in values and 'negated' not in values)
+        else:
+            f.test('sudoers_logfiles', lambda paths: bool(paths) and all(p.startswith('/') and '..' not in p.split('/') for p in paths))
+    elif control_id == '4.1.3':
+        f.test('package.ufw', lambda v: v == 'installed')
+        f.test('ufw.service.enabled', lambda v: v == 'enabled')
+        f.test('ufw.service.active', lambda v: v == 'active')
+        f.test('ufw.active', lambda v: v)
+    elif control_id in ('4.1.4','4.1.7'):
+        manager = f.read('firewall_manager')
+        if manager is not None and manager != 'ufw':
+            f.checks.append(Check('firewall_manager', 'missing', 'Registered UFW applicability is not established'))
+        f.test('ufw.active', lambda v: v)
+        if control_id == '4.1.7':
+            for direction in ('incoming','outgoing','routed'):
+                f.test('ufw.default.'+direction, lambda v: v in ('deny','reject','disabled'))
+        else:
+            ipv6 = f.read('ipv6_enabled')
+            for family in ('ipv4','ipv6'):
+                if family == 'ipv6' and ipv6 is not True:
+                    if ipv6 is False:
+                        f.checks.append(Check('loopback.ipv6','inapplicable','IPv6 affirmatively disabled'))
+                    continue
+                # Resolver reports the actual first matching action for the enumerated traffic classes.
+                for traffic, action in (('loopback_in','allow'),('loopback_out','allow'),('spoofed_in','deny')):
+                    f.test('ufw.'+family+'.'+traffic, lambda v, expected=action: v == expected)
+            complete = f.read('ufw_rule_resolution')
+            if complete is not None:
+                f.checks.append(Check('ufw_rule_resolution','pass' if complete == 'complete' else 'missing'))
+    elif control_id == '6.3.1.2':
+        f.test('auditd.enabled', lambda v: v == 'enabled')
+        f.test('auditd.active', lambda v: v == 'active')
+    elif control_id == '6.3.1.3':
+        bootloader = f.read('bootloader')
+        if bootloader is not None:
+            f.checks.append(Check('bootloader','pass' if bootloader == 'grub2' else 'missing'))
+        f.test('boot_entries', lambda entries: bool(entries) and all('audit=1' in args and 'audit=0' not in args for args in entries))
+        # Current boot is collected and displayed separately, not conflated with generated boot policy.
+        f.read('current_audit_argument')
+    elif control_id in ('6.3.3.4','6.3.3.8','6.3.3.6'):
+        if control_id == '6.3.3.4':
+            architectures = f.read('audit_architectures')
+            for source in ('persistent_audit_rules','loaded_audit_rules'):
+                rules = f.read(source)
+                if rules is not None and architectures is not None:
+                    good = bool(architectures) and all(_rules_cover(rules, paths=('/etc/localtime',),
+                        syscalls=('adjtimex','settimeofday','clock_settime'), arch=arch) for arch in architectures)
+                    f.checks.append(Check(source,'pass' if good else 'fail'))
+        elif control_id == '6.3.3.8':
+            paths = f.read('identity_paths')
+            for source in ('persistent_audit_rules','loaded_audit_rules'):
+                rules = f.read(source)
+                if rules is not None and paths is not None:
+                    # No silent optional-file exclusions: initial contract requires all PDF paths.
+                    good = set(paths) == IDENTITY_PATHS and _rules_cover(rules, paths=IDENTITY_PATHS)
+                    f.checks.append(Check(source,'pass' if good else 'fail'))
+        else:
+            complete = f.read('privileged_inventory')
+            if complete is not None:
+                f.checks.append(Check('privileged_inventory','pass' if complete == 'complete' else 'missing'))
+            paths, uid_min = f.read('privileged_paths'), f.read('uid_min')
+            for source in ('persistent_audit_rules','loaded_audit_rules'):
+                rules = f.read(source)
+                if rules is not None and paths is not None and uid_min is not None:
+                    good = all(_rules_cover(rules, privileged=path, uid_min=uid_min) for path in paths)
+                    f.checks.append(Check(source,'pass' if good else 'fail'))
+    elif control_id in SSH:
+        resolved = f.read('ssh_context_resolution')
+        if resolved is not None:
+            f.checks.append(Check('ssh_context_resolution','pass' if resolved == 'complete' else 'missing'))
+        contexts = f.read('ssh_contexts')
+        if contexts is not None:
+            if not contexts:
+                f.checks.append(Check('ssh_contexts','missing','No audited SSH contexts'))
+            for context in contexts:
+                for option in SSH[control_id]:
+                    value = context[option]
+                    good = (1 <= value <= 4 if option == 'maxauthtries' else value > 0
+                            if option in ('clientaliveinterval','clientalivecountmax') else value == 'no')
+                    f.checks.append(Check('ssh.'+context['context_id']+'.'+option,'pass' if good else 'fail'))
+    else:
+        raise ValueError('Unregistered Ubuntu control')
+    return combine(control_id, f.checks)

@@ -17,6 +17,10 @@ from .remediation import RemediationStore
 from .round_report import round_analysis, round_report, shown
 from .ui import VERDICT_COLOR, badge, level_badge, md_escape, myt
 from .winrm_channel import ChannelError, LiveScanner
+from system.bootstrap import active_backend, CONNECTION_KEY, WORKFLOW_KEY
+from system.contracts import AssessmentMode, RecordRef
+from system.ui.components import render_controls, render_snapshot_tabs
+from backends.windows.adapter import original_services
 
 # Plain session keys (not widget keys), so they survive switching to another page and back.
 SESSION = 'agentic_session'
@@ -41,10 +45,32 @@ AGENT_ORDER = {ORCHESTRATOR: 0, SCANNER: 1, ANALYSIS: 2, REMEDIATION: 3}
 
 
 def _services(database_path, target):
-    imports = ImportedEvidenceStore(database_path)
-    runtime = AssessmentRuns(imports)
-    store = RemediationStore(database_path.with_name(database_path.stem + '_agentic.sqlite3'), imports)
-    return runtime, store, AgenticHardening(runtime, store, LiveScanner(runtime, target))
+    backend = active_backend(st.session_state)
+    if backend:
+        return backend.runtime, backend.store, backend.engine
+    return original_services(database_path, target, scanner_factory=LiveScanner)
+
+
+def _decide(store, request_id, *, approve, operator, comment):
+    backend = active_backend(st.session_state)
+    if backend:
+        backend.decide(st.session_state[CONNECTION_KEY], st.session_state[WORKFLOW_KEY],
+            RecordRef('windows', backend.session.target_id, request_id), approve, operator, comment, uuid4().hex)
+    else:
+        store.decide(request_id, approve=approve, operator=operator, comment=comment)
+
+
+def _execute(hardening, session_id, *, deterministic=False, expected=None):
+    backend = active_backend(st.session_state)
+    if backend:
+        workflow = st.session_state[WORKFLOW_KEY]
+        connection = st.session_state[CONNECTION_KEY]
+        snapshot = backend.snapshot(connection, workflow)
+        if expected is None:
+            raise ValueError('An exact displayed approval set must be confirmed before dispatch')
+        return backend.execute_approved(connection, workflow, snapshot.current_round_reference,
+                                        expected, deterministic, uuid4().hex)
+    return hardening.execute_approved(session_id, deterministic=deterministic)
 
 
 def _round_state(store, rounds, assessment_round):
@@ -68,6 +94,9 @@ def _steps(assessment_round, state, analysis):
         steps['Analyse'] = 'failed'
         return steps
     steps['Analyse'] = 'done'
+    if assessment_round.get('mode') == 'deterministic':
+        steps.update(Plan='skipped', Approve='skipped', Execute='skipped', Verify='skipped')
+        return steps
     planned = assessment_round['outcome']['outcome'] in PLANNED
     steps['Plan'] = 'done' if planned else 'failed'
     if not state['records']:
@@ -120,8 +149,15 @@ def _target_id(target):
 
 def _previous_session(store, runtime, target):
     """Newest assessment round of an earlier session on this VM, so a browser refresh does not strand it."""
-    return next((r for r in store.recent_rounds(20)
-                 if r['kind'] == 'assessment' and _round_target(runtime, r) == _target_id(target)), None)
+    backend = active_backend(st.session_state)
+    def matches(row):
+        if row['kind'] != 'assessment' or _round_target(runtime, row) != _target_id(target):
+            return False
+        if not backend:
+            return True
+        s = backend.session
+        return backend.ledger.binding_for_backend('windows', s.target_id, s.registration_epoch, row['session_id']) is not None
+    return next((r for r in store.recent_rounds(20) if matches(r)), None)
 
 
 def _reset_view():
@@ -136,12 +172,19 @@ def _goal_input():
                               'You see how it was read before you approve anything.')
 
 
-def _run_round(hardening, session_id, goal):
+def _run_round(hardening, session_id, goal, mode=AssessmentMode.AGENTIC):
     # The session is kept before the round starts, so its records stay reachable whatever happens to the page.
     session_id = session_id or uuid4().hex
     st.session_state[SESSION] = session_id
     with st.spinner('Round running: Orchestrator → Scanner → Analysis → plan. This can take up to 10 minutes.'):
-        hardening.run_round(session_id, goal=goal)
+        backend = active_backend(st.session_state)
+        if backend:
+            handle = backend.start_round(st.session_state[CONNECTION_KEY], st.session_state.get(WORKFLOW_KEY),
+                                          goal, mode, uuid4().hex)
+            st.session_state[WORKFLOW_KEY] = handle.binding.workflow_session_id
+            st.session_state[SESSION] = handle.binding.backend_session_id
+        else:
+            hardening.run_round(session_id, goal=goal)
     _reset_view()
     st.session_state.pop(GOAL, None)  # A goal is for one round; the next one starts without it.
     st.rerun()
@@ -160,7 +203,17 @@ def _show_start(hardening, store, runtime, target):
     with st.container(horizontal=True):
         if st.button('Start agentic round', type='primary', key='agentic_run'):
             _run_round(hardening, None, goal)
+        if active_backend(st.session_state) and st.button('Assess without AI', key='agentic_assess_without_ai'):
+            _run_round(hardening, None, None, AssessmentMode.DETERMINISTIC)
         if previous and st.button('Resume earlier session', key='agentic_resume'):
+            backend = active_backend(st.session_state)
+            if backend:
+                s = backend.session
+                binding = backend.ledger.binding_for_backend('windows', s.target_id, s.registration_epoch, previous['session_id'])
+                if binding is None:
+                    raise ValueError('Workflow does not belong to this registration epoch')
+                backend.check(st.session_state[CONNECTION_KEY], binding.workflow_session_id)
+                st.session_state[WORKFLOW_KEY] = binding.workflow_session_id
             st.session_state[SESSION] = previous['session_id']
             _reset_view()
             st.rerun()
@@ -189,17 +242,21 @@ def _action_bar(hardening, session_id, latest, state, rounds, target):
             if st.button('Run next round', type='primary', key='agentic_run', icon=':material/refresh:',
                          help='Rescan the VM, re-rank the findings and propose again'):
                 _run_round(hardening, session_id, goal)
+            if active_backend(st.session_state) and st.button('Assess without AI', key='agentic_assess_without_ai'):
+                _run_round(hardening, session_id, None, AssessmentMode.DETERMINISTIC)
         if state['pending'] and st.session_state.get(CONFIRM) != latest['round_id']:
             if st.button(f"Execute {len(state['pending'])} approved fix(es)…", type='primary',
                          key='agentic_execute_review', icon=':material/play_arrow:'):
                 st.session_state[CONFIRM] = latest['round_id']
+                st.session_state['agentic_confirm_requests'] = tuple(r['proposal']['request_id'] for r in state['pending'])
                 st.rerun()
         if state['pending'] and stopped:
             if st.button('Execute remaining without AI', key='agentic_execute_fallback',
                          help='Same approval, expiry and precondition guards, in rank order; the result is still '
                               'verified by a rescan.'):
                 with st.spinner('Executing approved fixes in rank order, then verifying…'):
-                    hardening.execute_approved(session_id, deterministic=True)
+                    _execute(hardening, session_id, deterministic=True,
+                             expected=tuple(r['proposal']['request_id'] for r in state['pending']))
                 _reset_view()
                 st.rerun()
         if state['undecided']:
@@ -210,6 +267,7 @@ def _action_bar(hardening, session_id, latest, state, rounds, target):
                            help='Self-contained HTML record of this round. Open it in a browser to print to PDF.')
         if st.button('New session', key='agentic_reset', type='tertiary'):
             del st.session_state[SESSION]
+            st.session_state.pop(WORKFLOW_KEY, None)
             _reset_view()
             st.rerun()
 
@@ -234,7 +292,7 @@ def _confirm_execution(hardening, session_id, state, target):
             if st.button('Confirm and execute', type='primary', key='agentic_execute'):
                 st.session_state.pop(CONFIRM, None)
                 with st.spinner('Remediation Agent executing, then Scanner verifying. This can take up to 10 minutes.'):
-                    hardening.execute_approved(session_id)
+                    _execute(hardening, session_id, expected=st.session_state.pop('agentic_confirm_requests', None))
                 _reset_view()
                 st.rerun()
             if st.button('Cancel', key='agentic_execute_cancel'):
@@ -266,11 +324,11 @@ def _decision_cell(store, record, operator, comment, editable):
             ready = bool(operator.strip())
             hint = None if ready else 'Enter your name above first'
             if st.button('Approve', key='agentic_approve_' + p['request_id'], disabled=not ready, help=hint):
-                store.decide(p['request_id'], approve=True, operator=operator, comment=comment)
+                _decide(store, p['request_id'], approve=True, operator=operator, comment=comment)
                 st.session_state.pop(COMMENT, None)
                 st.rerun()
             if st.button('Reject', key='agentic_reject_' + p['request_id'], disabled=not ready, help=hint):
-                store.decide(p['request_id'], approve=False, operator=operator, comment=comment)
+                _decide(store, p['request_id'], approve=False, operator=operator, comment=comment)
                 st.session_state.pop(COMMENT, None)
                 st.rerun()
     if record['comment']:
@@ -286,7 +344,9 @@ def _show_fixes(store, assessment_round, state, analysis, *, editable):
                         f"{md_escape(goal['read_as'])}")
             st.caption('Code enforces this reading on the plan. If it is wrong, reject the fixes and run the next '
                        'round with a clearer goal.')
-    if outcome['outcome'] in PLANNED:
+    if assessment_round.get('mode') == 'deterministic':
+        st.caption(md_escape(outcome['reason']))
+    elif outcome['outcome'] in PLANNED:
         st.caption('Orchestrator summary: ' + md_escape(outcome['reason']))
     if not state['records']:
         st.info('The Orchestrator proposed no fixes in this round.')
@@ -302,7 +362,7 @@ def _show_fixes(store, assessment_round, state, analysis, *, editable):
                                 placeholder='e.g. Approved for the Saturday maintenance window')
         if approve_all or reject_all:
             for record in state['undecided']:
-                store.decide(record['proposal']['request_id'], approve=approve_all, operator=operator, comment=comment)
+                _decide(store, record['proposal']['request_id'], approve=approve_all, operator=operator, comment=comment)
             st.session_state.pop(COMMENT, None)
             st.rerun()
         st.caption('Each approval is bound to that exact request on this VM and expires after one hour.')
@@ -446,6 +506,9 @@ def _trace_rows(trace):
 
 
 def _show_agent_log(hardening, phases):
+    if all(r.get('mode') == 'deterministic' for _, r in phases):
+        st.info('Assessment ran without AI. No agent decisions or proposals were created.')
+        return
     for title, agent_round in phases:
         traces = sorted(hardening.traces(agent_round['round_id']), key=lambda t: AGENT_ORDER.get(t['agent_role'], 9))
         if not traces:
@@ -476,6 +539,21 @@ def render_agentic(database_path: Path):
         st.info('Connect to the VM to start an agentic round.')
         return
     try:
+        backend = active_backend(st.session_state)
+        if backend:
+            connection = st.session_state[CONNECTION_KEY]
+            capabilities = backend.capabilities(connection)
+            for reason in capabilities.blocked_reasons:
+                st.info(md_escape(reason))
+            if backend.session.identity.platform == 'ubuntu':
+                snapshot = backend.snapshot(connection, st.session_state.get(WORKFLOW_KEY))
+                _show_progress(dict(zip(STEPS, snapshot.step_states)), None)
+                _goal_input()
+                with st.container(horizontal=True):
+                    st.button('Start agentic round', key='agentic_run', disabled=not capabilities.can_use_model)
+                    st.button('Assess without AI', key='agentic_assess_without_ai', disabled=not capabilities.can_assess)
+                render_snapshot_tabs(snapshot)
+                return
         runtime, store, hardening = _services(database_path, target)
         session_id = st.session_state.get(SESSION)
         rounds = store.rounds(session_id) if session_id else []
@@ -512,7 +590,11 @@ def render_agentic(database_path: Path):
             _show_risk(analysis, viewing['round_id'], viewing.get('analysis_outcome'))
         with controls:
             if viewing['framework_run_id']:
-                _show_assessment(runtime, viewing['framework_run_id'])
+                if backend:
+                    render_controls(backend.snapshot(connection, st.session_state[WORKFLOW_KEY],
+                        RecordRef('windows', backend.session.target_id, viewing['round_id'])))
+                else:
+                    _show_assessment(runtime, viewing['framework_run_id'])
             else:
                 st.info('The scan did not complete in this round.')
         with results:

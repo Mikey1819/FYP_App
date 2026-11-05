@@ -1,0 +1,5 @@
+-r requirements.txt
+paramiko==5.1.0
+defusedxml==0.7.1
+# Development-only benchmark extraction
+pypdf==6.21.4

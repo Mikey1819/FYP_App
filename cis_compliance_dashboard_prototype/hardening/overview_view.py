@@ -16,6 +16,7 @@ from .import_storage import ImportedEvidenceStore
 from .remediation import RemediationStore
 from .risk import analyse
 from .ui import md_escape, myt
+from system.history import active_history
 
 LEVELS = ('Critical', 'High', 'Moderate', 'Low')
 # Ordinal warm ramp for the cartoon theme, darker = more severe. Bars carry a black outline, so the palest
@@ -97,17 +98,36 @@ def activity_row(r, store):
 def render_overview(database_path: Path):
     st.title('Overview')
     try:
+        backend, shared_rows = active_history(st.session_state)
+        if backend and backend.session.identity.platform != 'windows':
+            st.caption(md_escape(backend.session.identity.hostname) + ' · verified Ubuntu target')
+            if not shared_rows:
+                st.info('No assessments yet for this verified target. Open **Agentic hardening** to assess it.')
+            else:
+                from system.contracts import WorkspaceSnapshot
+                from system.ui.components import render_controls
+                latest = shared_rows[-1]
+                render_controls(WorkspaceSnapshot(latest.target, summary=latest.counts))
+            return
         imports = ImportedEvidenceStore(database_path)
         runtime = AssessmentRuns(imports)
         store = RemediationStore(database_path.with_name(database_path.stem + '_agentic.sqlite3'), imports)
         history = HistoryService(runtime, store)
         targets = history.targets()
+        if backend:
+            targets = {t: name for t, name in targets.items() if t == backend.session.target_id}
         if not targets:
             st.info('No assessments yet. Open **Agentic hardening**, connect to the VM and start a round.')
             return
         target = st.selectbox('VM', list(targets), format_func=lambda t: f'{targets[t]} ({t.removeprefix("windows:")})',
                               key='overview_target') if len(targets) > 1 else next(iter(targets))
         runs = history.runs(target)
+        if backend:
+            allowed = {r.run_reference.record_id for r in shared_rows}
+            runs = [r for r in runs if r['run_id'] in allowed]
+            if not runs:
+                st.info('No assessments yet for this verified target and registration epoch.')
+                return
         latest = runs[-1]
         record = imports.get(runtime.get(latest['run_id']).evidence_sha256)
         results = record.assessment.results
