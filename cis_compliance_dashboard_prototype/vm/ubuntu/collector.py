@@ -57,6 +57,25 @@ GROUPS = {
 }
 
 
+CHUNK = 65536
+
+
+def read_bounded(stream, limit):
+    """Read to EOF in small chunks, refusing more than the limit in bytes.
+
+    One large read fails on /proc/sys files (they allocate a buffer of the requested size; observed
+    ENOMEM for 4 MiB on the target), so the size limit is enforced across chunks instead.
+    """
+    data = bytearray()
+    while True:
+        chunk = stream.read(min(CHUNK, limit + 1 - len(data)))
+        if not chunk:
+            return bytes(data)
+        data.extend(chunk)
+        if len(data) > limit:
+            raise ValueError('File exceeds the read limit')
+
+
 @dataclass(frozen=True)
 class CommandOutput:
     returncode: int
@@ -177,7 +196,7 @@ class FixedProbeIO:
             before = os.fstat(fd)
             if not stat.S_ISREG(before.st_mode) or before.st_uid != 0 or before.st_mode & 0o022:
                 raise ValueError('Untrusted configuration ownership/type')
-            with os.fdopen(fd,'rb',closefd=False) as stream: data = stream.read(limit+1)
+            with os.fdopen(fd,'rb',closefd=False) as stream: data = read_bounded(stream, limit)
             after = os.fstat(fd)
             if len(data)>limit or (before.st_mtime_ns,before.st_size)!=(after.st_mtime_ns,after.st_size):
                 raise ValueError('Configuration changed or exceeds limit')

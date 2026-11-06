@@ -18,8 +18,11 @@ HEADERS = {'preview': {'op', 'action_id', 'parameters'}, 'execute': {'op'}, 'rec
 
 
 def _identity():
-    machine = Path('/etc/machine-id').read_text(encoding='ascii').strip()
-    hostname = Path('/proc/sys/kernel/hostname').read_text(encoding='ascii').strip().casefold()
+    from .collector import read_bounded
+    with open('/etc/machine-id', 'rb') as handle:
+        machine = read_bounded(handle, 4096).decode('ascii').strip()
+    with open('/proc/sys/kernel/hostname', 'rb') as handle:  # small chunks: /proc/sys rejects large reads
+        hostname = read_bounded(handle, 4096).decode('ascii').strip().casefold()
     return machine, hostname
 
 

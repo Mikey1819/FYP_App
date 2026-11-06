@@ -466,3 +466,10 @@ Six risk tests that encoded the pending state were updated to the recorded appro
 - **Fresh recovery snapshot (user-reported):** `Before_Unified_Hardening_Provisioning_2026-11-06`.
 - **First install:** the user ran `install.sh` and reported Python 3.10.12 and oscap 1.2.17. That install used the bundle copied **before** the tailoring change, so reinstalling from the rebuilt bundle (uninstall first) was requested; otherwise the tailoring file is missing and the helper digest differs.
 - **Tests:** eight tests that assumed inactive sources or no accepted engine were updated. Closed-gate behaviour is now tested with an explicitly closed gate or an inactive lock copy, and the real gate is asserted open from recorded evidence. None were deleted. Full suite **352 tests, all passed**; baseline: no protected changes.
+
+## 2026-11-06 first live run: /proc/sys read fix
+
+- The user connected through the app (fingerprint entered). **Assess without AI** returned "Ubuntu fixed helper command refused or is not installed (exit status 2)", the helper's own refusal code.
+- A user-run read-only diagnostic traceback showed `OSError [Errno 12] Cannot allocate memory` from one `read(4 MiB + 1)` of `/proc/sys/kernel/hostname` in `preflight`: sysctl proc files allocate a buffer of the requested size.
+- **Fix:** `collector.read_bounded` reads in 64 KiB chunks and enforces the same limit across chunks. All collector file reads and the runner identity read use it. New `tests/integration/test_bounded_read.py` (a sysctl-like stream that fails on large reads) failed before the fix.
+- Bundle rebuilt; a reinstall is required. Full suite **354 tests, all passed**; baseline: no protected changes.
