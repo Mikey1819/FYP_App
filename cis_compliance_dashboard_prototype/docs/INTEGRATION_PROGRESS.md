@@ -662,3 +662,24 @@ I read the CIS 5.1.x text first (pp.502–553). The values are ClientAliveInterv
   - **Mutation checks, all caught:** a main-file line before the Include, an earlier drop-in, a Match block, a missing Include, restoring other controls' keys, and not being commit-confirm. The missing-Include mutation first survived; a dedicated test was added.
   - Registry tests list exactly 20 implemented families; 10 reserved IDs remain.
 - Full suite **440 tests, all passed**; baseline: no protected changes; source check passes; bundle rebuilt (reinstall before the next live scan). Execution gate still closed.
+
+## 2026-11-07 commit-confirm UFW default deny (CIS 4.1.7)
+
+I read CIS 4.1.4–4.1.7 (pp.433–441) first. For 4.1.7 the remediation is `ufw default deny incoming|outgoing|routed`. Its impact note says to consider `allow out` http, https, ntp, port 53 and port 853 before applying.
+
+- **Site-policy decision:** the allowed outbound traffic is exactly the CIS 4.1.7 list: DNS 53, http 80/tcp, ntp 123/udp, https 443/tcp and DNS over TLS 853. This was chosen under the user's blanket approval ("i approve the stuff that need my decision"). It appears in every approval summary and is easy to change later. `ufw logging on`, also in that list, does not affect connectivity and is not part of this change.
+- **`vm/ubuntu/family_ufw.py`, `ubuntu.4.1.7.v1`:**
+  - **Order:** the missing outbound allowances are added first, then only directions whose default is `allow` become `deny`; deny, reject and disabled already comply. Outbound traffic is never fully blocked mid-change.
+  - **SSH replies:** UFW's before-rules keep accepting established traffic, so SSH replies continue.
+  - **Refused when:** UFW is inactive, or incoming would become deny with no SSH (port 22) allow rule.
+  - **Exact state:** ufw's reported defaults plus its own `### tuple ###` records from `user.rules`/`user6.rules`, with v6 twins only when `IPV6=yes`.
+  - **Restore:** puts the default policies back first, then deletes only the allowances this change added. A rule that already existed is never deleted.
+  - **Commands:** ufw runs only through an allowlist of fixed argv.
+  - **Commit-confirm:** `supervision = 'confirm'`, 600 s.
+- **Host spec:** proposed only for a Non-Compliant 4.1.7 with a registered UFW firewall manager (`firewall_manager = ufw`) and UFW active. On the live VM the expected change is outgoing allow → deny plus the five allowances. Incoming is already deny, and routed is disabled.
+- **4.1.4 (loopback):** not implemented. It needs the pending collector rule resolver; until then the control stays Unknown.
+- **Coverage:** 4.1.7 is `fixture_tested`; live validation is pending.
+- **Tests:** 8 new tests in `tests/integration/test_ubuntu_ufw_family.py` with an in-memory model of ufw's records (RED: 10 errors).
+  - **Mutation checks, all caught:** changing the defaults before adding the allowances, no lockout check, no active check, restore deleting pre-existing rules, and changing directions that already comply.
+  - Registry tests list exactly 21 implemented families; 9 reserved IDs remain.
+- Full suite **448 tests, all passed**; baseline: no protected changes; source check passes; bundle rebuilt (reinstall before the next live scan). Execution gate still closed.

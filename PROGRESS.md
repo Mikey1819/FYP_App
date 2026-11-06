@@ -562,3 +562,7 @@ Added supervised apt jobs: install AppArmor (1.3.1.1) and auditd (6.3.1.1), and 
 ## 6 November 2026 — Ubuntu SSH fix families with confirm-or-undo (integration, in progress)
 
 Added SSH fixes for 5.1.7, 5.1.10, 5.1.16, 5.1.19, 5.1.20 and 5.1.21 through one validated `sshd_config.d` drop-in, reloaded rather than restarted. sshd's precedence is checked first: Match blocks, missing or unusual Includes, and earlier sources setting the same option are refused. Every SSH change must be confirmed over a fresh login within 10 minutes, or it is rolled back automatically. Twenty fix families now exist. Full suite: **440 passed**. Fixture-only; the execution gate is closed.
+
+## 7 November 2026 — Ubuntu UFW default deny with confirm-or-undo (integration, in progress)
+
+Added the 4.1.7 fix. It first allows the outbound traffic CIS lists (DNS, http, https, ntp and DNS over TLS), recorded as a site-policy decision, then sets any `allow` default to `deny`. It is refused without an SSH allow rule, and must be confirmed over a fresh login or it is rolled back. Twenty-one fix families now exist. Full suite: **448 passed**. Fixture-only; the execution gate is closed.

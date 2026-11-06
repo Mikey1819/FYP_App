@@ -228,8 +228,32 @@ def _ssh_specs():
     return specs
 
 
+def _ufw_spec():
+    """Host spec for the commit-confirm UFW default deny (4.1.7); fixture-tested, not validated on the VM."""
+    import json
+    from system.contracts import ComplianceStatus
+    from vm.ubuntu.family_ufw import IMPLEMENTATION_SHA256, PARAMS
+
+    def propose(cid, evidence):
+        result = next((a for a in evidence.assessments if a.control_id == cid), None)
+        if result is None or result.status is not ComplianceStatus.NON_COMPLIANT:
+            return None
+        facts = json.loads(evidence.raw)['observations'][cid]
+        if facts.get('firewall_manager', {}).get('value') != 'ufw' or facts.get('ufw.active', {}).get('value') is not True:
+            return None
+        return json.loads(json.dumps(PARAMS))
+
+    def validate(candidate):
+        if type(candidate) is not dict or candidate != PARAMS:
+            raise ValueError('Only the approved default-deny site profile is managed')
+    return {'ubuntu.4.1.7.v1': ActionSpec(
+        'ubuntu.4.1.7.v1', 1, IMPLEMENTATION_SHA256, ('4.1.7',), validate, 120, propose=propose,
+        title='UFW default deny, after allowing outbound DNS, http, https, ntp and DNS over TLS (confirm after reconnect)',
+        recovery={'kind': 'restore_backup', 'scope': ['/etc/default/ufw', '/etc/ufw/user.rules', '/etc/ufw/user6.rules']})}
+
+
 FAMILIES = dict(_sysctl_specs(), **_core_spec(), **_auth_specs(), **_aging_specs(), **_package_specs(),
-                **_ssh_specs())
+                **_ssh_specs(), **_ufw_spec())
 
 
 def _restore_spec():

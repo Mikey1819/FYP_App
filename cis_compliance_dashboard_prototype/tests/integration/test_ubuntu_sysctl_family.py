@@ -139,7 +139,7 @@ class SysctlFamilyTests(unittest.TestCase):
                                          'ubuntu.5.4.1.1.v1', 'ubuntu.5.4.1.3.v1', 'ubuntu.5.4.1.5.v1',
                                          'ubuntu.1.3.1.1.v1', 'ubuntu.1.5.4.v1', 'ubuntu.2.1.2.v1', 'ubuntu.6.3.1.1.v1',
                                          'ubuntu.5.1.7.v1', 'ubuntu.5.1.10.v1', 'ubuntu.5.1.16.v1', 'ubuntu.5.1.19.v1',
-                                         'ubuntu.5.1.20.v1', 'ubuntu.5.1.21.v1'})
+                                         'ubuntu.5.1.20.v1', 'ubuntu.5.1.21.v1', 'ubuntu.4.1.7.v1'})
         incomplete = self._observations(ev); incomplete['1.5.1']['sysctl_resolution'] = {'state': 'ok', 'value': 'incomplete'}
         ev.raw = json.dumps({'observations': incomplete}).encode()
         self.assertIsNone(spec.propose('1.5.1', ev))
