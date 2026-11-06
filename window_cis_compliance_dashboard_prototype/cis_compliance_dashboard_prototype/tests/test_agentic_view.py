@@ -14,8 +14,6 @@ from hardening.winrm_channel import LiveScanner
 from test_agentic import FakeVm, TeamDouble, call, clients, plan
 from test_winrm_channel import MACHINE_UUID, target
 
-APP = Path(__file__).resolve().parents[1] / 'app.py'
-
 
 def agentic_page():
     from hardening.databases import imports_database
@@ -169,12 +167,6 @@ class AgenticPageTests(unittest.TestCase):
         app = AppTest.from_function(agentic_page, default_timeout=30).run()
         self.assertEqual(len(app.exception), 0)
         self.assertTrue(any('Connect to a server' in i.value for i in app.info))
-
-    def test_app_opens_on_overview_with_empty_state(self):
-        app = AppTest.from_file(str(APP), default_timeout=30).run()
-        self.assertEqual(len(app.exception), 0, [e.value for e in app.exception])
-        self.assertEqual(app.title[0].value, 'Overview')
-        self.assertTrue(any('No assessments yet' in i.value for i in app.info))
 
 
 if __name__ == '__main__':

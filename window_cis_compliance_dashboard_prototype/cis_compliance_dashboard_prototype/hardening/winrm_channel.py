@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 import hashlib
 import json
 from pathlib import Path
+from typing import ClassVar
 from uuid import UUID, uuid4
 
 from .domain import EvidenceMode
@@ -62,6 +63,8 @@ class WinRmLogin:
 @dataclass(frozen=True)
 class WinRmTarget:
     """A known server: every call checks that the machine answering is this hostname and UUID."""
+    # Which workspace pages open once it is connected (app.py). A future Ubuntu target will say 'ubuntu'.
+    workspace: ClassVar[str] = 'windows'
     hostname: str
     machine_uuid: str
     username: str

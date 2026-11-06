@@ -59,7 +59,8 @@ def _when(value):
         return str(value)
 
 
-def _forget_connection(notice):
+def forget_connection(notice):
+    """End this session with the server (nothing changes on it) and say so on the Servers page."""
     st.session_state.pop(LIVE_TARGET, None)
     st.session_state.pop(REPORT, None)
     st.session_state.pop(CONFIRM_ACCESS, None)
@@ -287,10 +288,10 @@ def _show_access(registry, connected):
                 if st.button('Yes, disconnect', key='servers_access_confirm', type='primary'):
                     if confirm == 'self':
                         disconnect_laptop(connected, own)
-                        _forget_connection(f'This laptop no longer has access to {connected.hostname}.')
+                        forget_connection(f'This laptop no longer has access to {connected.hostname}.')
                     else:
                         final = close_access(connected)
-                        _forget_connection(f'No laptop has access to {connected.hostname} any more.' + (
+                        forget_connection(f'No laptop has access to {connected.hostname} any more.' + (
                             ' The helper had turned PowerShell Remoting on: click Revert changes in the helper on the '
                             'server to turn it off.' if final['helper_enabled_remoting'] else ''))
                 if st.button('Cancel', key='servers_access_cancel'):

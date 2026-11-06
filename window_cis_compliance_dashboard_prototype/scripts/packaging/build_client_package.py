@@ -8,7 +8,7 @@ What goes in (FYP-Hardening\\):
   Start.cmd, README-FIRST.txt
   python\\                the Python that runs the venv (3.15), without its tests, docs, headers and Tk
   python\\Lib\\site-packages  exactly the libraries installed in the venv: the tested set (requirements-lock.txt)
-  app\\cis_compliance_dashboard_prototype\\  app.py, launch.py, hardening\\, .streamlit\\config.toml, requirements files
+  app\\cis_compliance_dashboard_prototype\\  app.py, launch.py, hardening\\, ubuntu\\, .streamlit\\config.toml, requirements files
   app\\scripts\\vm\\         the collector and the remediation runner (sent to the server over WinRM)
   app\\scripts\\server_access\\  the server access helper (downloadable from the Servers page)
 The folders keep the repository's layout, because the code finds those scripts relative to itself.
@@ -34,6 +34,7 @@ APP = ROOT / 'cis_compliance_dashboard_prototype'
 NAME = 'FYP-Hardening'
 
 APP_FILES = ['app.py', 'launch.py', 'requirements.txt', 'requirements-lock.txt', '.streamlit/config.toml']
+CODE_FOLDERS = ['hardening', 'ubuntu']  # The Windows Server 2022 pages and shared code; the Ubuntu workspace.
 SCRIPT_FILES = ['vm/Collect-Server2022Evidence.ps1', 'vm/Invoke-RemediationAction.ps1',
                 'server_access/FYP-ServerAccess.ps1', 'server_access/Start-ServerAccess.cmd',
                 'server_access/FYP-ServerAccess-README.txt']
@@ -83,8 +84,10 @@ Your laptop and the server must be on the same network (for example the same Wi-
 1. In the workspace: Servers > "Server access helper" > Download helper. Copy the zip to the server.
 2. On the server, as administrator: unzip, double-click Start-ServerAccess.cmd, click "Start pairing".
    The helper window shows a one-time code.
-3. In the workspace: Servers > Add a server > type the code > Find server. Then type the server's built-in
-   Administrator password. The server is saved under "My servers".
+3. The workspace opens on the Servers page; the other pages appear once a server is connected.
+   Add a server > type the code > Find server. The page shows which system the server runs. Then type the
+   server's built-in Administrator password. The server is saved under "My servers" and the workspace opens
+   on Overview.
 4. Open "Agentic hardening" and start a round.
 5. When you have finished with a server, click "Revert changes" in the helper on that server.
 Next time, pick the server under My servers and type the password. If its address changed, use Re-pair.
@@ -136,9 +139,10 @@ def build(out):
     for name in APP_FILES:
         (app / name).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(APP / name, app / name)
-    for path in sorted((APP / 'hardening').glob('*.py')):
-        (app / 'hardening').mkdir(exist_ok=True)
-        shutil.copy2(path, app / 'hardening' / path.name)
+    for folder in CODE_FOLDERS:
+        for path in sorted((APP / folder).glob('*.py')):
+            (app / folder).mkdir(exist_ok=True)
+            shutil.copy2(path, app / folder / path.name)
     for name in SCRIPT_FILES:
         target = package / 'app' / 'scripts' / name
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -155,10 +159,13 @@ def build(out):
 # Renders every page once with the package's own Python and an empty database (Streamlit's test runner).
 PAGES_CHECK = r'''
 from streamlit.testing.v1 import AppTest
-def servers():
-    from hardening.databases import servers_database
-    from hardening.servers_view import render_servers
-    render_servers(servers_database())
+def ubuntu():
+    from ubuntu.overview_view import render_overview
+    render_overview()
+def overview():
+    from hardening.databases import imports_database
+    from hardening.overview_view import render_overview
+    render_overview(imports_database())
 def agentic():
     from hardening.databases import imports_database
     from hardening.agentic_view import render_agentic
@@ -168,13 +175,15 @@ def history():
     from hardening.history_view import render_history
     render_history(imports_database())
 shown = []
-for name, app in (('Overview', AppTest.from_file('app.py', default_timeout=120)),
-                  ('Servers', AppTest.from_function(servers, default_timeout=120)),
-                  ('Agentic hardening', AppTest.from_function(agentic, default_timeout=120)),
-                  ('History and configuration drift', AppTest.from_function(history, default_timeout=120))):
+for name, title, app in (
+        ('Servers', 'Servers', AppTest.from_file('app.py', default_timeout=120)),  # The app opens on Servers.
+        ('Overview', 'Overview', AppTest.from_function(overview, default_timeout=120)),
+        ('Agentic hardening', 'Agentic hardening', AppTest.from_function(agentic, default_timeout=120)),
+        ('History and drift', 'History and configuration drift', AppTest.from_function(history, default_timeout=120)),
+        ('Ubuntu Overview', 'Overview', AppTest.from_function(ubuntu, default_timeout=120))):
     app.run()
     assert not app.exception, (name, [e.value for e in app.exception])
-    assert app.title[0].value == name, (name, app.title[0].value)
+    assert app.title[0].value == title, (name, app.title[0].value)
     shown.append(name)
 print('PAGES OK ' + ', '.join(shown))
 '''
