@@ -700,3 +700,25 @@ I read CIS 4.1.4–4.1.7 (pp.433–441) first. For 4.1.7 the remediation is `ufw
   - **Mutation checks, all caught:** ignoring the negation, restore dropping the other control's line, accepting `1` for `true`, running every service step, and skipping the installed check.
   - 23 implemented families; 7 reserved IDs remain.
 - Full suite **454 tests, all passed**.
+
+## 2026-11-07 audit-rule families (CIS 6.3.3.4, 6.3.3.6, 6.3.3.8)
+
+I read the CIS text first (pp.784–802). Each control's rules are the exact CIS remediation lines, loaded with `augenrules --load`.
+
+- **`vm/ubuntu/family_audit.py`:** one `AuditRulesFamily`, with one file per control in `/etc/audit/rules.d/`: `60-fyp-cis-time-change.rules`, `60-fyp-cis-privileged.rules` and `60-fyp-cis-identity.rules`.
+  - 6.3.3.4: b64 and b32 `adjtimex,settimeofday,clock_settime` rules plus a `/etc/localtime` watch, key `time-change`.
+  - 6.3.3.8: `-w <path> -p wa -k identity` for all eight identity paths.
+  - 6.3.3.6: `-a always,exit -F path=P -F perm=x -F auid>=UID_MIN -F auid!=unset -k privileged` for each binary in the scan's privileged inventory, using UID_MIN from `login.defs`. Parameters are bounded: sorted unique absolute paths, at most 512, no `.`/`..` parts; UID_MIN between 500 and 60000. The target re-checks that each path is still a setuid/setgid regular file.
+- **Refused when:**
+  - auditd is not installed (6.3.1.1 comes first);
+  - the configuration is locked (`enabled 2`), because augenrules would silently not load;
+  - another file sets `-e 2`, because a restore could then only take effect after a reboot;
+  - a later file contains `-D`;
+  - any rule is unparseable by the collector, such as suppressions or unknown filters.
+- **State:** the managed file plus whether every rule of this change is loaded, compared semantically with the collector's parser. `auditctl -l` prints `-F key=`, `auid!=-1`, `-S all` and its own syscall order, so a byte comparison would fail. A failed load puts the previous file back.
+- **Live VM:** these become possible only after auditd is installed (6.3.1.1).
+- **Coverage:** 6.3.3.4, 6.3.3.6 and 6.3.3.8 are `fixture_tested`.
+- **Tests:** 7 new tests in `tests/integration/test_ubuntu_audit_rules_family.py` with an in-memory auditd that prints rules the way `auditctl -l` does. One test checks that the real 6.3.3.4 predicate turns Compliant (RED: 11 errors).
+  - **Mutation checks, all caught:** allowing a locked configuration, an `-e 2` file, a later `-D`, skipping the parse, skipping the inventory re-check, a syntactic loaded comparison, and unsorted paths.
+  - 26 implemented families; 4 reserved IDs remain.
+- Full suite **461 tests, all passed**.

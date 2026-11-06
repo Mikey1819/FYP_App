@@ -570,3 +570,7 @@ Added the 4.1.7 fix. It first allows the outbound traffic CIS lists (DNS, http, 
 ## 7 November 2026 — sudo use_pty and auditd service fixes (integration, in progress)
 
 Added 5.2.2 (`Defaults use_pty`, sharing the managed sudoers file with 5.2.3, one line per control) and 6.3.1.2 (unmask, enable and start auditd, with an exact restore). Twenty-three fix families now exist. Full suite: **454 passed**. Fixture-only; the execution gate is closed.
+
+## 7 November 2026 — audit-rule fixes (integration, in progress)
+
+Added 6.3.3.4 (time change), 6.3.3.6 (privileged commands, from the scan's inventory) and 6.3.3.8 (identity files). Each uses the exact CIS rules in its own `rules.d` file, loaded with `augenrules --load`. Locked or reboot-dependent configurations are refused. Twenty-six fix families now exist. Full suite: **461 passed**. Fixture-only; the execution gate is closed.

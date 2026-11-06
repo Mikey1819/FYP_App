@@ -266,6 +266,39 @@ def _ufw_spec():
         recovery={'kind': 'restore_backup', 'scope': ['/etc/default/ufw', '/etc/ufw/user.rules', '/etc/ufw/user6.rules']})}
 
 
+def _audit_specs():
+    """Host specs for the audit-rule files (6.3.3.4, 6.3.3.6, 6.3.3.8); fixture-tested, not validated on the VM."""
+    import json
+    from system.contracts import ComplianceStatus
+    from vm.ubuntu.family_audit import FILES, IMPLEMENTATION_SHA256, RULES_DIR, RULESETS
+    titles = {'6.3.3.4': 'Audit changes to date and time (CIS rules, augenrules --load)',
+              '6.3.3.6': 'Audit use of privileged commands found by the scan (augenrules --load)',
+              '6.3.3.8': 'Audit changes to user and group identity files (CIS rules, augenrules --load)'}
+    specs = {}
+    for control_id, name in FILES.items():
+        def propose(cid, evidence):
+            result = next((a for a in evidence.assessments if a.control_id == cid), None)
+            if result is None or result.status is not ComplianceStatus.NON_COMPLIANT:
+                return None
+            facts = json.loads(evidence.raw)['observations'][cid]
+            if cid in RULESETS:
+                return {'ruleset': RULESETS[cid]}
+            paths, uid = facts.get('privileged_paths', {}), facts.get('uid_min', {})
+            if (facts.get('privileged_inventory', {}).get('value') != 'complete' or paths.get('state') != 'ok'
+                    or uid.get('state') != 'ok' or not paths.get('value')):
+                return None
+            return {'paths': sorted(set(paths['value'])), 'uid_min': uid['value']}
+
+        def validate(candidate, cid=control_id):
+            from vm.ubuntu.family_audit import AuditRulesFamily
+            AuditRulesFamily(cid, None).validate(candidate)
+        action_id = 'ubuntu.%s.v1' % control_id
+        specs[action_id] = ActionSpec(action_id, 1, IMPLEMENTATION_SHA256, (control_id,), validate, 120, propose=propose,
+                                      title=titles[control_id],
+                                      recovery={'kind': 'restore_backup', 'scope': [RULES_DIR + '/' + name]})
+    return specs
+
+
 def _service_specs():
     """Host spec for enabling and starting auditd (6.3.1.2); fixture-tested, not validated on the VM."""
     import json
@@ -296,7 +329,7 @@ def _service_specs():
 
 
 FAMILIES = dict(_sysctl_specs(), **_core_spec(), **_auth_specs(), **_aging_specs(), **_package_specs(),
-                **_ssh_specs(), **_ufw_spec(), **_service_specs())
+                **_ssh_specs(), **_ufw_spec(), **_service_specs(), **_audit_specs())
 
 
 def _restore_spec():
