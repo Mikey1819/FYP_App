@@ -534,3 +534,7 @@ The user's chat approval is recorded as a blanket approval (not itemized) in the
 ## 6 November 2026 — First live Ubuntu assessment (integration)
 
 The existing app assessed FYP-Ubuntu2204 read-only over SSH: **5 Compliant, 20 Non-Compliant, 5 Unknown, 0 Error** (coverage 83%, compliance 20%). Recovery snapshot: Before_Unified_Hardening_Provisioning_2026-11-06. No changes were made to the VM; the execution gate is closed.
+
+## 6 November 2026 — Ubuntu sudo log and password length families (integration, in progress)
+
+Added two fix families: CIS 5.2.3 writes a dedicated sudo log file setting into its own `/etc/sudoers.d` file, checked by `visudo` before and after it is put in place. CIS 5.3.3.2.2 sets a 14-character minimum in a `pwquality.conf.d` drop-in and refuses when PAM or another file would override it. Neither edits `/etc/sudoers`, `pwquality.conf` or PAM. Seven fix families now exist. Full suite: **385 passed**; baseline and source checks pass. Fixture-only: the execution gate is closed and no VM was changed.

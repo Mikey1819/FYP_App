@@ -538,3 +538,19 @@ I read CIS 1.5.3 (printed pp.159–161) in full first, along with 1.5.4 and 2.1.
 - **Tests:** 7 new tests in `tests/integration/test_ubuntu_core_family.py`, written first. A mutation that disabled the limits guard failed two subtests. Two registry tests were updated to the exact five implemented families (25 reserved IDs remain absent).
 - **2.1.2 Avahi:** not implemented yet. The CIS remediation is package purge, which needs the package family and supervision. The mask-and-retain branch needs a dependency fact and a site-policy exception; without them the predicate correctly stays Unknown.
 - Full suite **376 tests, all passed**; baseline: no protected changes; bundle rebuilt (reinstall before the next live scan).
+
+## 2026-11-06 sudo log file (CIS 5.2.3) and password length (CIS 5.3.3.2.2) — task 12 partial
+
+I read CIS 5.2.3 (printed p.562) and 5.3.3.2.2 (printed pp.605–607) in full first.
+
+- **`vm/ubuntu/family_auth.py`, `ubuntu.5.2.3.v1`:** adds only `Defaults logfile="/var/log/sudo.log"` (the approved site path) in `/etc/sudoers.d/60-fyp-hardening-cis`. `/etc/sudoers` is never edited.
+  - The file is first written as `/etc/sudoers.d/.60-fyp-hardening-cis.tmp`. The name contains a `.`, so sudo never reads it. It is checked with `visudo -cf`, moved into place, and then the whole configuration is checked with `visudo -c`. If either check fails, the file is removed straight away, so a rejected file is never left active.
+  - **Not eligible** when any `Defaults` line negates `logfile`, when an include other than `/etc/sudoers.d` exists, or when the managed file holds content this family did not write. Restore removes the file or returns the earlier content, then validates again.
+- **`ubuntu.5.3.3.2.2.v1`:** adds only `minlen = 14` in `/etc/security/pwquality.conf.d/60-fyp-hardening-cis.conf`, the location CIS recommends. `pwquality.conf` and PAM files are never edited.
+  - Eligibility runs the collector's own resolver (`probes.password_minlen`) on the simulated after-state, using the CIS precedence order: module arguments, then `pwquality.conf`, then the last `.conf.d` file. It refuses if a PAM `minlen` argument, a `pwquality.conf` value or a later drop-in would still win, or if `pam_pwquality` is not in use. An earlier drop-in that the managed file supersedes is allowed.
+  - Existing passwords are unchanged; only new passwords must meet the rule.
+- **Host specs (`backends/ubuntu/actions.FAMILIES`):** 5.2.3 is proposed only when the sudoers were fully resolved and `visudo -c` passed in the evidence. 5.3.3.2.2 is proposed only when PAM resolution is `complete`. The implementation hash covers `family_auth.py` and `probes.py`, and the host and target registries agree.
+- **Target I/O (`LinuxAuthIO`):** bounded, ownership-checked reads; writes use `O_NOFOLLOW` to the managed files only. `visudo` runs through the collector's fixed-environment, deadline-bounded runner.
+- **Coverage:** 5.2.3 and 5.3.3.2.2 remediation, refusal, verification and recovery are `fixture_tested`; live validation is pending. A new test ties catalogue remediation coverage to the registered families exactly.
+- **Tests:** 9 new tests in `tests/integration/test_ubuntu_auth_families.py`, written first (RED: 14 errors from the missing module and registry). Mutations that disabled the minlen precedence guard (3 failures) and the `!logfile` guard (1 failure) were caught and reverted. Registry tests now list exactly 7 implemented families; 23 reserved IDs remain absent.
+- Full suite **385 tests, all passed**; baseline: no protected changes; source check passes; bundle rebuilt (reinstall before the next live scan). Execution gate still closed.

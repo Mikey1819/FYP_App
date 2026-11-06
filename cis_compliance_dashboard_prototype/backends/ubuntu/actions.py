@@ -87,7 +87,50 @@ def _core_spec():
                                             'scope': [LIMITS_MANAGED, MANAGED, COREDUMP_MANAGED, 'runtime:fs.suid_dumpable']})}
 
 
-FAMILIES = dict(_sysctl_specs(), **_core_spec())
+def _auth_specs():
+    """Host specs for sudo logfile (5.2.3) and password minlen (5.3.3.2.2); fixture-tested, not validated on the VM."""
+    import json
+    from system.contracts import ComplianceStatus
+    from vm.ubuntu.family_auth import IMPLEMENTATION_SHA256, PWQ_MANAGED, SUDO_LOGFILE, SUDO_MANAGED
+
+    def failing(control_id, evidence):
+        result = next((a for a in evidence.assessments if a.control_id == control_id), None)
+        if result is None or result.status is not ComplianceStatus.NON_COMPLIANT:
+            return None
+        return json.loads(evidence.raw)['observations'][control_id]
+
+    def propose_sudo(control_id, evidence):
+        facts = failing(control_id, evidence)
+        if (facts is None or facts.get('sudoers_resolution', {}).get('value') != 'complete'
+                or facts.get('sudoers_syntax_valid', {}).get('value') is not True):
+            return None
+        return {'logfile': SUDO_LOGFILE}
+
+    def propose_minlen(control_id, evidence):
+        facts = failing(control_id, evidence)
+        if facts is None or facts.get('pam_resolution', {}).get('value') != 'complete':
+            return None
+        return {'minlen': 14}
+
+    def validate_sudo(params):
+        if params != {'logfile': SUDO_LOGFILE}:
+            raise ValueError('Only the approved sudo log path is managed')
+
+    def validate_minlen(params):
+        if type(params) is not dict or set(params) != {'minlen'} or type(params['minlen']) is not int or params['minlen'] != 14:
+            raise ValueError('Only minlen = 14 is managed')
+    return {
+        'ubuntu.5.2.3.v1': ActionSpec('ubuntu.5.2.3.v1', 1, IMPLEMENTATION_SHA256, ('5.2.3',), validate_sudo, 60,
+                                      propose=propose_sudo, title='Add a dedicated sudo log file (visudo-validated)',
+                                      recovery={'kind': 'restore_backup', 'scope': [SUDO_MANAGED]}),
+        'ubuntu.5.3.3.2.2.v1': ActionSpec('ubuntu.5.3.3.2.2.v1', 1, IMPLEMENTATION_SHA256, ('5.3.3.2.2',), validate_minlen,
+                                          60, propose=propose_minlen,
+                                          title='Require passwords of at least 14 characters (new passwords only)',
+                                          recovery={'kind': 'restore_backup', 'scope': [PWQ_MANAGED]}),
+    }
+
+
+FAMILIES = dict(_sysctl_specs(), **_core_spec(), **_auth_specs())
 
 
 def _restore_spec():
