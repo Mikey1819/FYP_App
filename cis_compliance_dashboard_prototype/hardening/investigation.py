@@ -107,7 +107,7 @@ class Coordinator:
                 status, summary = "Unavailable", f"Model investigation unavailable ({type(error).__name__}); deterministic assessment remains usable."
                 break
             if not calls and getattr(self.tools, 'nudge', False) and self.tools.terminal_outcome is None and not nudged:
-                # An agent that still owes a structured decision gets one reminder (real qwen3:8b sometimes answered
+                # An agent that still owes a structured decision gets one reminder (a local model sometimes answers
                 # with nothing at all). The reply text is discarded, as during tool selection.
                 nudged = True
                 names = [s['function']['name'] for s in self.tools.schemas()]

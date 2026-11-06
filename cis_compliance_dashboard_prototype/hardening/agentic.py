@@ -66,7 +66,7 @@ REVIEW_PROMPT = COMMON + ('You are the AI Agent Orchestrator after the administr
     'execute, approve or retry yourself. 1) Call delegate_remediation. 2) If any fix was executed, call '
     'delegate_verification so the Scanner Agent rescans the VM. 3) Call submit_review once with next_step finish, '
     'next_round or remediation_review and a reason_code from next_step_codes for that step.')
-# Real qwen3:8b used every step inspecting findings one by one and never submitted (26 Oct probe): bound it.
+# Bounded so the agent keeps steps for submit_analysis instead of inspecting findings one by one.
 MAX_INVESTIGATIONS = 2
 # Lockout timers are not recorded while the lockout threshold is 0, so these gaps depend on 1.2.2.
 GAP_PREREQUISITE = {'1.2.1': '1.2.2', '1.2.4': '1.2.2'}
@@ -91,8 +91,8 @@ SKIP_REASONS = {'waits_for_prerequisite': 'Waits until {prerequisites} is compli
                 'not_decided': 'Not decided by the Orchestrator this round; deferred by code'}
 # Written by code only, never offered to the model: a deferral without a fitting code, or a finding left out.
 CODE_ONLY_DEFERS = ('not_decided',)
-# What each plan code means, shown to the Orchestrator with the codes. Real qwen3:8b read low_impact as "the
-# finding matters little": it tried it as a defer code and left out findings whose only fix code it was (31 Oct).
+# What each plan code means, shown to the Orchestrator with the codes, so that low_impact is read as a reason
+# to fix (the change is safe), not as "the finding matters little".
 PLAN_CODE_MEANINGS = {
     'high_risk': 'the finding is High or Critical risk',
     'unblocks_other': 'fixing it lets other findings resolve',
@@ -273,8 +273,8 @@ class _RoleTools:
         return self.names
 
     def schemas(self):
-        # Offer only tools that are valid now: on laptop hardware a call that code must refuse costs 30-60 s and
-        # can exhaust the budget (26 Oct probes). Code still validates every call, offered or not.
+        # Offer only tools that are valid now: on a local model a call that code must refuse costs time and
+        # can exhaust the budget. Code still validates every call, offered or not.
         allowed = self.available()
         return [s for s in self._all_schemas() if s['function']['name'] in allowed]
 
@@ -443,8 +443,8 @@ class AnalysisTools(_RoleTools):
         t = self.target_id
         found = [f['control_id'] for f in self.analysis['findings']] if self.analysis else []
         gaps = [g['control_id'] for g in self.analysis['gaps']] if self.analysis else []
-        # One list per attention code, offering only the findings that code fits. With a single control enum and a
-        # single code enum, real qwen3:8b still paired audit controls with manual_fix_needed (27 Oct evaluation).
+        # One list per attention code, offering only the findings that code fits, so a control cannot be paired
+        # with a code that does not fit it.
         flags = {code: {'type': 'array', 'maxItems': 3, 'items': {'type': 'string', 'enum': controls},
                         'description': 'Flag for attention: ' + ATTENTION[code].format(
                             waiting='other findings', reverted='several')}
@@ -461,7 +461,7 @@ class AnalysisTools(_RoleTools):
                                            dict(control_id=gaps, triage_code=sorted(TRIAGE))))]
 
     def _scores(self):
-        """Compact view: on laptop hardware every extra prompt token costs time (measured 26 Oct probe)."""
+        """Compact view: on a local model every extra prompt token costs time."""
         _, attention, triage, _ = self._facts()
         findings = []
         for f in self.analysis['findings']:
@@ -512,9 +512,8 @@ class AnalysisTools(_RoleTools):
             raise ValueError('Call score_findings before submitting')
         waiting, attention_facts, triage_facts, prerequisite = self._facts()
         # Attention is advisory and changes no number, so a flag that does not fit the facts is discarded and
-        # recorded instead of failing the decision; only fitting flags are shown, at most 3, in code order. Real
-        # qwen3:8b over-flagged and wrongly called 17.1.1 manual_fix_needed in the 26 Oct evaluation, and the retry
-        # of a refused decision ran out of time. Gap triage stays strict: every gap needs one fitting code.
+        # recorded instead of failing the decision; only fitting flags are shown, at most 3, in code order.
+        # Gap triage stays strict: every gap needs one fitting code.
         attention = []
         for code, controls in flags.items():
             if type(controls) is not list or len(controls) > 40 or any(
@@ -598,8 +597,8 @@ class RemediationTools(_RoleTools):
     """Acts only on approved requests. The executor and the VM runner keep every hard guard (identity, hash,
     expiry, precondition, single attempt); these tools add the agent's own observe-decide-act loop.
 
-    The model names a request by its control ID (one proposal per control per round, enforced by the store).
-    Writing twelve 32-hex request IDs took a local model longer than its request budget (26 Oct probe)."""
+    The model names a request by its control ID (one proposal per control per round, enforced by the store),
+    which is far shorter for a local model to write than 32-hex request IDs."""
     names = ('list_approved', 'precheck', 'execute_fixes', 'skip_fix', 'stop_execution', 'report_results')
     repeatable = ('precheck',)  # At most twice, e.g. to re-observe after an execution.
 
@@ -715,7 +714,7 @@ class RemediationTools(_RoleTools):
                 break  # Uncertain: the rest stay open, not attempted. Failed: the agent decides how to go on.
             results.append(self._execute(request_id))
         output = dict(results=results, must_stop=self.stopped is not None)
-        if self.stopped:  # Real qwen3:8b copied these results into report_results after an uncertain outcome (27 Oct).
+        if self.stopped:  # Code has recorded the results; the model need not copy them into report_results.
             output['next'] = 'report_results with target_id only; these results are already recorded'
         elif results[-1]['result'] == 'failed' and self.open():
             output.update(paused_after_failure=True, remaining=[self.pending[i]['proposal']['control_id']
@@ -867,8 +866,8 @@ class OrchestratorTools(_RoleTools):
     def _facts(self, control, decisions):
         """Which reason codes are true for this finding (codes not listed here are judgement calls)."""
         decision = decisions[control]
-        # Gaps expected to resolve with this fix count too, as in the Analysis Agent's facts: real qwen3:8b reused
-        # Analysis's unblocks_other flag for 1.2.2 and was refused when only findings counted (27 Oct check).
+        # Gaps expected to resolve with this fix count too, as in the Analysis Agent's facts, so unblocks_other
+        # holds for 1.2.2 when the lockout timers wait for it.
         waiting = ([c for c, d in decisions.items() if control in d['waits_for']]
                    + [g['control_id'] for g in self.analysis['gaps'] if g['prerequisite'] == control])
         return waiting, {'high_risk': decision['finding']['level'] in ('High', 'Critical'),
@@ -901,8 +900,7 @@ class OrchestratorTools(_RoleTools):
         codes = {'fix': list(FIX_REASONS), 'defer': [c for c in SKIP_REASONS if c not in CODE_ONLY_DEFERS]}
         entries = check_decisions(entries)
         # Deferring a control that has nothing to decide (a gap, or a finding without a library action) is a no-op:
-        # it is ignored and recorded rather than failing the plan, whatever its code (real qwen3:8b did this in 2 of 4
-        # probes). A fix for one is refused.
+        # it is ignored and recorded rather than failing the plan, whatever its code. A fix for one is refused.
         self.ignored_skips = [e['control_id'] for e in entries if e['decision'] == 'defer' and e['control_id'] not in decisions]
         entries = [e for e in entries if e['decision'] == 'fix' or e['control_id'] in decisions]
         seen = set()
@@ -911,7 +909,7 @@ class OrchestratorTools(_RoleTools):
             if control not in decisions:
                 raise ValueError(f'{control[:20]} is not in must_decide (gaps and assessment-only findings have no fix)')
             # One list makes "fix and defer" impossible to express; a second entry for a finding is the same
-            # conflict (real qwen3:8b listed 7 findings in both of the earlier two lists on the real VM, 31 Oct).
+            # conflict.
             if control in seen:
                 raise ValueError(f'{control} has more than one decision: give each finding exactly one, fix or defer')
             seen.add(control)
@@ -922,8 +920,7 @@ class OrchestratorTools(_RoleTools):
                  for e in entries if e['decision'] == 'fix']
         # Strict on what can lead to a write, lenient on what cannot: a deferral proposes nothing, so it never fails
         # the plan. A deferral whose code is not a true defer code, and a finding left out, are deferred as
-        # not_decided and named in the summary. Real qwen3:8b kept failing the lab plan this way after the one-list
-        # redesign (31 Oct: 1.1.3 and NLA left out, then low_impact as a defer code).
+        # not_decided and named in the summary.
         skipped, self.replaced_codes = [], []
         for entry in entries:
             if entry['decision'] != 'defer':
@@ -991,8 +988,8 @@ class OrchestratorTools(_RoleTools):
                                  'requests a rescan')
             return self._delegate_scanner()
         if name == 'delegate_analysis':
-            # The model may name the scan it hands over by either identifier from the Scanner handoff (probes and
-            # the 26 Oct evaluation); whichever it names must be the current scan.
+            # The model may name the scan it hands over by either identifier from the Scanner handoff; whichever it
+            # names must be the current scan.
             current = dict(framework_run_id=self.framework_run_id,
                            evidence_sha256=self.record.assessment.source_sha256 if self.record else None)
             if type(arguments) is dict:
@@ -1029,7 +1026,7 @@ class OrchestratorTools(_RoleTools):
 
     def _delegate_scanner(self):
         tools = ScannerTools(self.rounds)
-        # A cold first request after another agent ran took over 60 s on the laptop (27 Oct evaluation).
+        # The first request after another agent ran is slow (the model's prompt cache is cold), hence 120 s.
         child, finished = self._child(SCANNER, tools, steps=6, calls=8, seconds=180, request=120)
         self.scans += 1
         outcome = tools.terminal_outcome or dict(outcome='incomplete', reason=stop_text(finished))
@@ -1218,7 +1215,7 @@ class AgenticHardening:
     """One administrator-started assessment round, then an agentic remediation phase after approval."""
 
     def __init__(self, runtime, store, scanner, *, client_factory=None, seconds=600):
-        # Default 10 minutes per phase (NFR06), the measured need on the RTX 3050 laptop.
+        # Default 10 minutes per phase (NFR06).
         if type(seconds) is not int or not 30 <= seconds <= 600:
             raise ValueError('Round budget must be 30-600 seconds')
         if store.imports.path.resolve() != runtime.imports.path.resolve():
@@ -1248,8 +1245,8 @@ class AgenticHardening:
     def run_round(self, session_id=None):
         self._start(session_id)
         tools = OrchestratorTools(self)
-        # A third attempt for the plan: real qwen3:8b usually corrects the error it is shown but sometimes makes a
-        # new one (31 Oct lab check: a defer with a fix code, then two findings left out). Refusals change nothing.
+        # A third attempt for the plan: the model usually corrects the error it is shown but sometimes makes a
+        # new one. Refusals change nothing.
         result = Coordinator(self.client_factory(ORCHESTRATOR), tools, limits=Limits(
             steps=12, calls=16, seconds=self.seconds, request_seconds=240, invalid=3)).run()
         outcome = tools.terminal_outcome or dict(outcome='incomplete', proposals=list(tools.proposals),
