@@ -28,8 +28,8 @@ class SavedServer:
     note: str
     added_at: str
     last_connected_at: str | None
-    # Filled by code pairing (docs/design/LAN_PAIRING_DESIGN.md). Empty only for a server saved before adding by
-    # address was removed (5 November 2026); it still connects, and Re-pair fills these in.
+    # Filled by code pairing (docs/design/LAN_PAIRING_DESIGN.md). Empty only for a server saved by address in an
+    # earlier version; it still connects, and Re-pair fills these in.
     pairing_id: str | None = None
     laptop_address: str | None = None
     paired_at: str | None = None

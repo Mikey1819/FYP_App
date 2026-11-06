@@ -63,9 +63,9 @@ class HistoryService:
     def previous_records(self, run_id, limit=10, *, exclude=()):
         """Earlier assessments of the same target, newest first (input for the drift factor D).
 
-        A scan that a rescan replaced within its own round is not an earlier assessment: counting it turned "no
-        history" (D=1) into "already non-compliant" (D=3) for every finding of a round with a rescan (error_gap,
-        27 Oct evaluation). `exclude` names such scans of a round still in progress; stored rounds name theirs.
+        A scan that a rescan replaced within its own round is not an earlier assessment: counting it would turn
+        "no history" (D=1) into "already non-compliant" (D=3) for every finding of a round with a rescan.
+        `exclude` names such scans of a round still in progress; stored rounds name theirs.
         """
         skip = set(exclude) | self.store.superseded_runs()
         records, current = [], run_id
