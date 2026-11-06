@@ -40,10 +40,10 @@ PROMPTS = {
         '(retry_allowed), call delegate_scanner once more. If the analysis lists rescan_requested, '
         'you may call delegate_scanner once more and then delegate_analysis again. 3) Call submit_plan once with '
         'decisions: exactly one entry per must_decide finding (never gaps). To fix it now: {control_id, decision: '
-        '"fix", action_id from that finding\'s actions, reason_code from its fix_codes}; fixes run in the order '
-        'listed. To defer it: {control_id, decision: "defer", reason_code from its defer_codes}. A finding with '
-        'blocked_until_compliant cannot be fixed yet: fix its prerequisite and defer it. Choose which to fix and '
-        'their order yourself, weighing the facts of each finding; a plan is not approval: the administrator decides.',
+        '"fix", action_id from that finding\'s actions, reason_code from its fix_codes}. To defer it: {control_id, '
+        'decision: "defer", reason_code from its defer_codes}. A finding with blocked_until_compliant cannot be '
+        'fixed yet: fix its prerequisite and defer it. Choose which to fix yourself, weighing the facts of each '
+        'finding; code ranks the fixes by risk score. A plan is not approval: the administrator decides.',
     SCANNER: COMMON + 'You are the Scanner Agent. Call scan_target first to collect evidence from the VM over WinRM. '
         'Then call read_coverage. If any control is in Error state you may call rescan once: Error can be transient, '
         'while Unknown means no value is recorded (e.g. not applicable) and a rescan will not change it. You may inspect '
@@ -848,7 +848,7 @@ class OrchestratorTools(_RoleTools):
         return [tool('delegate_scanner', 'Delegate collection and coverage review to the Scanner Agent.', t),
                 tool('delegate_analysis', 'Delegate risk analysis of the Scanner handoff to the Analysis Agent.', t),
                 tool('submit_plan', 'Submit the whole decision once: exactly one entry per must_decide finding, '
-                     'fix or defer; a finding you do not fix still needs a defer entry. Fixes run in the order listed.', t,
+                     'fix or defer; a finding you do not fix still needs a defer entry. Code ranks the fixes by risk score.', t,
                      decisions=plan_list(controls, actions, sorted(set(fix_codes) | set(skip_codes))))]
 
     def _decisions(self):
@@ -1010,7 +1010,11 @@ class OrchestratorTools(_RoleTools):
             if self.scanner_outcome['outcome'] == 'handoff_analysis' and self.analysis is None:
                 raise ValueError('Delegate the Analysis Agent before submitting a plan')
             fixes, skipped, decisions = self._validate_plan(arguments['decisions'])
-            # The plan is validated as a whole first, so a rejected plan stores nothing.
+            # The plan is validated as a whole first, so a rejected plan stores nothing. The Orchestrator decides
+            # which findings to fix; code ranks them by risk score, highest first, ties by control ID (the same order
+            # as the risk ranking). A fix that waits for a prerequisite cannot be in the plan at all, so no order
+            # between the fixes of one plan is needed for safety.
+            fixes.sort(key=lambda e: (-decisions[e['control_id']]['finding']['score'], e['control_id']))
             for rank, entry in enumerate(fixes, 1):
                 proposal = self.store.propose(session_id=self.rounds.session_id, framework_run_id=self.framework_run_id,
                     record=self.record, control_id=entry['control_id'], action_id=entry['action_id'], rank=rank,
@@ -1274,7 +1278,7 @@ class AgenticHardening:
         if deterministic:
             verdicts = self._execute_without_ai(run_id)
             outcome = dict(outcome='fallback', reason='Executed without AI at the administrator\'s request, in the '
-                           'Orchestrator\'s rank order, with the same approval and precondition guards.')
+                           'risk rank order, with the same approval and precondition guards.')
         else:
             tools = OrchestratorReviewTools(self, run_id)
             result = Coordinator(self.client_factory(ORCHESTRATOR), tools, limits=Limits(

@@ -16,7 +16,7 @@ flowchart TD
       A -->|inspect_finding · check_history| A
       A -->|attention + gap triage; rescan_requested| O1
       O1 -.->|once, only if Analysis asked| S
-      O1 -->|submit_plan: fix or defer per finding, order, reason codes| P[(Proposals)]
+      O1 -->|submit_plan: fix or defer per finding, reason codes| P[(Proposals)]
     end
     Admin -->|approve / reject each| P
     Admin -->|execute approved| O2
@@ -43,7 +43,7 @@ flowchart TD
 | Remediation Agent | `list_approved`, `precheck`, `execute_fixes`, `skip_fix`, `stop_execution`, `report_results` | Order of execution among approved requests. **Execute or skip each one** after observing the VM. **Whether to continue after a failure:** execution pauses after a failed result and shows its cause, and the agent continues (`execute_fixes`) or stops (`stop_execution`, available only after a failure). | Act on an unapproved request, execute before a precheck or when the precheck shows it is not ready (a list containing one unready request executes nothing), continue after an uncertain outcome, choose values, retry |
 | Administrator | Dashboard | Approve or reject each proposal. Fall back to execution without AI. | — |
 
-**One decision per finding.** `submit_plan` takes a single list `decisions`, with one entry per `must_decide` finding: `fix` (with `action_id` and a fix code) or `defer` (with a defer code). Fixes run in the order listed.
+**One decision per finding.** `submit_plan` takes a single list `decisions`, with one entry per `must_decide` finding: `fix` (with `action_id` and a fix code) or `defer` (with a defer code). Code ranks the fixes by risk score, highest first, ties by control ID, whatever order the Orchestrator lists them in (since 7 November 2026; before, its listed order was the rank). A fix that waits for a prerequisite cannot be in the plan, so no order between fixes is needed for safety.
 - Until 31 October the plan was two lists, `fixes` and `skipped`, that must not overlap. Real `qwen3:8b` repeatedly put findings in both: the 29 October J1 runs, the 30 October regression and goal runs, and the real VM on 31 October.
 - One list cannot express that conflict; a second entry for the same finding is refused by name.
 - A deferral that code already handles never fails the plan: a finding with nothing to decide is ignored.
@@ -75,7 +75,7 @@ In an earlier trial, free-text reasons were invented: the model justified the an
 | Remediation skip | `precondition_changed`, `prerequisite_not_met`, `expired`, `stop_after_failure` | Fresh precheck observation; an earlier result in this task failed |
 | Orchestrator review | `finish`: `all_verified`, `nothing_fixable`, `nothing_executed`. `next_round`: `unblocked_findings`, `remaining_findings`. `remediation_review`: `verification_failed`, `uncertain_outcome`, `remediation_incomplete` | Receipt verdicts plus the verification rescan. `finish` and `next_round` require no failed, uncertain or unattempted fix. |
 
-As a result, every reason shown to the administrator is true by construction. The choices themselves stay with the models: what to investigate, what to flag, what to fix, in what order, what to skip, and what happens next.
+As a result, every reason shown to the administrator is true by construction. The choices themselves stay with the models: what to investigate, what to flag, what to fix, what to skip, and what happens next.
 
 ## Administrator goals (removed 6 November 2026)
 

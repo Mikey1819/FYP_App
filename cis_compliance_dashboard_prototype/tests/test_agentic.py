@@ -440,6 +440,19 @@ class AgenticRoundTests(AgenticTestCase):
 
 
 class OrchestratorAccountabilityTests(AgenticTestCase):
+    def test_fixes_are_ranked_by_risk_score_whatever_order_the_orchestrator_lists_them(self):
+        # The Orchestrator decides which findings to fix; code ranks them, highest risk first.
+        t = 'windows:' + target().machine_uuid
+        result = self.hardening(FakeVm(), [call('delegate_scanner', t), call('delegate_analysis', t), plan(t,
+            fixes=[('1.1.3', 'REM-1.1.3', 'low_impact'), ('1.1.1', 'REM-1.1.1', 'low_impact'),
+                   ('1.2.2', 'REM-1.2.2', 'high_risk')],
+            skipped=[('2.3.10.3', 'needs_review'), ('18.10.57.3.9.4', 'needs_review')])]).run_round()
+        proposals = [p['proposal'] for p in self.store.for_run(result['framework_run_id'])]
+        self.assertEqual([(p['rank'], p['control_id'], p['risk_score']) for p in proposals],
+                         [(1, '1.2.2', 69), (2, '1.1.1', 63), (3, '1.1.3', 57)])
+        self.assertIn('Proposed for your approval, in order: 1.2.2 (High 69), 1.1.1 (High 63), 1.1.3 (Moderate 57).',
+                      result['outcome']['reason'])
+
     def test_summary_is_written_from_records_and_lists_every_decision(self):
         result = self.standard_round(FakeVm()).run_round()
         outcome = result['outcome']
@@ -1071,15 +1084,15 @@ class JudgementTests(AgenticTestCase):
         return policy
 
     def test_execution_pauses_after_a_failure_and_the_agent_may_continue(self):
-        vm = FakeVm(revert_controls=('2.3.10.3',))  # Isolated: something sets this one value back.
+        vm = FakeVm(revert_controls=('1.1.1',))  # Isolated: something sets this one value back.
         hardening, executed = self.remediation_round(
             vm, self.after_pause(lambda r: ('execute_fixes', dict(control_ids=r['remaining']))))
-        self.assertEqual(vm.attempts, ['1.2.2', '2.3.10.3', '1.1.1'])
+        self.assertEqual(vm.attempts, ['1.2.2', '1.1.1', '2.3.10.3'])  # Risk order: 69, 63, 60.
         self.assertEqual([v['verdict'] for v in executed['verdicts']],
                          ['Verified compliant', 'Verification failed', 'Verified compliant'])
         events = next(t for t in hardening.traces(executed['round_id']) if t['agent_role'] == REMEDIATION)['events']
         first = next(e['data']['result'] for e in events if e['kind'] == 'tool' and e['data']['name'] == 'execute_fixes')
-        self.assertEqual((len(first['results']), first['remaining']), (2, ['1.1.1']))
+        self.assertEqual((len(first['results']), first['remaining']), (2, ['2.3.10.3']))
         self.assertEqual((executed['outcome']['outcome'], executed['outcome']['reason_code']),
                          ('remediation_review', 'verification_failed'))
 
@@ -1089,8 +1102,8 @@ class JudgementTests(AgenticTestCase):
         self.assertEqual(vm.attempts, ['1.2.2'])
         self.assertEqual(executed['verdicts'][0]['verdict'],
                          'Unresolved: execution_failed (Requested registry access is not allowed.)')
-        self.assertIn('Skipped by the Remediation Agent: 2.3.10.3 (stopped after an earlier failed result); '
-                      '1.1.1 (stopped after an earlier failed result).', executed['outcome']['reason'])
+        self.assertIn('Skipped by the Remediation Agent: 1.1.1 (stopped after an earlier failed result); '
+                      '2.3.10.3 (stopped after an earlier failed result).', executed['outcome']['reason'])
         self.assertEqual((executed['outcome']['outcome'], executed['outcome']['reason_code']),
                          ('remediation_review', 'verification_failed'))
 
@@ -1101,7 +1114,7 @@ class JudgementTests(AgenticTestCase):
             else remediation_policy(seen, names)))
         self.assertEqual(self.rejected(hardening, executed['round_id'], REMEDIATION),
                          ['stop_execution is for after a failed result; nothing has failed'])
-        self.assertEqual(vm.attempts, ['1.2.2', '2.3.10.3', '1.1.1'])
+        self.assertEqual(vm.attempts, ['1.2.2', '1.1.1', '2.3.10.3'])
 
 
 class OverviewCountTests(AgenticTestCase):
