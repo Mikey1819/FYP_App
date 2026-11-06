@@ -5,6 +5,27 @@
 **Current state:** Partial implementation. No integration milestone is declared complete. Ubuntu live assessment and all Ubuntu remediation remain disabled.  
 **Immediate next task:** Implement Ubuntu persistence against the three existing failing storage tests, then connect validated assessments to the existing backend/UI in dependency order.
 
+## 0. Status update, 7 November 2026 (supersedes older status statements below)
+
+The detailed, dated record is `docs/INTEGRATION_PROGRESS.md`; this section summarises where it now stands.
+
+- **Assessment (live):** read-only SSH assessment of FYP-Ubuntu2204 decides all 30 controls. The latest scan reads 22 Non-Compliant and 8 Compliant.
+  - SSH explicit-line SCAP disagreements follow CIS's effective `sshd -T` audit.
+  - 4.1.4 uses the UFW rule resolver; 1.2.2.1 reports pending updates and stays Manual.
+- **Remediation:** all **30** controls have a registered, fixture-tested fix family; none is validated live yet.
+  - Families: sysctl, core dump, sudo, password, account aging, packages, SSH, UFW, auditd service, audit rules, GRUB `audit=1` and the patch job.
+  - Long and risky changes run as systemd-supervised jobs. SSH and UFW changes are commit-confirm: a fresh login confirms them, or the timer, or the boot-rollback unit after a reboot, restores them.
+- **Auxiliary operations:** approved restore, package-list refresh and reboot (boot-ID verified). They are never counted as CIS fixes.
+- **Execution gate:** evidence-based. It opens only when the deployed runner matches this application and both live acceptance scenarios have passed on the VM for that runner version.
+  - The runner stage (`install-runner.sh`) was deployed with the administrator's approval on 2026-11-07, and the confirm scenario passed.
+  - The rollback scenario was pending at the last handover. The runner changed again afterwards (maintenance operations), so it needs a reinstall and both scenarios again.
+- **Operations guide:** `docs/OPERATIONS.md`. Runner deployment preview: `docs/RUNNER_DEPLOYMENT.md`.
+- **Outstanding:**
+  - live validation of every family (task 17);
+  - the 2.1.2 mask-and-retain branch (needs a site decision);
+  - the remaining task 16 items (Ubuntu-specific details inside the existing tabs, full Windows regression evidence);
+  - the task 17 evaluation, scenarios and final handover.
+
 ## 1. Executive summary and architecture overview
 
 ### Project goal
@@ -193,19 +214,19 @@ Additional handover documentation will appear in Git status. Check fresh status 
 | M1, tasks 2–4 | Partial | Authenticated target inspection, remaining connection/state edge cases, complete shared UI compatibility; no live mutation |
 | M2, task 5 | Content pins and inventory implemented; acceptance incomplete | Human source/policy review, target OpenSCAP compatibility, accurate per-control coverage records |
 | M2, task 6 | Predicate/evidence/collection foundations; incomplete pipeline | Provenance, selected SCAP execution and reconciliation with direct probes, remaining effective-state collectors, backend/UI integration |
-| M2, task 7 | Host ledger foundation exists; Ubuntu storage not implemented | Three-file Ubuntu storage, history/drift, manual review, auxiliary operations, cancellation/reconciliation, backup/restore |
-| M2, task 8 | Ubuntu work pending | Deterministic Linux risk derivation, reviewed categorical mappings, evidence/history reasons and parity tests |
-| M3, task 9 | Ubuntu work pending | Bounded Orchestrator/Scanner/Analysis/Remediation roles, durable events, schemas/budgets; honest no-AI operation |
-| M3, task 10 | Pending | Fixed root-owned runner, exact approval bytes/hashes, target-side locks/rechecks, receipts, uncertain-outcome reconciliation, recovery acceptance |
-| M4, task 11 | Pending | Package, sysctl, core-dump and service families: 10 controls |
-| M4, task 12 | Pending | Password and sudo families: six controls |
-| M4, task 13 | Pending | SSH families: six controls, persistent recovery fence and new authenticated connection proof |
-| M4, task 14 | Pending | UFW families: three controls, ordering/ownership and persistent recovery fence |
-| M4, task 15 | Pending | Audit/boot families: five controls; package install belongs to task 11; separate reboot approval and post-boot verification |
-| M5, task 16 | Partial common UI only | Full shared workflow, maintenance/session behavior and Windows compatibility |
-| M5, task 17 | Not complete | Authorized live evaluation, before/after/refusal/recovery evidence, final operational runbooks and completed-system handover |
+| M2, task 7 | Done (fixture-tested; live scans stored) | Backup/restore drills of the store files |
+| M2, task 8 | Done; manifest approved (blanket basis) | Independent cross-check in task 17 |
+| M3, task 9 | Done (bounded roles, honest no-AI path) | Repeated agentic runs versus the deterministic baseline (task 17) |
+| M3, task 10 | Done; runner deployed live, execution gate evidence-based | Rollback acceptance scenario on the current runner version |
+| M4, task 11 | Done (fixture-tested) | Live validation |
+| M4, task 12 | Done (fixture-tested) | Live validation |
+| M4, task 13 | Done (commit-confirm; fixture-tested) | Live validation, including a console recovery trial |
+| M4, task 14 | Done (commit-confirm; 4.1.4 resolver; fixture-tested) | Live validation, including a console recovery trial |
+| M4, task 15 | Done (families plus approved reboot with boot-ID proof; fixture-tested) | Live reboot and post-boot verification |
+| M5, task 16 | Partial (maintenance, acceptance and pending-change UI; robustness tests) | Ubuntu details inside the existing tabs; Windows regression evidence |
+| M5, task 17 | Not complete | Authorized live evaluation, before/after/refusal/recovery evidence and the final handover |
 
-This transfer document is an **interim development handover**, not completion of task 17. All 30 Ubuntu remediation implementations remain outstanding; reserved action IDs are not executable actions.
+This transfer document is an **interim development handover**, not completion of task 17. All 30 Ubuntu remediation families are implemented and fixture-tested; **none is validated live yet**, and the catalogue records `live_validation: not_run` for every control.
 
 ## 4. Key files and implementation responsibilities
 

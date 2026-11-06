@@ -606,3 +606,7 @@ The VM's clock drifted relative to the laptop's, so the first acceptance attempt
 ## 7 November 2026 — package-list refresh and approved reboot (integration)
 
 Added the two maintenance operations from the plan, each approved and run once through the Fixes tab. A package-list refresh is bound to the exact apt sources. A reboot completes already-applied changes and is proven by a new boot ID: the request holds its lock until the VM is back. Neither counts as a CIS fix or joins "Execute approved fixes". Full suite: **517 passed**. The runner changed: reinstall and repeat the acceptance runs before live use.
+
+## 7 November 2026 — handover status and operations guide (integration)
+
+Updated `docs/handover/PROJECT_HANDOVER.md` with a dated status section and corrected milestone table (all 30 families implemented and fixture-tested, none live-validated). Added `docs/OPERATIONS.md`: launch, everyday use, helper/runner updates, maintenance, recovery options and troubleshooting. Documentation only.
