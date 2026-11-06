@@ -199,7 +199,37 @@ def _package_specs():
     return specs
 
 
-FAMILIES = dict(_sysctl_specs(), **_core_spec(), **_auth_specs(), **_aging_specs(), **_package_specs())
+def _ssh_specs():
+    """Host specs for the commit-confirm SSH drop-in; fixture-tested, not validated on the VM."""
+    import json
+    from system.contracts import ComplianceStatus
+    from vm.ubuntu.family_ssh import IMPLEMENTATION_SHA256, MANAGED, SETTINGS
+    specs = {}
+    for control_id, settings in SETTINGS.items():
+        params = {'settings': dict(settings)}
+
+        def propose(cid, evidence, params=params):
+            result = next((a for a in evidence.assessments if a.control_id == cid), None)
+            if result is None or result.status is not ComplianceStatus.NON_COMPLIANT:
+                return None
+            facts = json.loads(evidence.raw)['observations'][cid]
+            if facts.get('ssh_context_resolution', {}).get('value') != 'complete':
+                return None
+            return json.loads(json.dumps(params))
+
+        def validate(candidate, params=params):
+            if type(candidate) is not dict or candidate != params:
+                raise ValueError('Only the CIS values for this control are managed')
+        action_id = 'ubuntu.%s.v1' % control_id
+        title = 'Set ' + ', '.join('%s %s' % kv for kv in settings.items()) + ' (SSH drop-in, confirm after reconnect)'
+        specs[action_id] = ActionSpec(action_id, 1, IMPLEMENTATION_SHA256, (control_id,), validate, 120,
+                                      propose=propose, title=title,
+                                      recovery={'kind': 'restore_backup', 'scope': [MANAGED]})
+    return specs
+
+
+FAMILIES = dict(_sysctl_specs(), **_core_spec(), **_auth_specs(), **_aging_specs(), **_package_specs(),
+                **_ssh_specs())
 
 
 def _restore_spec():

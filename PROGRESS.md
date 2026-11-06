@@ -558,3 +558,7 @@ Running and waiting Ubuntu changes now show on the page with **Check status** an
 ## 6 November 2026 — Ubuntu package fix families (integration, in progress)
 
 Added supervised apt jobs: install AppArmor (1.3.1.1) and auditd (6.3.1.1), and purge prelink (1.5.4) and avahi-daemon (2.1.2). apt's own read-only simulation decides eligibility: no removals or upgrades on install, and no dependent packages on purge. Restore removes exactly what was added, or reinstalls the recorded version. Fourteen fix families now exist. Full suite: **432 passed**. Fixture-only; the execution gate is closed.
+
+## 6 November 2026 — Ubuntu SSH fix families with confirm-or-undo (integration, in progress)
+
+Added SSH fixes for 5.1.7, 5.1.10, 5.1.16, 5.1.19, 5.1.20 and 5.1.21 through one validated `sshd_config.d` drop-in, reloaded rather than restarted. sshd's precedence is checked first: Match blocks, missing or unusual Includes, and earlier sources setting the same option are refused. Every SSH change must be confirmed over a fresh login within 10 minutes, or it is rolled back automatically. Twenty fix families now exist. Full suite: **440 passed**. Fixture-only; the execution gate is closed.

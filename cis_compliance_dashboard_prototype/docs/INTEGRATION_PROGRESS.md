@@ -641,3 +641,24 @@ I read the CIS remediation text for each control first: 1.3.1.1 p.136 `apt insta
   - **Mutation checks, all caught:** allowing upgrades, allowing dependent removals, allowing half-installed packages, an over-broad restore, and skipping the preparation steps.
   - Registry tests list exactly 14 implemented families; 16 reserved IDs remain.
 - Full suite **432 tests, all passed**; baseline: no protected changes; source check passes; bundle rebuilt (reinstall before the next live scan). Execution gate still closed.
+
+## 2026-11-06 commit-confirm SSH families (CIS 5.1.7, 5.1.10, 5.1.16, 5.1.19, 5.1.20, 5.1.21)
+
+I read the CIS 5.1.x text first (pp.502–553). The values are ClientAliveInterval 15 with ClientAliveCountMax 3, MaxAuthTries 4, and `no` for HostbasedAuthentication, PermitEmptyPasswords, PermitRootLogin and PermitUserEnvironment. CIS says "first occurrence of an option takes precedence", and allows the entry "in a file in Include location" when the order of precedence is understood.
+
+- **`vm/ubuntu/family_ssh.py`:** one `SshFamily`, six registered actions. It writes only `/etc/ssh/sshd_config.d/00-fyp-hardening-cis.conf`, and `sshd_config` is never edited. Each control owns only its own keys in that shared file, written in one fixed key order. Its recorded state is just those keys' managed entries plus their effective `sshd -T` values, so SSH fixes for different controls neither invalidate nor undo each other.
+- **Precedence is checked, not assumed.** The fix is refused for:
+  - a `Match` block anywhere;
+  - any `Include` other than the standard one, or the standard Include missing (or present more than once), since without it the drop-in is never read;
+  - a main-file line before the Include that sets the same key;
+  - an earlier drop-in, by lexical order, that sets the same key;
+  - foreign content in the managed file.
+  The runner's after-state check also compares the effective `sshd -T` values with the CIS values.
+- **Write:** the file is written, checked with `sshd -t`, and sshd is reloaded with `systemctl reload ssh.service`; existing sessions survive a reload. If validation or the reload fails, the previous file is put back. The temp name does not end in `.conf`, so sshd never reads it.
+- **Commit-confirm:** `supervision = 'confirm'`, `confirm_seconds = 600`. After applying, the operator disconnects and reconnects within 10 minutes and presses **Confirm change**. If the fresh login fails, for example because MaxAuthTries 4 is reached by offered keys, or nobody confirms, the rollback timer restores the before-state. The approval summary says so.
+- **Host specs:** a fix is proposed only for a Non-Compliant control whose SSH context resolution is `complete`. 5.1.10, 5.1.19 and 5.1.21 are Unknown on the live VM because of the SCAP conflict, so they are not proposed; that interpretation question remains open. On the live VM, 5.1.7, 5.1.16 and 5.1.20 are the candidates.
+- **Coverage:** all six are `fixture_tested`; live validation is pending.
+- **Tests:** 8 new tests in `tests/integration/test_ubuntu_ssh_family.py` with an in-memory model of sshd's first-value-wins rule (RED: 13 errors).
+  - **Mutation checks, all caught:** a main-file line before the Include, an earlier drop-in, a Match block, a missing Include, restoring other controls' keys, and not being commit-confirm. The missing-Include mutation first survived; a dedicated test was added.
+  - Registry tests list exactly 20 implemented families; 10 reserved IDs remain.
+- Full suite **440 tests, all passed**; baseline: no protected changes; source check passes; bundle rebuilt (reinstall before the next live scan). Execution gate still closed.

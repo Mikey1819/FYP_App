@@ -86,10 +86,11 @@ class ApprovalTests(Fixture):
         implemented = {'ubuntu.1.5.1.v1', 'ubuntu.1.5.3.v1', 'ubuntu.3.3.1.v1', 'ubuntu.3.3.2.v1', 'ubuntu.3.3.8.v1',
                        'ubuntu.5.2.3.v1', 'ubuntu.5.3.3.2.2.v1', 'ubuntu.5.4.1.1.v1', 'ubuntu.5.4.1.3.v1',
                        'ubuntu.5.4.1.5.v1', 'ubuntu.1.3.1.1.v1', 'ubuntu.1.5.4.v1', 'ubuntu.2.1.2.v1',
-                       'ubuntu.6.3.1.1.v1'}
+                       'ubuntu.6.3.1.1.v1', 'ubuntu.5.1.7.v1', 'ubuntu.5.1.10.v1', 'ubuntu.5.1.16.v1',
+                       'ubuntu.5.1.19.v1', 'ubuntu.5.1.20.v1', 'ubuntu.5.1.21.v1'}
         self.assertEqual(set(FAMILIES), implemented)
         self.assertEqual(set(build(FakeSystem())), implemented)
-        self.assertEqual(len({'ubuntu.' + c + '.v1' for c in EXPECTED_IDS} - implemented), 16)
+        self.assertEqual(len({'ubuntu.' + c + '.v1' for c in EXPECTED_IDS} - implemented), 10)
         self.assertNotIn(self.family.action_id, FAMILIES)  # test-only fixture is never registered
 
 

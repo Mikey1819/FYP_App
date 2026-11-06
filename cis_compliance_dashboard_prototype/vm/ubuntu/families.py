@@ -1,17 +1,18 @@
 """Target-side registry of implemented remediation families, bound to a target I/O system.
 
 Implemented (fixture-tested only; not yet validated on the VM): the sysctl family for 1.5.1, 3.3.1,
-3.3.2 and 3.3.8, the core-dump family for 1.5.3, sudo logfile 5.2.3, password minlen 5.3.3.2.2 account aging 5.4.1.1/5.4.1.3/5.4.1.5 and supervised package jobs 1.3.1.1/1.5.4/2.1.2/6.3.1.1. Every other selected control has no family, so the runner refuses its action ID.
+3.3.2 and 3.3.8, the core-dump family for 1.5.3, sudo logfile 5.2.3, password minlen 5.3.3.2.2 account aging 5.4.1.1/5.4.1.3/5.4.1.5 supervised package jobs 1.3.1.1/1.5.4/2.1.2/6.3.1.1 and commit-confirm SSH 5.1.x. Every other selected control has no family, so the runner refuses its action ID.
 Test-only fixture families live under tests/ and are never registered here.
 """
 from .family_aging import AgingFamily, LinuxAgingIO, SPECS as AGING
 from .family_auth import LinuxAuthIO, PasswordMinlenFamily, SudoLogfileFamily
 from .family_package import LinuxPackageIO, PackageFamily, SPECS as PACKAGE_SPECS
+from .family_ssh import LinuxSshIO, SETTINGS as SSH_SETTINGS, SshFamily
 from .family_core import CoreDumpFamily, LinuxCoreDumpIO
 from .family_sysctl import LinuxSysctlSystem, REQUIRED, SysctlFamily
 
 
-class LinuxTargetSystem(LinuxPackageIO, LinuxAgingIO, LinuxAuthIO, LinuxCoreDumpIO, LinuxSysctlSystem):
+class LinuxTargetSystem(LinuxSshIO, LinuxPackageIO, LinuxAgingIO, LinuxAuthIO, LinuxCoreDumpIO, LinuxSysctlSystem):
     """Fixed, bounded target I/O shared by the implemented families (unvalidated on the VM)."""
 
 
@@ -22,6 +23,7 @@ def build(system):
         families[family.action_id] = family
     fixed = [CoreDumpFamily(system), SudoLogfileFamily(system), PasswordMinlenFamily(system)]
     fixed += [AgingFamily(control_id, system) for control_id in sorted(AGING)]
-    for family in fixed + [PackageFamily(control_id, system) for control_id in sorted(PACKAGE_SPECS)]:
+    fixed += [PackageFamily(control_id, system) for control_id in sorted(PACKAGE_SPECS)]
+    for family in fixed + [SshFamily(control_id, system) for control_id in sorted(SSH_SETTINGS)]:
         families[family.action_id] = family
     return families
