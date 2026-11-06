@@ -266,6 +266,30 @@ def _ufw_spec():
         recovery={'kind': 'restore_backup', 'scope': ['/etc/default/ufw', '/etc/ufw/user.rules', '/etc/ufw/user6.rules']})}
 
 
+def _grub_spec():
+    """Host spec for audit=1 through a GRUB drop-in (6.3.1.3); fixture-tested, not validated on the VM."""
+    import json
+    from system.contracts import ComplianceStatus
+    from vm.ubuntu.family_grub import DROPIN, IMPLEMENTATION_SHA256, PARAMS
+
+    def propose(cid, evidence):
+        result = next((a for a in evidence.assessments if a.control_id == cid), None)
+        if result is None or result.status is not ComplianceStatus.NON_COMPLIANT:
+            return None
+        facts = json.loads(evidence.raw)['observations'][cid]
+        if facts.get('bootloader', {}).get('value') != 'grub2' or facts.get('boot_entries', {}).get('state') != 'ok':
+            return None
+        return dict(PARAMS)
+
+    def validate(candidate):
+        if type(candidate) is not dict or candidate != PARAMS:
+            raise ValueError('Only audit=1 is managed')
+    return {'ubuntu.6.3.1.3.v1': ActionSpec(
+        'ubuntu.6.3.1.3.v1', 1, IMPLEMENTATION_SHA256, ('6.3.1.3',), validate, 300, propose=propose,
+        title='Add audit=1 to the kernel command line (GRUB drop-in, update-grub; no reboot)',
+        recovery={'kind': 'restore_backup', 'scope': [DROPIN, '/boot/grub/grub.cfg']})}
+
+
 def _audit_specs():
     """Host specs for the audit-rule files (6.3.3.4, 6.3.3.6, 6.3.3.8); fixture-tested, not validated on the VM."""
     import json
@@ -329,7 +353,8 @@ def _service_specs():
 
 
 FAMILIES = dict(_sysctl_specs(), **_core_spec(), **_auth_specs(), **_aging_specs(), **_package_specs(),
-                **_ssh_specs(), **_ufw_spec(), **_service_specs(), **_audit_specs())
+                **_ssh_specs(), **_ufw_spec(), **_service_specs(), **_audit_specs(),
+                **_grub_spec())
 
 
 def _restore_spec():

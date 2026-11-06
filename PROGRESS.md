@@ -574,3 +574,7 @@ Added 5.2.2 (`Defaults use_pty`, sharing the managed sudoers file with 5.2.3, on
 ## 7 November 2026 — audit-rule fixes (integration, in progress)
 
 Added 6.3.3.4 (time change), 6.3.3.6 (privileged commands, from the scan's inventory) and 6.3.3.8 (identity files). Each uses the exact CIS rules in its own `rules.d` file, loaded with `augenrules --load`. Locked or reboot-dependent configurations are refused. Twenty-six fix families now exist. Full suite: **461 passed**. Fixture-only; the execution gate is closed.
+
+## 7 November 2026 — GRUB audit=1 fix (integration, in progress)
+
+Added 6.3.1.3: `audit=1` through a `/etc/default/grub.d` drop-in and `update-grub`, as a supervised job. Conflicting `audit=0` or overriding drop-ins are refused. The VM is never rebooted; early-process auditing starts at the next reboot. Twenty-seven fix families now exist. Full suite: **465 passed**. Fixture-only; the execution gate is closed.

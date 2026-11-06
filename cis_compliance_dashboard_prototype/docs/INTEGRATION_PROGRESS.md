@@ -722,3 +722,23 @@ I read the CIS text first (pp.784–802). Each control's rules are the exact CIS
   - **Mutation checks, all caught:** allowing a locked configuration, an `-e 2` file, a later `-D`, skipping the parse, skipping the inventory re-check, a syntactic loaded comparison, and unsorted paths.
   - 26 implemented families; 4 reserved IDs remain.
 - Full suite **461 tests, all passed**.
+
+## 2026-11-07 GRUB audit=1 (CIS 6.3.1.3)
+
+I read CIS 6.3.1.3 (p.757) first: add `audit=1` to `GRUB_CMDLINE_LINUX` in `/etc/default/grub`, then `update-grub`.
+
+- **`vm/ubuntu/family_grub.py`, `ubuntu.6.3.1.3.v1`:** the same variable is extended through Ubuntu's sourced `/etc/default/grub.d/60-fyp-hardening-cis.cfg`, with `GRUB_CMDLINE_LINUX="$GRUB_CMDLINE_LINUX audit=1"`. `/etc/default/grub` is never edited.
+  - Runs as a supervised job (`update-grub` can be slow). A failed `update-grub` puts the previous drop-in back and regenerates the configuration.
+- **Refused when:**
+  - any GRUB source contains `audit=0`;
+  - a later drop-in replaces `GRUB_CMDLINE_LINUX` without keeping `$GRUB_CMDLINE_LINUX`;
+  - GRUB is not the generator, or there are no boot entries;
+  - every entry already has `audit=1`;
+  - the managed drop-in holds foreign content.
+- **State:** the drop-in plus the `audit=` arguments of every generated boot entry, parsed exactly as the collector does. The predicate judges the generated entries, so the control complies after `update-grub`.
+- **No reboot:** the running kernel audits early processes only after the next boot, which stays the administrator's decision. The approval summary says so.
+- **Coverage:** 6.3.1.3 is `fixture_tested`.
+- **Tests:** 4 new tests in `tests/integration/test_ubuntu_grub_family.py`, with an in-memory model of how `update-grub` sources the files; the real predicate turns Compliant (RED: 11 errors).
+  - **Mutation checks, all caught:** allowing `audit=0`, a later replacing drop-in, already-compliant entries, and a missing GRUB.
+  - 27 implemented families; 3 reserved IDs remain.
+- Full suite **465 tests, all passed**.

@@ -8,6 +8,7 @@ from .family_aging import AgingFamily, LinuxAgingIO, SPECS as AGING
 from .family_auth import LinuxAuthIO, PasswordMinlenFamily, SudoLogfileFamily, SudoUsePtyFamily
 from .family_service import LinuxServiceIO, ServiceFamily, SPECS as SERVICE_SPECS
 from .family_audit import AuditRulesFamily, FILES as AUDIT_FILES, LinuxAuditIO
+from .family_grub import GrubAuditFamily, LinuxGrubIO
 from .family_package import LinuxPackageIO, PackageFamily, SPECS as PACKAGE_SPECS
 from .family_ssh import LinuxSshIO, SETTINGS as SSH_SETTINGS, SshFamily
 from .family_ufw import LinuxUfwIO, UfwDefaultDenyFamily
@@ -15,7 +16,7 @@ from .family_core import CoreDumpFamily, LinuxCoreDumpIO
 from .family_sysctl import LinuxSysctlSystem, REQUIRED, SysctlFamily
 
 
-class LinuxTargetSystem(LinuxAuditIO, LinuxServiceIO, LinuxUfwIO, LinuxSshIO, LinuxPackageIO, LinuxAgingIO, LinuxAuthIO, LinuxCoreDumpIO, LinuxSysctlSystem):
+class LinuxTargetSystem(LinuxGrubIO, LinuxAuditIO, LinuxServiceIO, LinuxUfwIO, LinuxSshIO, LinuxPackageIO, LinuxAgingIO, LinuxAuthIO, LinuxCoreDumpIO, LinuxSysctlSystem):
     """Fixed, bounded target I/O shared by the implemented families (unvalidated on the VM)."""
 
 
@@ -26,7 +27,7 @@ def build(system):
         families[family.action_id] = family
     fixed = [CoreDumpFamily(system), SudoLogfileFamily(system), SudoUsePtyFamily(system), PasswordMinlenFamily(system)]
     fixed += [ServiceFamily(control_id, system) for control_id in sorted(SERVICE_SPECS)]
-    fixed += [AuditRulesFamily(control_id, system) for control_id in sorted(AUDIT_FILES)]
+    fixed += [AuditRulesFamily(control_id, system) for control_id in sorted(AUDIT_FILES)] + [GrubAuditFamily(system)]
     fixed += [AgingFamily(control_id, system) for control_id in sorted(AGING)]
     fixed += [PackageFamily(control_id, system) for control_id in sorted(PACKAGE_SPECS)]
     fixed += [SshFamily(control_id, system) for control_id in sorted(SSH_SETTINGS)]
