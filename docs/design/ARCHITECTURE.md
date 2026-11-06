@@ -83,7 +83,7 @@ From 30 October to 6 November the administrator could type a free-text goal for 
 
 ## Fallbacks (report Section 4.1.2)
 
-- **Model unavailable during assessment:** the deterministic ranking is still computed and shown. If only the Analysis Agent fails, the Orchestrator still plans from the same ranking.
+- **Model unavailable during assessment:** once a scan is collected, the deterministic ranking is still computed and shown. If only the Analysis Agent fails, the Orchestrator still plans from the same ranking. If the model is unavailable from the start, no scan runs: the Orchestrator starts every round, so the round is stored as *incomplete* with nothing collected or changed.
 - **Agents stop during remediation:** remaining approvals stay open. The administrator may choose **Execute remaining approved fixes without AI**. That path makes one read-only precheck, as the Remediation Agent must, then runs the same executor in rank order. A request whose value changed since approval, or whose prerequisite is not compliant, is closed unexecuted, as the agent's `skip_fix` would close it. It stops after an uncertain outcome. If the VM cannot be prechecked, nothing runs and every approval stays open.
 - **A possible write is never left unobserved:** if any fix was executed and no verification rescan happened, code runs the rescan itself.
 
