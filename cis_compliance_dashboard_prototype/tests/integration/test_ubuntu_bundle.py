@@ -32,6 +32,17 @@ class BundleTests(unittest.TestCase):
         self.assertEqual((out / 'sudoers' / 'fyp-hardening').read_text(),
                          'vboxuser ALL=(root) NOPASSWD: /usr/local/libexec/fyp-hardening/collect ""\n')
 
+    def test_boot_rollback_unit_ships_hash_checked_but_is_not_installed(self):
+        out = self.build()
+        unit = (out / 'systemd' / 'fyp-hardening-boot-rollback.service').read_bytes()
+        self.assertNotIn(b'\r', unit)
+        text = unit.decode('ascii')
+        for line in ('Type=oneshot', 'ExecStart=/usr/local/libexec/fyp-hardening/runner boot-rollback',
+                     'Before=ssh.service', 'WantedBy=multi-user.target'):
+            self.assertIn(line + '\n', text)
+        self.assertIn('systemd/fyp-hardening-boot-rollback.service', (out / 'SHA256SUMS').read_text())
+        self.assertNotIn('boot-rollback', (out / 'install.sh').read_text())  # enabling it is a separate approval
+
     def test_install_script_is_bounded_to_the_preview(self):
         out = self.build()
         script = (out / 'install.sh').read_text()

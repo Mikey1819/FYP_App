@@ -51,6 +51,22 @@ else
 fi
 '''
 
+# Shipped hash-checked but NOT installed by install.sh: enabling it belongs to the separately approved runner
+# deployment, with the runner sudo rule. Transient rollback timers do not survive a reboot; this oneshot rolls
+# back every unconfirmed commit-confirm change at boot, before sshd starts reading its configuration.
+BOOT_ROLLBACK_UNIT = '''[Unit]
+Description=FYP hardening: roll back unconfirmed commit-confirm changes after a reboot
+After=local-fs.target
+Before=ssh.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/fyp-hardening/runner boot-rollback
+
+[Install]
+WantedBy=multi-user.target
+'''
+
 UNINSTALL = '''#!/bin/bash
 # Reverse install.sh: the sudo rule first, then the installed directories.
 set -euo pipefail
@@ -87,6 +103,8 @@ def build(out=DEFAULT):
     (out / 'share' / 'fyp-selected-tailoring.xml').write_bytes(tailoring)
     (out / 'sudoers').mkdir()
     (out / 'sudoers' / 'fyp-hardening').write_bytes(SUDOERS.encode('ascii'))
+    (out / 'systemd').mkdir()
+    (out / 'systemd' / 'fyp-hardening-boot-rollback.service').write_bytes(BOOT_ROLLBACK_UNIT.encode('ascii'))
     (out / 'install.sh').write_bytes(INSTALL.encode('ascii'))
     (out / 'uninstall.sh').write_bytes(UNINSTALL.encode('ascii'))
     files = sorted(p for p in out.rglob('*') if p.is_file() and p.name not in ('install.sh', 'uninstall.sh'))

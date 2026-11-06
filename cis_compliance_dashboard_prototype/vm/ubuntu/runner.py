@@ -21,9 +21,21 @@ def _sha(data):
     return hashlib.sha256(data).hexdigest()
 
 
+def _mode(family):
+    """None (in-session write), 'job' (systemd-supervised) or 'confirm' (supervised + rollback unless confirmed)."""
+    mode = getattr(family, 'supervision', None)
+    if mode not in (None, 'job', 'confirm'):
+        raise ValueError('Unregistered supervision mode')
+    if mode == 'confirm' and (type(getattr(family, 'confirm_seconds', None)) is not int
+                              or not 60 <= family.confirm_seconds <= 1800):
+        raise ValueError('A commit-confirm family needs a bounded confirmation window')
+    return mode
+
+
 class Runner:
-    def __init__(self, state_dir, families, identity, *, clock=None, require_root_owned=True):
+    def __init__(self, state_dir, families, identity, *, clock=None, require_root_owned=True, launcher=None):
         self.state, self.families, self.identity = Path(state_dir), dict(families), identity
+        self.launcher = launcher  # systemd supervision (supervision.py); required only by supervised families
         self.clock = clock or (lambda: datetime.now(timezone.utc))
         if require_root_owned:
             info = self.state.lstat()
@@ -76,6 +88,9 @@ class Runner:
             if code:
                 return refuse(code)
             family, params = self.families[request['action']['action_id']], request['parameters']
+            mode = _mode(family)
+            if mode is not None and self.launcher is None:
+                return refuse('supervisor_unavailable')
             directory = self._directory(rid)
             directory.mkdir(parents=True, exist_ok=True)
             stored = directory / 'request.json'
@@ -113,6 +128,21 @@ class Runner:
             if _sha(family.read_state(params)) != before:  # step-relevant re-read immediately before writing
                 release = True
                 return finish('refused', 'changed_after_claim')
+            if mode is not None:
+                # Supervised: the write runs in a systemd unit, never in this SSH session. A commit-confirm
+                # family's rollback timer is armed first; without it nothing is started.
+                self._write_atomic(directory / 'job', mode.encode('ascii'))
+                if mode == 'confirm':
+                    try:
+                        self.launcher.arm_rollback(rid, family.max_seconds + family.confirm_seconds)
+                    except Exception:
+                        release = True
+                        return finish('refused', 'watchdog_unavailable')
+                try:
+                    self.launcher.start_job(rid, family.max_seconds)
+                except Exception:
+                    return finish('unresolved', 'job_start_failed')
+                return receipt(rid, digest, 'running', 'job_started', before, None, started, self._stamp())
             try:
                 family.apply(params)
             except Exception:
@@ -179,6 +209,10 @@ class Runner:
                 if holder == request_id:
                     self.fence.unlink()
                 return data
+        if (directory / 'job').exists() and (directory / 'claim').exists():
+            supervised = self._supervised_status(request_id)
+            if supervised is not None:
+                return supervised
         stored = directory / 'request.json'
         if not (directory / 'claim').exists():
             # Never claimed: nothing was written. A fence left by a crash before the claim is safe to release.
@@ -204,3 +238,172 @@ class Runner:
         if outcome != 'unresolved' and holder == request_id:
             self.fence.unlink()
         return data
+
+    # ---- systemd-supervised jobs and the commit-confirm watchdog ------------------------------------
+    def _load(self, request_id):
+        if type(request_id) is not str or not re.fullmatch(r'[0-9a-f]{32}', request_id):
+            raise ValueError('Invalid request ID')
+        directory = self._directory(request_id)
+        if not (directory / 'job').exists() or not (directory / 'claim').exists():
+            raise ValueError('No supervised job for this request')
+        raw = (directory / 'request.json').read_bytes()
+        request = parse_request(raw)
+        family = self.families[request['action']['action_id']]
+        return directory, raw, request, family, (directory / 'job').read_text(encoding='ascii')
+
+    def _final(self, directory):
+        """The stored receipt when it is terminal; None while the outcome is open."""
+        existing = directory / 'receipt.json'
+        if existing.exists():
+            data = existing.read_bytes()
+            from .remediation_schema import parse_receipt
+            if parse_receipt(data)['outcome'] != 'unresolved':
+                return data
+        return None
+
+    def _settle(self, request_id, directory, raw, request, outcome, code, after, *, release):
+        started = (directory / 'claim').read_text(encoding='ascii')
+        data = receipt(request_id, _sha(raw), outcome, code, request['before_state_sha256'], after, started, self._stamp())
+        self._write_atomic(directory / 'receipt.json', data)
+        if release and self.fence.exists() and self.fence.read_text(encoding='ascii') == request_id:
+            self.fence.unlink()
+        return data
+
+    def _running(self, request_id, code):
+        directory, raw, request, _, _ = self._load(request_id)
+        started = (directory / 'claim').read_text(encoding='ascii')
+        return receipt(request_id, _sha(raw), 'running', code, request['before_state_sha256'], None, started, self._stamp())
+
+    def run_job(self, request_id):
+        """Entry of the systemd unit. Writes at most once; a decided, settled or unfenced request is left alone."""
+        directory, raw, request, family, mode = self._load(request_id)
+        if self._final(directory) is not None:
+            return
+        if not self.fence.exists() or self.fence.read_text(encoding='ascii') != request_id:
+            return
+        try:
+            self._create(directory / 'job_started', self._stamp().encode('ascii'))
+        except FileExistsError:
+            return
+        if (directory / 'decision').exists():
+            return
+        params, expected = request['parameters'], request['expected_after_sha256']
+        try:
+            family.apply(params)
+            failed = False
+        except Exception:
+            failed = True
+        try:
+            after = _sha(family.read_state(params))
+        except Exception:
+            after = None
+        if mode == 'job':
+            if failed:
+                self._settle(request_id, directory, raw, request, 'unresolved', 'apply_failed', after, release=False)
+            elif after != expected:
+                self._settle(request_id, directory, raw, request, 'unresolved', 'unexpected_after_state', after, release=False)
+            else:
+                self._settle(request_id, directory, raw, request, 'applied', 'expected_after_state', after, release=True)
+            return
+        if failed or after != expected:
+            self._roll_back(request_id, stop=False)  # never stop our own unit; restore at once
+            return
+        self._write_atomic(directory / 'awaiting', after.encode('ascii'))
+
+    def confirm(self, request_id):
+        """Sent over a fresh SSH login after a commit-confirm change: proof the channel survived it."""
+        directory, raw, request, family, mode = self._load(request_id)
+        if mode != 'confirm':
+            raise ValueError('Not a commit-confirm request')
+        final = self._final(directory)
+        if final is not None:
+            return final
+        if not (directory / 'awaiting').exists():
+            return self._running(request_id, 'job_running')
+        if _sha(family.read_state(request['parameters'])) != request['expected_after_sha256']:
+            return self._running(request_id, 'awaiting_rollback')  # drifted: the timer restores it
+        try:
+            self._create(directory / 'decision', b'confirmed')
+        except FileExistsError:
+            return self._final(directory) or self._running(request_id, 'rollback_in_progress')
+        return self._finish_confirm(request_id)
+
+    def _finish_confirm(self, request_id):
+        directory, raw, request, family, _ = self._load(request_id)
+        after = _sha(family.read_state(request['parameters']))
+        if after != request['expected_after_sha256']:
+            return self._restore_now(request_id)
+        data = self._settle(request_id, directory, raw, request, 'applied', 'confirmed', after, release=True)
+        try:
+            self.launcher.disarm_rollback(request_id)  # the timer would find the decision and stop anyway
+        except Exception:
+            pass
+        return data
+
+    def rollback(self, request_id):
+        """Entry of the rollback timer unit."""
+        directory, _, _, _, mode = self._load(request_id)
+        if mode != 'confirm':
+            raise ValueError('Not a commit-confirm request')
+        return self._final(directory) or self._roll_back(request_id, stop=True)
+
+    def _roll_back(self, request_id, *, stop, resume=False):
+        directory = self._directory(request_id)
+        try:
+            self._create(directory / 'decision', b'rollback')
+        except FileExistsError:
+            final = self._final(directory)
+            if final is not None:
+                return final
+            if not resume or (directory / 'decision').read_bytes() != b'rollback':
+                return self._running(request_id, 'rollback_in_progress')
+        if stop and self.launcher.job_active(request_id):
+            self.launcher.stop_job(request_id)
+        return self._restore_now(request_id)
+
+    def _restore_now(self, request_id):
+        directory, raw, request, family, _ = self._load(request_id)
+        params, before = request['parameters'], request['before_state_sha256']
+        try:
+            if _sha(family.read_state(params)) == before:
+                outcome, code = 'rolled_back', 'nothing_to_restore'
+            else:
+                family.restore(params, (directory / 'before_state').read_bytes())
+                outcome, code = ('rolled_back', 'restored') if _sha(family.read_state(params)) == before else (
+                    'unresolved', 'rollback_failed')
+            after = _sha(family.read_state(params))
+        except Exception:
+            outcome, code, after = 'unresolved', 'rollback_failed', None
+        return self._settle(request_id, directory, raw, request, outcome, code, after, release=outcome == 'rolled_back')
+
+    def _supervised_status(self, request_id):
+        """Status of a supervised request without a terminal receipt; None means decide from state as usual."""
+        directory, _, _, _, mode = self._load(request_id)
+        decision = directory / 'decision'
+        if decision.exists():
+            if decision.read_bytes() == b'confirmed':
+                return self._finish_confirm(request_id)  # a confirmation interrupted before its receipt
+            return self._running(request_id, 'rollback_in_progress')
+        if (directory / 'awaiting').exists():
+            return self._running(request_id, 'awaiting_confirmation')
+        if self.launcher is not None and self.launcher.job_active(request_id):
+            return self._running(request_id, 'job_running')
+        if mode == 'confirm':
+            return self._roll_back(request_id, stop=False)  # the job ended without a change to confirm
+        return None
+
+    def boot_rollback(self):
+        """At boot (transient timers do not survive a reboot): restore every unconfirmed commit-confirm change."""
+        restored, requests = [], self.state / 'requests'
+        if not requests.is_dir():
+            return restored
+        for directory in sorted(requests.iterdir()):
+            job = directory / 'job'
+            if not re.fullmatch(r'[0-9a-f]{32}', directory.name) or not job.exists() or job.read_bytes() != b'confirm':
+                continue
+            decision = directory / 'decision'
+            if self._final(directory) is not None or (decision.exists() and decision.read_bytes() == b'confirmed'):
+                continue
+            self._roll_back(directory.name, stop=False, resume=True)
+            restored.append(directory.name)
+        return restored

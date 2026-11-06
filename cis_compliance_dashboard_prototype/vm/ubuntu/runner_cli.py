@@ -1,7 +1,8 @@
 """Runner entry point: one header line naming a fixed operation, then the operation's payload, on stdin.
 
-Operations: `preview` (read-only), `execute` (exact approved request bytes follow the header) and
-`reconcile`. Only the result document is written to stdout; any failure writes one fixed stderr line.
+Operations: `preview` (read-only), `execute` (exact approved request bytes follow the header), `reconcile`
+(status; never replays) and `confirm` (commit-confirm, over a fresh SSH login). systemd units call the runner
+with argv instead: `job <id>`, `rollback <id>` and `boot-rollback` (see supervision.py). Only the result document is written to stdout; any failure writes one fixed stderr line.
 """
 import json
 from pathlib import Path
@@ -14,7 +15,9 @@ from .remediation_schema import REQUEST_LIMIT, canonical
 LIMIT = REQUEST_LIMIT + 4096
 STATE = '/var/lib/fyp-hardening/runner'
 REFUSED = b'fyp-hardening: runner refused\n'
-HEADERS = {'preview': {'op', 'action_id', 'parameters'}, 'execute': {'op'}, 'reconcile': {'op', 'request_id'}}
+HEADERS = {'preview': {'op', 'action_id', 'parameters'}, 'execute': {'op'}, 'reconcile': {'op', 'request_id'},
+           'confirm': {'op', 'request_id'}}
+UNIT_OPS = ('job', 'rollback')  # argv-only, from systemd units; the sudo rule allows the runner no arguments
 
 
 def _identity():
@@ -33,7 +36,8 @@ def _default_runner():
     machine, hostname = _identity()
     io = FixedProbeIO(deadline_seconds=300)
     preflight(io, {'machine_id': machine, 'hostname': hostname})
-    return Runner(STATE, build(LinuxTargetSystem(io)), _identity)
+    from .supervision import SystemdLauncher
+    return Runner(STATE, build(LinuxTargetSystem(io)), _identity, launcher=SystemdLauncher())
 
 
 def _pairs(pairs):
@@ -45,8 +49,30 @@ def _pairs(pairs):
     return result
 
 
-def main(stdin=None, stdout=None, stderr=None, *, runner_factory=None):
+def _unit(argv, environ, runner_factory):
+    """systemd unit entry: `job <id>`, `rollback <id>` or `boot-rollback`. sudo resets the environment, so
+    INVOCATION_ID (set by systemd for every unit) is absent for anything that came through the sudo rule."""
+    if not environ.get('INVOCATION_ID'):
+        raise ValueError('Unit operations run only under systemd')
+    if argv == ['boot-rollback']:
+        runner_factory().boot_rollback()
+        return
+    if len(argv) != 2 or argv[0] not in UNIT_OPS or not re.fullmatch('[0-9a-f]{32}', argv[1]):
+        raise ValueError('Unregistered unit operation')
+    runner = runner_factory()
+    runner.run_job(argv[1]) if argv[0] == 'job' else runner.rollback(argv[1])
+
+
+def main(stdin=None, stdout=None, stderr=None, *, runner_factory=None, argv=None, environ=None):
     stdin, stdout, stderr = stdin or sys.stdin.buffer, stdout or sys.stdout.buffer, stderr or sys.stderr.buffer
+    if argv:
+        try:
+            _unit(list(argv), environ if environ is not None else {}, runner_factory or _default_runner)
+        except Exception:
+            stderr.write(REFUSED)
+            stderr.flush()
+            return 2
+        return 0
     try:
         data = stdin.read(LIMIT + 1)
         if len(data) > LIMIT or b'\n' not in data:
@@ -65,7 +91,8 @@ def main(stdin=None, stdout=None, stderr=None, *, runner_factory=None):
         else:
             if payload or type(header['request_id']) is not str or not re.fullmatch('[0-9a-f]{32}', header['request_id']):
                 raise ValueError('Invalid reconcile request')
-            result = runner.reconcile(header['request_id'])
+            operation = runner.confirm if header['op'] == 'confirm' else runner.reconcile
+            result = operation(header['request_id'])
     except Exception:
         stderr.write(REFUSED)
         stderr.flush()

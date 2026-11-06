@@ -542,3 +542,7 @@ Added two fix families: CIS 5.2.3 writes a dedicated sudo log file setting into 
 ## 6 November 2026 — Ubuntu account-aging families (integration, in progress)
 
 Added fix families for password expiry (5.4.1.1, 365 days), expiry warning (5.4.1.3, 7 days) and inactivity lock (5.4.1.5, 45 days). Each sets the default in `login.defs` or `useradd` and runs `chage` only for failing password accounts. A lockout guard refuses any change that would leave an account's password expired or expiring within 30 days, so the SSH management account cannot be locked out. Ten fix families now exist. Full suite: **396 passed**; baseline and source checks pass. Fixture-only: the execution gate is closed and no VM was changed.
+
+## 6 November 2026 — systemd supervision and rollback watchdog (integration, in progress)
+
+Added the target-side mechanisms that long and risky fixes need. Long jobs run in a bounded systemd unit that survives an SSH disconnect. Commit-confirm changes arm a rollback timer before the job starts. Unless the host confirms over a fresh SSH login, the timer restores the before-state, and a boot unit does the same after a reboot. The host executor understands `running` and `rolled_back`. No fix family uses these yet, and nothing was deployed. Full suite: **413 passed**. Fixture-only: the execution gate is closed.

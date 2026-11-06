@@ -15,7 +15,8 @@ REQUEST_LIMIT = 256 * 1024
 ACTION_ID = (r'(ubuntu\.[0-9]+(\.[0-9]+)*\.v[0-9]+|maintenance\.[a-z_]+\.v[0-9]+|recovery\.[a-z_]+\.v[0-9]+'
              r'|fixture\.[a-z_]+\.v[0-9]+)')
 RECOVERY_KINDS = ('restore_backup', 'manual_console', 'snapshot_restore')
-OUTCOMES = ('applied', 'refused', 'unresolved', 'reconciled_applied', 'reconciled_not_applied')
+OUTCOMES = ('applied', 'refused', 'unresolved', 'reconciled_applied', 'reconciled_not_applied', 'running',
+            'rolled_back')
 REQUEST_FIELDS = frozenset((
     'namespace', 'schema_version', 'request_id', 'proposal_id', 'platform', 'target_id', 'registration_epoch',
     'hostname', 'machine_id', 'workflow_session_id', 'round_id', 'evidence_sha256', 'catalogue_version',
