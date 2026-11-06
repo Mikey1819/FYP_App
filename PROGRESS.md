@@ -538,3 +538,7 @@ The existing app assessed FYP-Ubuntu2204 read-only over SSH: **5 Compliant, 20 N
 ## 6 November 2026 — Ubuntu sudo log and password length families (integration, in progress)
 
 Added two fix families: CIS 5.2.3 writes a dedicated sudo log file setting into its own `/etc/sudoers.d` file, checked by `visudo` before and after it is put in place. CIS 5.3.3.2.2 sets a 14-character minimum in a `pwquality.conf.d` drop-in and refuses when PAM or another file would override it. Neither edits `/etc/sudoers`, `pwquality.conf` or PAM. Seven fix families now exist. Full suite: **385 passed**; baseline and source checks pass. Fixture-only: the execution gate is closed and no VM was changed.
+
+## 6 November 2026 — Ubuntu account-aging families (integration, in progress)
+
+Added fix families for password expiry (5.4.1.1, 365 days), expiry warning (5.4.1.3, 7 days) and inactivity lock (5.4.1.5, 45 days). Each sets the default in `login.defs` or `useradd` and runs `chage` only for failing password accounts. A lockout guard refuses any change that would leave an account's password expired or expiring within 30 days, so the SSH management account cannot be locked out. Ten fix families now exist. Full suite: **396 passed**; baseline and source checks pass. Fixture-only: the execution gate is closed and no VM was changed.

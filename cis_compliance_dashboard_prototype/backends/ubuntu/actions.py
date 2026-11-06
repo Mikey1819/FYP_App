@@ -130,7 +130,43 @@ def _auth_specs():
     }
 
 
-FAMILIES = dict(_sysctl_specs(), **_core_spec(), **_auth_specs())
+def _aging_specs():
+    """Host specs for account aging 5.4.1.1/5.4.1.3/5.4.1.5; fixture-tested, not validated on the VM.
+
+    The target refuses any change that would leave a changed account's password expired or expiring soon."""
+    import json
+    from system.contracts import ComplianceStatus
+    from vm.ubuntu.family_aging import IMPLEMENTATION_SHA256, SPECS
+    titles = {'5.4.1.1': 'Expire passwords after at most 365 days (lockout-guarded)',
+              '5.4.1.3': 'Warn 7 days before a password expires',
+              '5.4.1.5': 'Lock accounts 45 days after password expiry (lockout-guarded)'}
+    specs = {}
+    for control_id, spec in SPECS.items():
+        params = {spec['param']: spec['target']}
+
+        def propose(cid, evidence, params=params):
+            result = next((a for a in evidence.assessments if a.control_id == cid), None)
+            if result is None or result.status is not ComplianceStatus.NON_COMPLIANT:
+                return None
+            facts = json.loads(evidence.raw)['observations'][cid]
+            if (facts.get('account_inventory', {}).get('value') != 'complete'
+                    or facts.get('accounts', {}).get('state') != 'ok'):
+                return None
+            return dict(params)
+
+        def validate(candidate, params=params):
+            name = next(iter(params))
+            if (type(candidate) is not dict or set(candidate) != {name} or type(candidate[name]) is not int
+                    or candidate[name] != params[name]):
+                raise ValueError('Only the approved site value is managed')
+        action_id = 'ubuntu.%s.v1' % control_id
+        specs[action_id] = ActionSpec(action_id, 1, IMPLEMENTATION_SHA256, (control_id,), validate, 120,
+                                      propose=propose, title=titles[control_id],
+                                      recovery={'kind': 'restore_backup', 'scope': [spec['source'], '/etc/shadow']})
+    return specs
+
+
+FAMILIES = dict(_sysctl_specs(), **_core_spec(), **_auth_specs(), **_aging_specs())
 
 
 def _restore_spec():

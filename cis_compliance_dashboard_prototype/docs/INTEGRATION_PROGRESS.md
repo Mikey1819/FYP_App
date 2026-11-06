@@ -554,3 +554,24 @@ I read CIS 5.2.3 (printed p.562) and 5.3.3.2.2 (printed pp.605–607) in full fi
 - **Coverage:** 5.2.3 and 5.3.3.2.2 remediation, refusal, verification and recovery are `fixture_tested`; live validation is pending. A new test ties catalogue remediation coverage to the registered families exactly.
 - **Tests:** 9 new tests in `tests/integration/test_ubuntu_auth_families.py`, written first (RED: 14 errors from the missing module and registry). Mutations that disabled the minlen precedence guard (3 failures) and the `!logfile` guard (1 failure) were caught and reverted. Registry tests now list exactly 7 implemented families; 23 reserved IDs remain absent.
 - Full suite **385 tests, all passed**; baseline: no protected changes; source check passes; bundle rebuilt (reinstall before the next live scan). Execution gate still closed.
+
+## 2026-11-06 account aging (CIS 5.4.1.1, 5.4.1.3, 5.4.1.5) — task 12 complete
+
+I read CIS 5.4.1.1 (printed pp.653–655), 5.4.1.3 (pp.660–661) and 5.4.1.5 (pp.665–666) in full first.
+
+- **`vm/ubuntu/family_aging.py`** contains one parameterised `AgingFamily` with three registered actions. Each uses one fixed site value: `ubuntu.5.4.1.1.v1` (maxdays 365), `ubuntu.5.4.1.3.v1` (warndays 7) and `ubuntu.5.4.1.5.v1` (inactive 45).
+  - **Default:** the family changes only the single `PASS_MAX_DAYS` / `PASS_WARN_AGE` line in `/etc/login.defs`, or the `INACTIVE=` line in `/etc/default/useradd`, and only when that default fails. Other bytes, the file mode and the group are preserved. A missing or duplicated line is refused, as the collector refuses it. A missing `/etc/default/useradd` is created and is removed again on restore.
+  - **Accounts:** it runs a fixed `chage <flag> <value> -- <name>` argv, with no shell, only for password-bearing accounts whose own value fails. Compliant accounts and locked accounts are untouched.
+  - **No password hash** enters state, a summary or a receipt. `parse_accounts` reuses the collector's account parser and adds only each account's last-change day.
+- **Lockout guard (5.4.1.1 and 5.4.1.5):** an account that would be changed is refused when:
+  - its last-change date is missing or `0` (forced change);
+  - or its password would be expired, or would expire within **30 days**, under the new values.
+  This protects the SSH management account (`vboxuser`) and every other password-bearing account. If a password is old, change it first and rescan, then the fix becomes eligible. 5.4.1.1 also refuses when `PASS_MIN_DAYS`, or an account's minimum age, is at least 365, because users could then never change their password. 5.4.1.3 (warning days) cannot lock anyone out, so it has no guard.
+- **Approval summary:** shows the default change and each account's `[old, new]` value by name.
+- **Restore:** writes the original default file content back. For each account it runs `chage` with the recorded value (`-1` blanks the field), and only where the value differs.
+- **Host specs:** propose only for a Non-Compliant control with a complete account inventory. The target preview runs the lockout guard before anything is shown for approval.
+- **Coverage:** 5.4.1.1, 5.4.1.3 and 5.4.1.5 remediation, refusal, verification and recovery are `fixture_tested`; live validation is pending.
+- **Tests:** 11 new tests in `tests/integration/test_ubuntu_aging_families.py`, written first (RED: 22 errors). The fakes are checked with the real compliance predicate before and after.
+  - **Mutation checks:** disabling the expiry margin (4 failures), the last-change check (1 failure plus 2 errors) or the minimum-age check (1 failure) was caught. A fourth mutation, which checked already-compliant accounts as well, first survived. A test with an already-compliant account was added and now catches it.
+  - Registry tests list exactly 10 implemented families; 20 reserved IDs remain.
+- Full suite **396 tests, all passed**; baseline: no protected changes; source check passes; bundle rebuilt (reinstall before the next live scan). Execution gate still closed.

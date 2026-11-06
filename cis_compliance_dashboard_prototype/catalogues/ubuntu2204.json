@@ -303,10 +303,10 @@
       "review_status": "approved",
       "coverage": {
         "assessment": "fixture_tested",
-        "remediation": "not_implemented",
-        "refusal": "not_implemented",
-        "verification": "not_implemented",
-        "recovery": "not_implemented"
+        "remediation": "fixture_tested",
+        "refusal": "fixture_tested",
+        "verification": "fixture_tested",
+        "recovery": "fixture_tested"
       },
       "live_validation": "not_run"
     },
@@ -345,10 +345,10 @@
       "review_status": "approved",
       "coverage": {
         "assessment": "fixture_tested",
-        "remediation": "not_implemented",
-        "refusal": "not_implemented",
-        "verification": "not_implemented",
-        "recovery": "not_implemented"
+        "remediation": "fixture_tested",
+        "refusal": "fixture_tested",
+        "verification": "fixture_tested",
+        "recovery": "fixture_tested"
       },
       "live_validation": "not_run"
     },
@@ -388,10 +388,10 @@
       "review_status": "approved",
       "coverage": {
         "assessment": "fixture_tested",
-        "remediation": "not_implemented",
-        "refusal": "not_implemented",
-        "verification": "not_implemented",
-        "recovery": "not_implemented"
+        "remediation": "fixture_tested",
+        "refusal": "fixture_tested",
+        "verification": "fixture_tested",
+        "recovery": "fixture_tested"
       },
       "live_validation": "not_run"
     },
