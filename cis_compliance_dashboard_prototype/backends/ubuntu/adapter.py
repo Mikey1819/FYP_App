@@ -4,6 +4,7 @@ Assessment and execution stay closed until the source, collector, runner and rec
 Stored assessments are served read-only after re-validation; this backend never invents findings,
 risk scores or execution outcomes. Status is tracked in docs/INTEGRATION_PROGRESS.md.
 """
+from dataclasses import dataclass
 from functools import lru_cache
 import hashlib
 import json
@@ -49,6 +50,23 @@ def execution_gate():
     """Reasons Ubuntu writes must not be dispatched. Closed until the task 10 acceptance gates are met."""
     return ('Ubuntu execution is not enabled: the root-owned runner deployment, systemd supervision and SSH/UFW '
             'recovery-watchdog acceptance gates are pending; no write was dispatched.',)
+
+
+@dataclass(frozen=True)
+class PendingChange:
+    """An approved Ubuntu change still running, waiting for confirmation or unresolved on this target."""
+    workflow_session_id: str
+    round_reference: object
+    request_id: str
+    control_id: str
+    title: str
+    outcome: str
+    code: str
+
+
+def _execution_operation(request_id):
+    """One ledger operation per approved request, whatever page action dispatched it: never dispatched twice."""
+    return 'ubuntu-execute:' + request_id
 
 
 def accepted_engine_version():
@@ -249,6 +267,14 @@ class UbuntuBackend(BoundBackend):
                         '' if status is ComplianceStatus.COMPLIANT else ' No automatic retry; review before any new plan.')
                 elif last['outcome'] == 'unresolved':
                     detail = 'Outcome unknown; reconcile before any further change.'
+                elif (last['outcome'], last['code']) == ('running', 'awaiting_confirmation'):
+                    detail = ('Applied and waiting for confirmation. Disconnect, reconnect to the VM (a fresh login '
+                              'proves SSH still works), then confirm before the rollback timer restores it.')
+                elif last['outcome'] == 'running':
+                    detail = 'Running under systemd supervision (' + last['code'] + '); check its status.'
+                elif last['outcome'] == 'rolled_back':
+                    detail = ('Rolled back (' + last['code'] + '): not confirmed in time or failed, so the target '
+                              'restored the before-state. Not applied.')
                 else:
                     detail = 'Not applied (' + last['code'] + ').'
                 results.append(ResultRow(self._ref(p.proposal_id), last['outcome'], status, self._ref(last['request_id']),
@@ -474,12 +500,102 @@ class UbuntuBackend(BoundBackend):
         raw = proposal.approved_raw
         request_id = json.loads(raw)['request_id']
         result = execute(ApprovedRequest(raw, hashlib.sha256(raw).hexdigest(), parse_request(raw)), ledger=self.ledger,
-                         binding=binding, operation_id=(operation_id + ':' + request_id)[:128],
+                         binding=binding, operation_id=_execution_operation(request_id),
                          dispatch=lambda data: self.session.channel.invoke_runner(b'{"op":"execute"}\n' + data),
                          now=datetime.now(timezone.utc))
         if result.receipt_raw is not None:
             store.record_receipt(binding, proposal.proposal_id, result.receipt_raw)
         return result
+
+    # ---- supervised jobs: status and reconnect-to-confirm ---------------------------------------
+    def _open_requests(self, store, binding, latest):
+        for p in store.proposals(binding, latest.round_id):
+            if p.decision == 'approved' and p.receipts and p.receipts[-1]['outcome'] in ('running', 'unresolved'):
+                yield p
+
+    def _record_status(self, store, binding, proposal, result):
+        """Store a status receipt only when outcome or code changed; note the first awaiting_confirmation."""
+        receipt = result.receipt
+        if receipt is None:
+            return
+        last = proposal.receipts[-1] if proposal.receipts else None
+        if last is None or (last['outcome'], last['code']) != (receipt['outcome'], receipt['code']):
+            store.record_receipt(binding, proposal.proposal_id, result.receipt_raw)
+        operation = _execution_operation(receipt['request_id'])
+        if receipt['code'] == 'awaiting_confirmation' and self.ledger.first_event(operation, 'awaiting_confirmation') is None:
+            self.ledger.note(operation, 'awaiting_confirmation')
+
+    def pending_supervised(self, connection_session_id):
+        """Open changes on this target across its workflows, so a fresh login can find what waits for it."""
+        self.check(connection_session_id)
+        s, store, found = self.session, self._store(), []
+        for binding in self.ledger.bindings_for_target('ubuntu', s.target_id, s.registration_epoch):
+            rounds = [r for r in store.rounds(binding) if r.kind == 'assessment']
+            if not rounds:
+                continue
+            for p in store.proposals(binding, rounds[-1].round_id):
+                if p.decision == 'approved' and p.receipts and p.receipts[-1]['outcome'] in ('running', 'unresolved'):
+                    last = p.receipts[-1]
+                    found.append(PendingChange(binding.workflow_session_id, self._ref(rounds[-1].round_id),
+                                               last['request_id'], p.payload['fields']['control_id'], p.payload['title'],
+                                               last['outcome'], last['code']))
+        return tuple(found)
+
+    def refresh_execution(self, connection_session_id, workflow_session_id, round_ref, operation_id):
+        """Ask the target for the status of running or unresolved requests. Never dispatches a write."""
+        from vm.ubuntu.remediation_schema import canonical, parse_request
+        from .approvals import ApprovedRequest
+        from .executor import reconcile
+        binding = self.check(connection_session_id, workflow_session_id, round_ref)
+        store = self._store()
+        latest = self._latest(store, binding, round_ref)
+        state, applied = 'completed', []
+        for proposal in self._open_requests(store, binding, latest):
+            raw = proposal.approved_raw
+            approved = ApprovedRequest(raw, hashlib.sha256(raw).hexdigest(), parse_request(raw))
+            request_id = approved.request['request_id']
+            header = canonical({'op': 'reconcile', 'request_id': request_id})
+            result = reconcile(approved, ledger=self.ledger, operation_id=_execution_operation(request_id),
+                               status=lambda rid: self.session.channel.invoke_runner(header + b'\n'))
+            self._record_status(store, binding, proposal, result)
+            if result.state == 'running':
+                state = 'awaiting_confirmation' if result.receipt['code'] == 'awaiting_confirmation' else 'running'
+            elif result.state == 'completed':
+                if not proposal.payload['action']['action_id'].startswith('recovery.'):
+                    applied.append(request_id)
+            elif state == 'completed':
+                state = result.state
+        return RoundHandle(operation_id, binding, round_ref, self._verify(store, binding, latest, applied, state))
+
+    def confirm_change(self, connection_session_id, workflow_session_id, round_ref, request_id, operation_id):
+        """Confirm a commit-confirm change over this connection, which must be a login begun after the host saw
+        the change waiting. Without a confirmation the target's timer restores the before-state."""
+        from datetime import datetime
+        from vm.ubuntu.remediation_schema import canonical, parse_request
+        from .approvals import ApprovedRequest
+        from .executor import confirm
+        binding = self.check(connection_session_id, workflow_session_id, round_ref)
+        store = self._store()
+        latest = self._latest(store, binding, round_ref)
+        proposal = next((p for p in store.proposals(binding, latest.round_id) if p.approved_raw
+                         and json.loads(p.approved_raw)['request_id'] == request_id), None)
+        if (proposal is None or not proposal.receipts
+                or (proposal.receipts[-1]['outcome'], proposal.receipts[-1]['code']) != ('running', 'awaiting_confirmation')):
+            raise ValueError('This change is not waiting for confirmation; check its status first.')
+        operation = _execution_operation(request_id)
+        observed = self.ledger.first_event(operation, 'awaiting_confirmation')
+        login = self.session.connected_at
+        if observed is None or not login or datetime.fromisoformat(login) <= datetime.fromisoformat(observed):
+            raise ValueError('Confirmation needs a fresh login: disconnect, reconnect to the VM, then confirm. '
+                             'That new login is the proof the change kept SSH working.')
+        raw = proposal.approved_raw
+        approved = ApprovedRequest(raw, hashlib.sha256(raw).hexdigest(), parse_request(raw))
+        header = canonical({'op': 'confirm', 'request_id': request_id})
+        result = confirm(approved, ledger=self.ledger, operation_id=operation,
+                         send=lambda rid: self.session.channel.invoke_runner(header + b'\n'))
+        self._record_status(store, binding, proposal, result)
+        applied = [request_id] if result.state == 'completed' else []
+        return RoundHandle(operation_id, binding, round_ref, self._verify(store, binding, latest, applied, result.state))
 
     def _verify(self, store, binding, latest, applied, state):
         if applied:

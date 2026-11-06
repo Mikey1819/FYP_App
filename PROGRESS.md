@@ -550,3 +550,7 @@ Added the target-side mechanisms that long and risky fixes need. Long jobs run i
 ## 6 November 2026 — fix: Ubuntu assessment refused after a Streamlit reload (integration)
 
 A live **Assess without AI** failed with "Ubuntu workflow binding required". Streamlit's file watcher had re-imported the app modules mid-session, so the ledger kept in the session and the newly imported Ubuntu store disagreed about the binding class. Hot reload is now off (`fileWatcherType = "none"`); restart the app after code changes. Regression test added; 414 tests pass. No VM change.
+
+## 6 November 2026 — supervised fixes on the page: status and reconnect-to-confirm (integration, in progress)
+
+Running and waiting Ubuntu changes now show on the page with **Check status** and **Confirm change**. A confirmation is accepted only over a login that started after the app saw the change waiting; the dispatching connection is refused. Disconnecting is always allowed, and connecting to a different VM is refused while one has an unsettled change. Full suite: **422 passed**; baseline passes. Fixture-only; the execution gate is closed.

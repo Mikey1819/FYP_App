@@ -53,7 +53,7 @@ index 483e086..cb52529 100644
                             st.Page(agentic_page, title="Agentic hardening", icon=":material/security:",
                                     url_path="agentic"),
 diff --git a/cis_compliance_dashboard_prototype/hardening/agentic_view.py b/cis_compliance_dashboard_prototype/hardening/agentic_view.py
-index 502536e..af9c0cf 100644
+index 502536e..cb81257 100644
 --- a/cis_compliance_dashboard_prototype/hardening/agentic_view.py
 +++ b/cis_compliance_dashboard_prototype/hardening/agentic_view.py
 @@ -17,6 +17,10 @@ from .remediation import RemediationStore
@@ -132,7 +132,7 @@ index 502536e..af9c0cf 100644
  
  
  def _reset_view():
-@@ -136,17 +172,99 @@ def _goal_input():
+@@ -136,17 +172,134 @@ def _goal_input():
                                'You see how it was read before you approve anything.')
  
  
@@ -202,6 +202,41 @@ index 502536e..af9c0cf 100644
 +    _ubuntu_restore_actions(backend, connection, snapshot, capabilities, workflow, applied, executed, restoring)
 +
 +
++def _ubuntu_pending_changes(backend, connection):
++    """Changes still running or waiting for confirmation on this VM, from any workflow, so a fresh login finds them."""
++    error, notice = st.session_state.pop('ubuntu_pending_error', None), st.session_state.pop('ubuntu_pending_notice', None)
++    if error:
++        st.error(md_escape(error))
++    if notice:
++        st.success(md_escape(notice))
++    for item in backend.pending_supervised(connection):
++        def act(item=item, confirm=False):
++            try:
++                if confirm:
++                    handle = backend.confirm_change(connection, item.workflow_session_id, item.round_reference,
++                                                    item.request_id, uuid4().hex)
++                else:
++                    handle = backend.refresh_execution(connection, item.workflow_session_id, item.round_reference,
++                                                       uuid4().hex)
++                st.session_state[WORKFLOW_KEY] = item.workflow_session_id
++                st.session_state['ubuntu_pending_notice'] = (item.control_id + ': ' + handle.state.replace('_', ' ') + '.')
++            except (ValueError, OSError) as failure:
++                st.session_state['ubuntu_pending_error'] = str(failure)[:300]
++        label = md_escape(item.control_id + ' · ' + item.title)
++        if item.code == 'awaiting_confirmation':
++            st.warning(f'**{label}** was applied and is waiting for confirmation. Disconnect, reconnect to the VM '
++                       '(a fresh login proves SSH still works), then confirm before the rollback timer restores it.')
++        elif item.outcome == 'running':
++            st.info(f'**{label}** is running under systemd supervision ({md_escape(item.code)}). Check its status.')
++        else:
++            st.warning(f'**{label}**: outcome unknown ({md_escape(item.code)}). Check its status before any other change.')
++        with st.container(horizontal=True):
++            st.button('Check status', key='ubuntu_status_' + item.request_id, on_click=act)
++            if item.code == 'awaiting_confirmation':
++                st.button('Confirm change', key='ubuntu_confirm_change_' + item.request_id, type='primary',
++                          on_click=act, kwargs={'confirm': True})
++
++
 +def _ubuntu_restore_actions(backend, connection, snapshot, capabilities, workflow, applied, executed, restoring):
 +    """Approved recovery: prepare a restore of an applied fix, approve it above, then confirm and run it once."""
 +    from system.contracts import AuxiliaryKind, RecoveryInput
@@ -234,7 +269,7 @@ index 502536e..af9c0cf 100644
  def _show_start(hardening, store, runtime, target):
      st.markdown('No round in this session yet. A round scans the VM, ranks the findings and proposes fixes. '
                  'Nothing changes on the VM until you approve and execute.')
-@@ -160,7 +278,17 @@ def _show_start(hardening, store, runtime, target):
+@@ -160,7 +313,17 @@ def _show_start(hardening, store, runtime, target):
      with st.container(horizontal=True):
          if st.button('Start agentic round', type='primary', key='agentic_run'):
              _run_round(hardening, None, goal)
@@ -252,7 +287,7 @@ index 502536e..af9c0cf 100644
              st.session_state[SESSION] = previous['session_id']
              _reset_view()
              st.rerun()
-@@ -189,17 +317,21 @@ def _action_bar(hardening, session_id, latest, state, rounds, target):
+@@ -189,17 +352,21 @@ def _action_bar(hardening, session_id, latest, state, rounds, target):
              if st.button('Run next round', type='primary', key='agentic_run', icon=':material/refresh:',
                           help='Rescan the VM, re-rank the findings and propose again'):
                  _run_round(hardening, session_id, goal)
@@ -275,7 +310,7 @@ index 502536e..af9c0cf 100644
                  _reset_view()
                  st.rerun()
          if state['undecided']:
-@@ -210,6 +342,7 @@ def _action_bar(hardening, session_id, latest, state, rounds, target):
+@@ -210,6 +377,7 @@ def _action_bar(hardening, session_id, latest, state, rounds, target):
                             help='Self-contained HTML record of this round. Open it in a browser to print to PDF.')
          if st.button('New session', key='agentic_reset', type='tertiary'):
              del st.session_state[SESSION]
@@ -283,7 +318,7 @@ index 502536e..af9c0cf 100644
              _reset_view()
              st.rerun()
  
-@@ -234,7 +367,7 @@ def _confirm_execution(hardening, session_id, state, target):
+@@ -234,7 +402,7 @@ def _confirm_execution(hardening, session_id, state, target):
              if st.button('Confirm and execute', type='primary', key='agentic_execute'):
                  st.session_state.pop(CONFIRM, None)
                  with st.spinner('Remediation Agent executing, then Scanner verifying. This can take up to 10 minutes.'):
@@ -292,7 +327,7 @@ index 502536e..af9c0cf 100644
                  _reset_view()
                  st.rerun()
              if st.button('Cancel', key='agentic_execute_cancel'):
-@@ -266,11 +399,11 @@ def _decision_cell(store, record, operator, comment, editable):
+@@ -266,11 +434,11 @@ def _decision_cell(store, record, operator, comment, editable):
              ready = bool(operator.strip())
              hint = None if ready else 'Enter your name above first'
              if st.button('Approve', key='agentic_approve_' + p['request_id'], disabled=not ready, help=hint):
@@ -306,7 +341,7 @@ index 502536e..af9c0cf 100644
                  st.session_state.pop(COMMENT, None)
                  st.rerun()
      if record['comment']:
-@@ -286,7 +419,9 @@ def _show_fixes(store, assessment_round, state, analysis, *, editable):
+@@ -286,7 +454,9 @@ def _show_fixes(store, assessment_round, state, analysis, *, editable):
                          f"{md_escape(goal['read_as'])}")
              st.caption('Code enforces this reading on the plan. If it is wrong, reject the fixes and run the next '
                         'round with a clearer goal.')
@@ -317,7 +352,7 @@ index 502536e..af9c0cf 100644
          st.caption('Orchestrator summary: ' + md_escape(outcome['reason']))
      if not state['records']:
          st.info('The Orchestrator proposed no fixes in this round.')
-@@ -302,7 +437,7 @@ def _show_fixes(store, assessment_round, state, analysis, *, editable):
+@@ -302,7 +472,7 @@ def _show_fixes(store, assessment_round, state, analysis, *, editable):
                                  placeholder='e.g. Approved for the Saturday maintenance window')
          if approve_all or reject_all:
              for record in state['undecided']:
@@ -326,7 +361,7 @@ index 502536e..af9c0cf 100644
              st.session_state.pop(COMMENT, None)
              st.rerun()
          st.caption('Each approval is bound to that exact request on this VM and expires after one hour.')
-@@ -446,6 +581,9 @@ def _trace_rows(trace):
+@@ -446,6 +616,9 @@ def _trace_rows(trace):
  
  
  def _show_agent_log(hardening, phases):
@@ -336,7 +371,7 @@ index 502536e..af9c0cf 100644
      for title, agent_round in phases:
          traces = sorted(hardening.traces(agent_round['round_id']), key=lambda t: AGENT_ORDER.get(t['agent_role'], 9))
          if not traces:
-@@ -476,6 +614,26 @@ def render_agentic(database_path: Path):
+@@ -476,6 +649,27 @@ def render_agentic(database_path: Path):
          st.info('Connect to the VM to start an agentic round.')
          return
      try:
@@ -347,6 +382,7 @@ index 502536e..af9c0cf 100644
 +            for reason in capabilities.blocked_reasons:
 +                st.info(md_escape(reason))
 +            if backend.session.identity.platform == 'ubuntu':
++                _ubuntu_pending_changes(backend, connection)
 +                snapshot = backend.snapshot(connection, st.session_state.get(WORKFLOW_KEY))
 +                _show_progress(dict(zip(STEPS, snapshot.step_states)), None)
 +                goal = _goal_input()
@@ -363,7 +399,7 @@ index 502536e..af9c0cf 100644
          runtime, store, hardening = _services(database_path, target)
          session_id = st.session_state.get(SESSION)
          rounds = store.rounds(session_id) if session_id else []
-@@ -512,7 +670,11 @@ def render_agentic(database_path: Path):
+@@ -512,7 +706,11 @@ def render_agentic(database_path: Path):
              _show_risk(analysis, viewing['round_id'], viewing.get('analysis_outcome'))
          with controls:
              if viewing['framework_run_id']:

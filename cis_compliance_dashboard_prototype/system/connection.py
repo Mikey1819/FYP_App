@@ -1,5 +1,6 @@
 """Discover once, authenticate once, verify identity, then bind an opaque backend handle."""
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 import re
 from uuid import uuid4
 
@@ -7,6 +8,10 @@ from .contracts import Capabilities, ConnectionResult
 from .discovery import discover_transport
 from .identity import VerifiedIdentity
 from .session import CredentialVault
+
+
+class PendingChangeElsewhere(ValueError):
+    """Another VM holds a running or unresolved change: connecting elsewhere would lose track of it."""
 
 
 @dataclass
@@ -21,6 +26,8 @@ class VerifiedSession:
     channel: object = field(repr=False)
     target: object = field(default=None, repr=False)
     active: bool = True
+    # Host UTC time taken before the login began: a commit-confirm needs a login that started after the change.
+    connected_at: str = ''
 
 
 def verify_windows_facts(found):
@@ -62,6 +69,7 @@ class ConnectionService:
         try:
             if self._sessions:
                 raise ValueError('Disconnect the active VM before connecting another target')
+            started = datetime.now(timezone.utc).isoformat()
             discovery = self._discover(request.endpoint)
             if discovery.transport is None:
                 return ConnectionResult('disconnected', diagnostic_code=discovery.code, detail=discovery.detail)
@@ -86,8 +94,10 @@ class ConnectionService:
                     or identity.machine_identity.lower() != request.expected_machine_identity.lower()):
                 raise ValueError('Authenticated target mismatch')
             target_id, epoch = self.ledger.register(identity, request.endpoint)
+            if self.ledger.owned_elsewhere(target_id, epoch):
+                raise PendingChangeElsewhere('pending change elsewhere')
             session = VerifiedSession(uuid4().hex, identity, target_id, epoch, credentials.username,
-                                      request.endpoint.host, request.endpoint.port, channel, target)
+                                      request.endpoint.host, request.endpoint.port, channel, target, connected_at=started)
             backend = self._backend_factory(session)
             capabilities = backend.capabilities(session.connection_session_id) if hasattr(backend, 'capabilities') else Capabilities()
             self._sessions[session.connection_session_id] = session
@@ -103,6 +113,10 @@ class ConnectionService:
                       'expected hostname, machine identity and supported OS. Credentials were cleared.'
                       if code == 'verification_failed' else
                       'Connection failed; check endpoint, trust and selected authentication. Credentials were cleared.')
+            if isinstance(exc, PendingChangeElsewhere):
+                code = 'pending_change_elsewhere'
+                detail = ('Another VM has a running or unresolved change. Reconnect to that VM and settle it '
+                          '(check its status or confirm it) first. Credentials were cleared.')
             return ConnectionResult('disconnected', diagnostic_code=code, detail=detail)
         finally:
             credentials = None
@@ -118,11 +132,10 @@ class ConnectionService:
         return self._backends[connection_session_id]
 
     def disconnect(self, connection_session_id):
+        # Always allowed: closing the channel changes nothing on the VM, and a supervised change keeps running
+        # under systemd and its rollback watchdog. Switching to another VM is refused at connect while this one
+        # holds a running or unresolved change; reconnecting to the same VM is how a commit-confirm is proven.
         session = self.session(connection_session_id)
-        with self.ledger._db() as db:
-            if db.execute('SELECT 1 FROM target_owners WHERE target_id=? AND registration_epoch=?',
-                          (session.target_id, session.registration_epoch)).fetchone():
-                raise ValueError('Cannot switch targets during unresolved mutation or recovery')
         session.active = False
         if session.channel is not None:
             session.channel.close()

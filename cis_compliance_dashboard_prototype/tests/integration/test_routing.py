@@ -25,6 +25,37 @@ class RoutingTests(unittest.TestCase):
             with self.assertRaises(ValueError):service.backend_for(result.connection_session_id)
             with self.assertRaises(ValueError):vault.take(request.credential_ref)
 
+    def test_running_change_allows_disconnect_and_reconnect_to_the_same_vm_only(self):
+        # A commit-confirm change needs a fresh login to the same VM; switching to another VM stays refused.
+        from system.connection import ConnectionService
+        from system.contracts import WorkflowBinding
+        with tempfile.TemporaryDirectory() as folder:
+            vault, ledger = CredentialVault(), CoordinationLedger(Path(folder)/'coord.db')
+            identities = {'vm': ('vm', 'a'*32), 'other': ('other', 'b'*32)}
+            class Ssh(FixtureSsh):
+                def __init__(self, name):super().__init__();self.name=name
+                def verify_identity(self, request):
+                    host, machine = identities[self.name]
+                    return VerifiedIdentity('ubuntu', host, machine, '22.04', 'ssh', 'SHA256:' + machine[0]*43)
+            service = ConnectionService(ledger, vault, ssh_factory=lambda request, *a: Ssh(request.expected_hostname),
+                                        backend_factory=lambda session: 'backend')
+            def connect(name, port):
+                host, machine = identities[name]
+                return service.connect(ConnectionRequest(Endpoint('fixture', port, 'ssh'), host, machine,
+                                                         vault.put(Credentials('user', 'SECRET'))))
+            first = connect('vm', 22)
+            session = service.session(first.connection_session_id)
+            binding = ledger.add_binding(WorkflowBinding('1'*32, 'ubuntu', session.target_id, session.registration_epoch,
+                                                         'b', '2026-11-06T00:00:00+00:00'))
+            ledger.claim(binding, 'ubuntu-execute:' + 'c'*32, 'execution', {'x': 1}, mutation=True)  # a running change
+            service.disconnect(first.connection_session_id)  # closing the channel changes nothing on the VM
+            refused = connect('other', 2222)
+            self.assertEqual((refused.state, refused.diagnostic_code), ('disconnected', 'pending_change_elsewhere'))
+            self.assertNotIn('SECRET', repr(refused))
+            again = connect('vm', 22)
+            self.assertEqual(again.state, 'connected')
+            self.assertGreater(service.session(again.connection_session_id).connected_at, session.connected_at)
+
     def test_auth_failure_returns_safe_diagnostic_and_no_backend(self):
         self.assertIsNotNone(importlib.util.find_spec('system.connection'))
         from system.connection import ConnectionService

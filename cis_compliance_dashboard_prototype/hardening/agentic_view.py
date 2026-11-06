@@ -236,6 +236,41 @@ def _ubuntu_fix_actions(backend, connection, snapshot, capabilities):
     _ubuntu_restore_actions(backend, connection, snapshot, capabilities, workflow, applied, executed, restoring)
 
 
+def _ubuntu_pending_changes(backend, connection):
+    """Changes still running or waiting for confirmation on this VM, from any workflow, so a fresh login finds them."""
+    error, notice = st.session_state.pop('ubuntu_pending_error', None), st.session_state.pop('ubuntu_pending_notice', None)
+    if error:
+        st.error(md_escape(error))
+    if notice:
+        st.success(md_escape(notice))
+    for item in backend.pending_supervised(connection):
+        def act(item=item, confirm=False):
+            try:
+                if confirm:
+                    handle = backend.confirm_change(connection, item.workflow_session_id, item.round_reference,
+                                                    item.request_id, uuid4().hex)
+                else:
+                    handle = backend.refresh_execution(connection, item.workflow_session_id, item.round_reference,
+                                                       uuid4().hex)
+                st.session_state[WORKFLOW_KEY] = item.workflow_session_id
+                st.session_state['ubuntu_pending_notice'] = (item.control_id + ': ' + handle.state.replace('_', ' ') + '.')
+            except (ValueError, OSError) as failure:
+                st.session_state['ubuntu_pending_error'] = str(failure)[:300]
+        label = md_escape(item.control_id + ' · ' + item.title)
+        if item.code == 'awaiting_confirmation':
+            st.warning(f'**{label}** was applied and is waiting for confirmation. Disconnect, reconnect to the VM '
+                       '(a fresh login proves SSH still works), then confirm before the rollback timer restores it.')
+        elif item.outcome == 'running':
+            st.info(f'**{label}** is running under systemd supervision ({md_escape(item.code)}). Check its status.')
+        else:
+            st.warning(f'**{label}**: outcome unknown ({md_escape(item.code)}). Check its status before any other change.')
+        with st.container(horizontal=True):
+            st.button('Check status', key='ubuntu_status_' + item.request_id, on_click=act)
+            if item.code == 'awaiting_confirmation':
+                st.button('Confirm change', key='ubuntu_confirm_change_' + item.request_id, type='primary',
+                          on_click=act, kwargs={'confirm': True})
+
+
 def _ubuntu_restore_actions(backend, connection, snapshot, capabilities, workflow, applied, executed, restoring):
     """Approved recovery: prepare a restore of an applied fix, approve it above, then confirm and run it once."""
     from system.contracts import AuxiliaryKind, RecoveryInput
@@ -621,6 +656,7 @@ def render_agentic(database_path: Path):
             for reason in capabilities.blocked_reasons:
                 st.info(md_escape(reason))
             if backend.session.identity.platform == 'ubuntu':
+                _ubuntu_pending_changes(backend, connection)
                 snapshot = backend.snapshot(connection, st.session_state.get(WORKFLOW_KEY))
                 _show_progress(dict(zip(STEPS, snapshot.step_states)), None)
                 goal = _goal_input()

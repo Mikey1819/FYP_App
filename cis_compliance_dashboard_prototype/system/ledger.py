@@ -223,6 +223,32 @@ class CoordinationLedger:
             db.execute('DELETE FROM target_owners WHERE operation_id=?', (operation_id,))
         return self.operation_state(operation_id)
 
+    def owned_elsewhere(self, target_id, epoch):
+        """Targets (other than this one) that hold a running or unresolved change."""
+        with self._db() as db:
+            rows = db.execute('SELECT target_id, registration_epoch FROM target_owners').fetchall()
+        return tuple((t, e) for t, e in rows if (t, e) != (target_id, epoch))
+
+    def note(self, operation_id, kind):
+        """Append a host-clock audit event to an existing operation (no state change); returns its time."""
+        if not isinstance(kind, str) or not kind.replace('_', '').isalpha() or len(kind) > 64:
+            raise ValueError('Invalid event kind')
+        with self._db() as db:
+            db.execute('BEGIN IMMEDIATE')
+            if not db.execute('SELECT 1 FROM operation_claims WHERE operation_id=?', (operation_id,)).fetchone():
+                raise ValueError('Unknown operation')
+            stamp = now()
+            db.execute('INSERT INTO operation_events(operation_id,time,kind,payload) VALUES(?,?,?,?)',
+                       (operation_id, stamp, kind, canonical({})))
+        return stamp
+
+    def first_event(self, operation_id, kind):
+        """Host time of the first `kind` event of an operation, or None."""
+        with self._db() as db:
+            row = db.execute('SELECT time FROM operation_events WHERE operation_id=? AND kind=? ORDER BY sequence LIMIT 1',
+                             (operation_id, kind)).fetchone()
+        return row[0] if row else None
+
     def transition(self, operation_id, state, *, detail=''):
         allowed = {'running': {'completed', 'refused', 'unresolved', 'cancel_requested'},
                    'cancel_requested': {'completed', 'unresolved'}, 'unresolved': set()}
