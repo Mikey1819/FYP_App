@@ -484,3 +484,17 @@ Six risk tests that encoded the pending state were updated to the recorded appro
   - Inventory budget 120 s / 2,000,000 entries, still metadata-only.
 - Earlier in the same pass: the sshd `without-password` alias maps to `prohibit-password`; units that are not installed report `not-found`.
 - Full suite **363 tests, all passed**; baseline: no protected changes; helper Python 3.10 syntax checked; bundle rebuilt. Reinstall required.
+
+## 2026-11-06 FIRST LIVE UBUNTU ASSESSMENT (read-only) — Assess without AI
+
+Run by the user through the existing app: SSH connect with the independently verified fingerprint, then **Assess without AI**. The installed root-owned helper ran through the single `sudo -n` collector rule. Selected-rule OpenSCAP 1.2.17 evaluation used the pinned tailoring. The evidence was validated, stored and shown in the shared Controls tab. Evidence `37889bd4287f…`, mode **Live (SSH)**, collected 2026-11-06T10:22:06Z.
+
+| Status | n | Controls |
+| --- | --- | --- |
+| Compliant | 5 | 1.3.1.1, 1.5.4, 4.1.3, 5.2.2, 5.4.1.3 |
+| Non-Compliant | 20 | 1.5.1, 1.5.3, 2.1.2, 3.3.1, 3.3.2, 3.3.8, 4.1.7, 5.1.7, 5.1.16, 5.1.20, 5.2.3, 5.3.3.2.2, 5.4.1.1, 5.4.1.5, 6.3.1.1, 6.3.1.2, 6.3.1.3, 6.3.3.4, 6.3.3.6, 6.3.3.8 |
+| Unknown | 5 | 1.2.2.1 (fresh-update check not implemented), 4.1.4 (UFW loopback resolver unsupported), 5.1.10, 5.1.19, 5.1.21 |
+
+- **Coverage** 25/30 (83%); **compliance** 5/25 (20%); 0 Error.
+- **SCAP/direct conflict:** 5.1.10, 5.1.19 and 5.1.21 have effective `sshd -T` values of `no` (the CIS audit method), but the ComplianceAsCode rules require an explicit configuration line, so the SCAP rules fail. Under the approved conflict rule this is Unknown, not a guess. Whether CIS-effective direct evidence should prevail for these three is a recorded interpretation question.
+- **Gates:** no write was possible; the execution gate is closed. Live remediation, recovery and watchdog acceptance remain outstanding.

@@ -530,3 +530,7 @@ After an approved Ubuntu change is applied, a fresh read-only verification scan 
 ## 6 November 2026 — Approvals recorded (integration)
 
 The user's chat approval is recorded as a blanket approval (not itemized) in the Ubuntu risk manifest and source lock. Risk scores are shown; source activation stays false until the VM's OpenSCAP version is recorded. Local commits are authorized. 346 tests pass.
+
+## 6 November 2026 — First live Ubuntu assessment (integration)
+
+The existing app assessed FYP-Ubuntu2204 read-only over SSH: **5 Compliant, 20 Non-Compliant, 5 Unknown, 0 Error** (coverage 83%, compliance 20%). Recovery snapshot: Before_Unified_Hardening_Provisioning_2026-11-06. No changes were made to the VM; the execution gate is closed.
