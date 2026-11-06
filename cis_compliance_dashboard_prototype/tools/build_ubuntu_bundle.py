@@ -45,7 +45,7 @@ echo "Installed. Report these lines back:"
 python3 --version
 if command -v oscap >/dev/null; then
   version_output="$(oscap --version)"  # read fully: a closed pipe under pipefail would falsely report failure
-  printf '%s\n' "${{version_output%%$'\n'*}}"
+  printf '%s\\n' "${{version_output%%$'\\n'*}}"
 else
   echo "oscap: not installed (installing it is a separate approval)"
 fi
