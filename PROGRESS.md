@@ -582,3 +582,7 @@ Added 6.3.1.3: `audit=1` through a `/etc/default/grub.d` drop-in and `update-gru
 ## 7 November 2026 — UFW loopback resolver and the 4.1.3 / 4.1.4 fixes (integration, in progress)
 
 The collector now resolves UFW's ordered rules for the loopback traffic classes, so 4.1.4 is no longer always Unknown (the helper changed: reinstall before the next scan). Added the 4.1.4 loopback rules, refused when existing rules would still decide differently, and the 4.1.3 UFW enable, never without an SSH allow rule. Both are confirm-or-undo. Twenty-nine fix families now exist. Full suite: **478 passed**. Fixture-only; the execution gate is closed.
+
+## 7 November 2026 — patch job (1.2.2.1); every Ubuntu control has a fix family (integration)
+
+The collector now reports pending updates, holds, reboot-required and metadata freshness, all read-only. Added the 1.2.2.1 patch job (`apt-get update` + `upgrade`, supervised). It has no automatic restore, so the recovery is the VM snapshot, and the control stays a Manual review. **All 30 controls now have a registered fix family** (fixture-tested, not yet live-validated). Full suite: **484 passed**. The execution gate is still closed. Reinstall the helper before the next scan.

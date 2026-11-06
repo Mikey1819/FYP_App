@@ -49,8 +49,9 @@ class ProvenanceTests(unittest.TestCase):
         self.assertEqual(len(bundle.assessments), 30)
         doc = json.loads(raw)
         self.assertEqual(doc['probes']['1.5.1']['exit_state'], 'ok')
-        # The Manual updates control has no fresh-metadata collector yet: explicit missing, never a pass.
-        self.assertEqual(doc['probes']['1.2.2.1']['exit_state'], 'missing')
+        # The Manual updates control now has read-only update facts; this fixture target lacks some of them,
+        # so the probe is explicitly incomplete and the control is never a pass (manual review remains).
+        self.assertIn(doc['probes']['1.2.2.1']['exit_state'], ('partial', 'missing', 'error'))
         self.assertNotEqual(next(a for a in bundle.assessments if a.control_id == '1.2.2.1').status.value, 'Compliant')
         with tempfile.TemporaryDirectory() as folder:
             store = UbuntuStore(Path(folder)/'ubuntu.sqlite3')

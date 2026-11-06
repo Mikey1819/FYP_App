@@ -249,10 +249,17 @@ def collect_observations(io, *, registered_firewall_manager=None, scap_request=N
     if hasattr(io,'privileged_paths'):
         set_fact('6.3.3.6','privileged_paths',lambda:list(io.privileged_paths()))
     result['6.3.3.6']['privileged_inventory']=_ok('complete' if result['6.3.3.6'].get('privileged_paths',{}).get('state')=='ok' else 'incomplete')
-    # Fresh signed repository metadata is not implemented here yet. The Manual
-    # updates recommendation retains missing evidence and requires a human review.
-    # Explicit missing facts: an empty set would hide the gap from probe provenance.
+    # 1.2.2.1 is Manual: these read-only facts can confirm a failure (pending updates) but never a pass.
     result['1.2.2.1'] = {key:_missing() for key in ('metadata_fresh','pending_updates','held_packages','reboot_required')}
+    set_fact('1.2.2.1','pending_updates',lambda:sum(1 for line in command('apt_upgrade_sim').splitlines() if line.startswith('Inst ')))
+    set_fact('1.2.2.1','held_packages',lambda:sum(1 for line in command('apt_holds').splitlines() if line.strip()))
+    def reboot_required():
+        try:return bool(io.read_file('/run/reboot-required'))
+        except FileNotFoundError:return False
+    set_fact('1.2.2.1','reboot_required',reboot_required)
+    if hasattr(io,'apt_metadata_age'):
+        # Site threshold (CIS sets none): package lists refreshed within the last 7 days.
+        set_fact('1.2.2.1','metadata_fresh',lambda:io.apt_metadata_age() <= 7*86400)
     if scap_request is not None:
         # One selected-rule evaluation for all controls; any engine failure is explicit per control.
         try:scap=io.scap_results(*scap_request)

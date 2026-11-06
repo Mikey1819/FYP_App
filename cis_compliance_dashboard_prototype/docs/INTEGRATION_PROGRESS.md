@@ -766,3 +766,26 @@ I read CIS 4.1.3 (p.429) and 4.1.4 (p.433) first. The 4.1.4 audit checks that `u
   - **Mutation checks, all caught:** allowing a half-present rule, skipping the resolver check, ignoring the IPv6 mismatch, enabling without an SSH rule, restore deleting pre-existing rules, and a resolver that ignores partial rules.
   - 29 implemented families; only 1.2.2.1 remains.
 - Full suite **478 tests, all passed**.
+
+## 2026-11-07 update facts and patch job (CIS 1.2.2.1, Manual); all 30 controls now have a fix family
+
+CIS 1.2.2.1 is Manual. Its remediation is `apt update && apt upgrade`, and "site policy" decides what counts as current.
+
+- **Collector facts (closes the pending "1.2.2.1 fresh-update check" item), all read-only:**
+  - `pending_updates` counts `Inst` lines of `apt-get -s -q -o Debug::NoLocking=1 upgrade`, which never takes apt's lock;
+  - `held_packages` comes from `apt-mark showhold`;
+  - `reboot_required` is whether `/run/reboot-required` exists (absent means false);
+  - `metadata_fresh` means the newest apt `*Release` list was fetched within **7 days**. CIS sets no threshold, so this is a site value, recorded here. It is read with `stat` only.
+  - Pending updates are a confirmed failure. Nothing can make the control pass, because the human-review subcheck always remains.
+  - **The helper bundle changed**, so the VM needs a reinstall before the next scan.
+- **`vm/ubuntu/family_patch.py`, `ubuntu.1.2.2.1.v1`:** `apt-get update`, then `apt-get -y upgrade`, as a supervised job (1800 s).
+  - A plain upgrade never removes or newly installs packages, and holds are kept. apt runs non-interactively, keeps existing configuration files (`confdef/confold`), and needrestart only lists services.
+  - Refused while `dpkg --audit` reports broken packages.
+  - **State:** the pending-upgrade list and the holds; after the job, nothing is pending.
+  - **No automatic restore:** downgrades are not reliable. The recovery kind is `snapshot_restore`, the VirtualBox snapshot, and restore raises with that instruction. The approval summary says so, says the control stays a Manual review, and notes a possible reboot, which is never performed.
+- **Host spec:** proposed only when the control is Non-Compliant (pending updates), metadata freshness was collected, and at least one update is pending.
+- **Changed test:** `test_provenance` asserted that 1.2.2.1's probe was all `missing` because it had no collector. The expectation is now `partial`/`missing`/`error`; the safety assertion that it is never Compliant is unchanged.
+- **Coverage:** 1.2.2.1 is `fixture_tested`. **All 30 controls now have registered fix families**; 0 reserved IDs remain.
+- **Tests:** 6 new tests in `tests/integration/test_ubuntu_patch_family.py` (RED: 5 errors, 1 failure).
+  - **Mutation checks, all caught:** a no-op restore, allowing broken dpkg, skipping `apt-get update`, treating a missing reboot flag as true, and a locking simulation.
+- Full suite **484 tests, all passed**; baseline: no protected changes; source check passes.
