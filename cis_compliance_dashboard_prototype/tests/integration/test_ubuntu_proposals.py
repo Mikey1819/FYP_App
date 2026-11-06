@@ -311,13 +311,14 @@ class BackendRemediationTests(StoreFixture):
             backend.request_auxiliary('c', workflow, AuxiliaryKind.RECOVERY, ref,
                                       RecoveryInput(request_id, before, 'restore_before_state'), 'op-loop')
 
-    def test_unsupported_auxiliary_kinds_are_refused_explicitly(self):
+    def test_a_reboot_naming_no_applied_change_is_refused(self):
+        # Superseded "reboot unsupported": maintenance.reboot.v1 exists, but only to complete applied changes.
         from system.contracts import AuxiliaryKind, RebootInput
         backend = self.backend(self.FIX)
         handle, snap = self.round(backend)
-        state = backend.request_auxiliary('c', handle.binding.workflow_session_id, AuxiliaryKind.REBOOT, None,
-                                          RebootInput((), 'now'), 'op-reboot')
-        self.assertEqual((state.state, state.code), ('refused', 'unsupported'))
+        with self.assertRaises(ValueError):
+            backend.request_auxiliary('c', handle.binding.workflow_session_id, AuxiliaryKind.REBOOT, None,
+                                      RebootInput((), 'now'), 'op-reboot')
 
     def test_rejection_writes_nothing_and_cannot_be_executed(self):
         from unittest import mock

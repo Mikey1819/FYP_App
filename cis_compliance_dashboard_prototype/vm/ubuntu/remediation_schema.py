@@ -9,7 +9,7 @@ import json
 import re
 from .collection import IDS
 
-CONTROL_IDS = tuple(IDS) + ('acceptance',)  # 'acceptance': the execution-acceptance marker only
+CONTROL_IDS = tuple(IDS) + ('acceptance', 'maintenance')  # auxiliary bindings: acceptance marker, maintenance
 
 REQUEST_NAMESPACE, RECEIPT_NAMESPACE = 'ubuntu-remediation', 'ubuntu-remediation-receipt'
 MAX_APPROVAL_SECONDS, MAX_BEFORE_STATE_AGE, MAX_JOB_SECONDS = 3600, 300, 1800

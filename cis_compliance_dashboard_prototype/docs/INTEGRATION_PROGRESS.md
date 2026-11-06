@@ -858,3 +858,26 @@ The execution gate was a hard-coded "closed". It now opens only on evidence.
 - **Tests:** two new acceptance tests (VM 10 s ahead and 20 s behind still run; 7 minutes is reported and blocks). The harness now always uses the simulated VM clock.
   - **Mutation checks, all caught:** going back to the 5 s skew, VM-time freshness, and no offset check.
 - Full suite **506 tests, all passed**. **The runner changed:** reinstall the helper (`uninstall.sh` removes the runner stage too), then run `install-runner.sh` again.
+
+## 2026-11-07 maintenance operations: package-list refresh and approved reboot (plan Section 9 / Task 15)
+
+- **Target (`vm/ubuntu/family_maintenance.py`, auxiliary and never CIS families, both supervised jobs):**
+  - **`maintenance.apt_refresh.v1`:** `apt-get update`.
+    - **State:** a digest of the apt sources configuration plus a stamp written only after a successful update. The approval binds the exact repository configuration (changed sources make the request stale) and success is exact.
+    - **Restore:** refused honestly; a refresh changes no configuration.
+  - **`maintenance.reboot.v1`:** stamps the current boot ID in the runner state directory, then schedules `systemctl reboot` 60 s later through a fixed transient timer (`fyp-hardening-reboot`).
+    - **After-state:** reached only when the boot ID differs from the stamp. The runner's new `awaiting_reboot` status keeps the request's lock until the VM is back on a new boot, then settles `applied / rebooted`.
+    - **Restore:** refused; a reboot cannot be undone, so recovery is the snapshot or the console.
+  - The request schema accepts the binding `maintenance` (predicate `ubuntu.maintenance.predicate.v1`).
+- **Host:**
+  - `request_auxiliary` now handles `METADATA_REFRESH` (`MetadataRefreshInput('')` binds the previewed digest; a different digest is refused) and `REBOOT`.
+  - **Reboot:** `RebootInput(staged, 'now')` must name already-applied changes of the latest round; nothing else is accepted.
+  - **Dispatch:** `dispatch_auxiliary` runs approved maintenance. Status and confirmation reuse the supervised-job paths, and a completed refresh or reboot is followed by a fresh verification scan.
+  - **Fix set:** "Execute approved fixes" now takes CIS fixes only (`AUXILIARY_PREFIXES` excluded).
+  - **Rows:** proposals show the kinds `metadata_refresh` and `reboot`; an `awaiting_reboot` result says to reconnect and check status.
+- **Page:** the Fixes tab gains **Prepare package-list refresh** and **Prepare reboot to complete applied changes** (enabled only after applied fixes). Once approved, each has a confirmation checkbox and **Run approved …**, offered once.
+- **Superseded test:** "reboot is unsupported" is now "a reboot naming no applied change is refused".
+- **Tests:** 6 target, 4 host and 1 page test, written first.
+  - **Mutation checks, all caught:** a same-boot reboot counting as done, settling without a new boot, stamping before a successful update, a reboot naming unapplied IDs, an unchecked digest, and maintenance joining the CIS execution set.
+  - The acceptance harnesses now register the maintenance operations, as a real runner does.
+- Full suite **517 tests, all passed**; baseline: no protected changes; UI patch regenerated; bundle rebuilt. **The runner changed:** reinstall, re-run `install-runner.sh` and repeat both acceptance scenarios before live use.

@@ -312,6 +312,9 @@ class Runner:
         if mode == 'job':
             if failed:
                 self._settle(request_id, directory, raw, request, 'unresolved', 'apply_failed', after, release=False)
+            elif after != expected and getattr(family, 'completes_after_reboot', False):
+                # Scheduled: the after-state needs a new boot. Keep the lock; status settles it on the new boot.
+                self._write_atomic(directory / 'awaiting_reboot', self._stamp().encode('ascii'))
             elif after != expected:
                 self._settle(request_id, directory, raw, request, 'unresolved', 'unexpected_after_state', after, release=False)
             else:
@@ -390,7 +393,12 @@ class Runner:
 
     def _supervised_status(self, request_id):
         """Status of a supervised request without a terminal receipt; None means decide from state as usual."""
-        directory, _, _, _, mode = self._load(request_id)
+        directory, raw, request, family, mode = self._load(request_id)
+        if (directory / 'awaiting_reboot').exists():
+            after = _sha(family.read_state(request['parameters']))
+            if after == request['expected_after_sha256']:
+                return self._settle(request_id, directory, raw, request, 'applied', 'rebooted', after, release=True)
+            return self._running(request_id, 'awaiting_reboot')
         decision = directory / 'decision'
         if decision.exists():
             if decision.read_bytes() == b'confirmed':

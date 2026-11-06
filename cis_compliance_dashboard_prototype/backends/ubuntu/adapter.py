@@ -96,6 +96,8 @@ def _host_now():
 
 
 MAX_CLOCK_OFFSET_SECONDS = 30
+# Auxiliary operations are never part of the CIS fix execution set.
+AUXILIARY_PREFIXES = ('recovery.', 'maintenance.', 'acceptance.')
 
 
 def _execution_operation(request_id):
@@ -283,7 +285,9 @@ class UbuntuBackend(BoundBackend):
         for p in store.proposals(binding, row.round_id):
             approved = json.loads(p.approved_raw) if p.approved_raw else None
             recovery = p.payload['fields']['recovery']
-            kind = 'recovery' if p.payload['action']['action_id'].startswith('recovery.') else 'control_remediation'
+            action_id = p.payload['action']['action_id']
+            kind = {'recovery.restore.v1': 'recovery', 'maintenance.apt_refresh.v1': 'metadata_refresh',
+                    'maintenance.reboot.v1': 'reboot'}.get(action_id, 'control_remediation')
             proposals.append(ProposalRow(self._ref(p.proposal_id), kind, p.payload['fields']['control_id'],
                 p.payload['action']['action_id'], p.payload['title'], 'v%d' % p.payload['action']['version'],
                 json.dumps(p.payload['preview'], sort_keys=True), (), recovery['kind'] + ': ' + ', '.join(recovery['scope']),
@@ -302,6 +306,9 @@ class UbuntuBackend(BoundBackend):
                         '' if status is ComplianceStatus.COMPLIANT else ' No automatic retry; review before any new plan.')
                 elif last['outcome'] == 'unresolved':
                     detail = 'Outcome unknown; reconcile before any further change.'
+                elif (last['outcome'], last['code']) == ('running', 'awaiting_reboot'):
+                    detail = ('Reboot scheduled. The connection drops; reconnect when the VM is back, then Check status: '
+                              'the new boot ID is verified and a fresh scan follows.')
                 elif (last['outcome'], last['code']) == ('running', 'awaiting_confirmation'):
                     detail = ('Applied and waiting for confirmation. Disconnect, reconnect to the VM (a fresh login '
                               'proves SSH still works), then confirm before the rollback timer restores it.')
@@ -512,7 +519,7 @@ class UbuntuBackend(BoundBackend):
         store = self._store()
         latest = self._latest(store, binding, round_ref)
         approved = [p for p in store.proposals(binding, latest.round_id)
-                    if p.decision == 'approved' and not p.payload['action']['action_id'].startswith('recovery.')]
+                    if p.decision == 'approved' and not p.payload['action']['action_id'].startswith(AUXILIARY_PREFIXES)]
         requests = {json.loads(p.approved_raw)['request_id']: p for p in approved}
         if not requests or set(expected_approved_request_ids) != set(requests):
             raise ValueError('The approved set changed or is empty; review the current approvals. No write was dispatched.')
@@ -768,7 +775,7 @@ class UbuntuBackend(BoundBackend):
                 state = 'awaiting_confirmation' if result.receipt['code'] == 'awaiting_confirmation' else 'running'
             elif result.state == 'completed':
                 if not proposal.payload['action']['action_id'].startswith('recovery.'):
-                    applied.append(request_id)
+                    applied.append(request_id)  # CIS fixes and maintenance are followed by a fresh scan
             elif state == 'completed':
                 state = result.state
         return RoundHandle(operation_id, binding, round_ref, self._verify(store, binding, latest, applied, state))
@@ -815,15 +822,65 @@ class UbuntuBackend(BoundBackend):
         return state
 
     # ---- auxiliary: approved restore of an applied fix ------------------------------------------
+    def _request_maintenance(self, binding, kind, inputs, operation_id):
+        """Metadata refresh or reboot as an auxiliary proposal of the latest round (approve, then dispatch)."""
+        from system.contracts import AuxiliaryKind, MetadataRefreshInput, RebootInput
+        from vm.ubuntu.remediation_schema import canonical
+        from .actions import AUXILIARY, plan_action
+        if binding is None:
+            raise ValueError('Maintenance belongs to a workflow: run an assessment first')
+        store = self._store()
+        latest = self._latest(store, binding)
+        proposals = store.proposals(binding, latest.round_id)
+        nonce = uuid4().hex
+        if kind is AuxiliaryKind.METADATA_REFRESH:
+            if type(inputs) is not MetadataRefreshInput or type(inputs.repository_digest) is not str:
+                raise ValueError('Metadata refresh needs the repository digest input')
+            spec, params = AUXILIARY['maintenance.apt_refresh.v1'], {'nonce': nonce}
+        else:
+            if (type(inputs) is not RebootInput or inputs.maintenance_window != 'now'
+                    or type(inputs.staged_request_ids) is not tuple):
+                raise ValueError('A reboot needs the applied changes it completes and the window "now"')
+            applied = {json.loads(p.approved_raw)['request_id'] for p in proposals
+                       if p.approved_raw and p.receipts and p.receipts[-1]['outcome'] in ('applied', 'reconciled_applied')
+                       and not p.payload['action']['action_id'].startswith(('recovery.', 'maintenance.'))}
+            staged = sorted(set(inputs.staged_request_ids))
+            if not staged or not set(staged) <= applied:
+                raise ValueError('A reboot must name changes of the latest round that are already applied')
+            spec = AUXILIARY['maintenance.reboot.v1']
+            params = {'nonce': nonce, 'staged_request_ids': staged, 'maintenance_window': 'now'}
+        preview = json.loads(self.session.channel.invoke_runner(
+            canonical({'op': 'preview', 'action_id': spec.action_id, 'parameters': params}) + b'\n'))
+        if type(preview) is not dict or preview.get('action_id') != spec.action_id:
+            raise ValueError('Maintenance preview for another action')
+        if kind is AuxiliaryKind.METADATA_REFRESH and inputs.repository_digest not in (
+                '', preview['summary'].get('repository_digest')):
+            raise ValueError('The apt sources changed since they were shown; review the new preview')
+        s = self.session
+        plan = plan_action(spec, families=AUXILIARY, parameters=params, target_id=s.target_id,
+                           registration_epoch=s.registration_epoch, hostname=s.identity.hostname,
+                           machine_id=s.identity.machine_identity, workflow_session_id=binding.workflow_session_id,
+                           round_id=latest.round_id, evidence_sha256=latest.evidence_sha256, control_id='maintenance',
+                           predicate_id='ubuntu.maintenance.predicate.v1',
+                           before_state_sha256=preview['before_state_sha256'],
+                           expected_after_sha256=preview['expected_after_sha256'],
+                           before_state_collected_at=_host_now(), recovery=spec.recovery,
+                           job_deadline_seconds=spec.max_seconds)
+        store.add_proposal(binding, plan, title=spec.title, preview=preview['summary'])
+        return self._ref(plan.proposal_id)
+
     def request_auxiliary(self, connection_session_id, workflow_session_id, kind, basis, inputs, operation_id):
-        """Recovery only: preview and store a restore proposal for an applied fix of the latest round."""
+        """Recovery of an applied fix, a package-list refresh or a reboot completing applied changes: preview and
+        store an auxiliary proposal of the latest round. Approval and dispatch follow like any other proposal."""
         from system.contracts import AuxiliaryKind, OperationState, RecoveryInput
         from vm.ubuntu.remediation_schema import canonical
         from .actions import AUXILIARY, plan_action
         binding = self.check(connection_session_id, workflow_session_id, basis)
+        if AuxiliaryKind(kind) in (AuxiliaryKind.METADATA_REFRESH, AuxiliaryKind.REBOOT):
+            return self._request_maintenance(binding, AuxiliaryKind(kind), inputs, operation_id)
         if AuxiliaryKind(kind) is not AuxiliaryKind.RECOVERY:
             return OperationState(operation_id, 'refused', code='unsupported',
-                                  detail='Only approved recovery (restore) is implemented for Ubuntu.')
+                                  detail='This auxiliary operation is not implemented for Ubuntu.')
         if binding is None or type(inputs) is not RecoveryInput or inputs.restoration_choice != 'restore_before_state':
             raise ValueError('Recovery needs a workflow and the restore_before_state choice')
         store = self._store()
@@ -864,8 +921,9 @@ class UbuntuBackend(BoundBackend):
         store = self._store()
         latest = self._latest(store, binding)
         proposal = next((p for p in store.proposals(binding, latest.round_id) if p.proposal_id == proposal_ref.record_id), None)
-        if proposal is None or not proposal.payload['action']['action_id'].startswith('recovery.') or proposal.decision != 'approved':
-            raise ValueError('Only an approved recovery proposal of the latest round can be dispatched')
+        if (proposal is None or not proposal.payload['action']['action_id'].startswith(('recovery.', 'maintenance.'))
+                or proposal.decision != 'approved'):
+            raise ValueError('Only an approved recovery or maintenance proposal of the latest round can be dispatched')
         if proposal.receipts:
             return RoundHandle(operation_id, binding, self._ref(latest.round_id), 'completed')  # never twice
         result = self._dispatch_one(store, binding, proposal, operation_id)

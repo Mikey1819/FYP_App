@@ -234,6 +234,46 @@ def _ubuntu_fix_actions(backend, connection, snapshot, capabilities):
         st.button('Execute approved fixes', key='ubuntu_execute', on_click=execute,
                   disabled=not (capabilities.can_remediate and confirmed and pending))
     _ubuntu_restore_actions(backend, connection, snapshot, capabilities, workflow, applied, executed, restoring)
+    _ubuntu_maintenance_actions(backend, connection, snapshot, capabilities, workflow, applied, executed)
+
+
+def _ubuntu_maintenance_actions(backend, connection, snapshot, capabilities, workflow, applied, executed):
+    """Package-list refresh and a reboot completing applied changes: prepare, approve above, confirm, run once."""
+    from system.contracts import AuxiliaryKind, MetadataRefreshInput, RebootInput
+    open_kinds = {p.kind for p in snapshot.proposals
+                  if p.kind in ('metadata_refresh', 'reboot') and p.reference not in executed and p.decision != 'rejected'}
+    staged = tuple(p.approved_request_id for p in snapshot.proposals
+                   if p.kind == 'control_remediation' and p.reference in applied)
+
+    def prepare(kind):
+        try:
+            inputs = MetadataRefreshInput('') if kind is AuxiliaryKind.METADATA_REFRESH else RebootInput(staged, 'now')
+            backend.request_auxiliary(connection, workflow, kind, None, inputs, uuid4().hex)
+        except (ValueError, OSError) as failure:
+            st.session_state['ubuntu_execute_error'] = str(failure)[:300]
+    with st.container(horizontal=True):
+        st.button('Prepare package-list refresh', key='ubuntu_prepare_refresh', on_click=prepare,
+                  args=(AuxiliaryKind.METADATA_REFRESH,),
+                  disabled=not capabilities.can_remediate or 'metadata_refresh' in open_kinds,
+                  help='apt-get update only: installs nothing and changes no configuration.')
+        st.button('Prepare reboot to complete applied changes', key='ubuntu_prepare_reboot', on_click=prepare,
+                  args=(AuxiliaryKind.REBOOT,), disabled=not capabilities.can_remediate or 'reboot' in open_kinds or not staged,
+                  help='Needs applied fixes. The VM restarts 60 s after it runs; reconnect, then Check status.')
+    for p in snapshot.proposals:
+        if p.kind not in ('metadata_refresh', 'reboot') or p.decision != 'approved' or p.reference in executed:
+            continue
+        key = p.reference.record_id
+        label = 'package-list refresh' if p.kind == 'metadata_refresh' else 'reboot of the VM'
+        confirmed = st.checkbox('I confirm running the approved ' + label, key='ubuntu_confirm_maintenance_' + key)
+
+        def run(reference=p.reference, key=key):
+            st.session_state['ubuntu_confirm_maintenance_' + key] = False
+            try:
+                backend.dispatch_auxiliary(connection, workflow, reference, uuid4().hex)
+            except (ValueError, OSError) as failure:
+                st.session_state['ubuntu_execute_error'] = str(failure)[:300]
+        st.button('Run approved ' + label, key='ubuntu_run_maintenance_' + key, on_click=run,
+                  disabled=not (capabilities.can_remediate and confirmed))
 
 
 def _ubuntu_acceptance(backend, connection):

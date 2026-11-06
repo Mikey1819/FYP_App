@@ -11,6 +11,7 @@ from .family_audit import AuditRulesFamily, FILES as AUDIT_FILES, LinuxAuditIO
 from .family_grub import GrubAuditFamily, LinuxGrubIO
 from .family_patch import LinuxPatchIO, PatchFamily
 from .family_acceptance import AcceptanceMarkerFamily, LinuxAcceptanceIO
+from .family_maintenance import AptRefreshFamily, LinuxMaintenanceIO, RebootFamily
 from .family_package import LinuxPackageIO, PackageFamily, SPECS as PACKAGE_SPECS
 from .family_ssh import LinuxSshIO, SETTINGS as SSH_SETTINGS, SshFamily
 from .family_ufw import LinuxUfwIO, UfwDefaultDenyFamily, UfwEnableFamily, UfwLoopbackFamily
@@ -18,7 +19,7 @@ from .family_core import CoreDumpFamily, LinuxCoreDumpIO
 from .family_sysctl import LinuxSysctlSystem, REQUIRED, SysctlFamily
 
 
-class LinuxTargetSystem(LinuxAcceptanceIO, LinuxPatchIO, LinuxGrubIO, LinuxAuditIO, LinuxServiceIO, LinuxUfwIO, LinuxSshIO, LinuxPackageIO, LinuxAgingIO, LinuxAuthIO, LinuxCoreDumpIO, LinuxSysctlSystem):
+class LinuxTargetSystem(LinuxMaintenanceIO, LinuxAcceptanceIO, LinuxPatchIO, LinuxGrubIO, LinuxAuditIO, LinuxServiceIO, LinuxUfwIO, LinuxSshIO, LinuxPackageIO, LinuxAgingIO, LinuxAuthIO, LinuxCoreDumpIO, LinuxSysctlSystem):
     """Fixed, bounded target I/O shared by the implemented families (unvalidated on the VM)."""
 
 
@@ -34,6 +35,7 @@ def build(system):
     fixed += [PackageFamily(control_id, system) for control_id in sorted(PACKAGE_SPECS)]
     fixed += [SshFamily(control_id, system) for control_id in sorted(SSH_SETTINGS)]
     for family in fixed + [UfwDefaultDenyFamily(system), UfwLoopbackFamily(system), UfwEnableFamily(system),
-                           PatchFamily(system), AcceptanceMarkerFamily(system)]:
+                           PatchFamily(system), AcceptanceMarkerFamily(system), AptRefreshFamily(system),
+                           RebootFamily(system)]:
         families[family.action_id] = family
     return families

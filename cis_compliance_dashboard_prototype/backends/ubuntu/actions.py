@@ -435,8 +435,25 @@ def _acceptance_spec():
                       recovery={'kind': 'restore_backup', 'scope': [MARKER]})
 
 
+def _maintenance_specs():
+    from vm.ubuntu.family_maintenance import AptRefreshFamily, IMPLEMENTATION_SHA256, RebootFamily
+
+    def validator(cls):
+        return lambda params: cls(None).validate(params)
+    return {
+        'maintenance.apt_refresh.v1': ActionSpec(
+            'maintenance.apt_refresh.v1', 1, IMPLEMENTATION_SHA256, ('maintenance',), validator(AptRefreshFamily), 600,
+            title='Refresh package lists (apt-get update; installs nothing)',
+            recovery={'kind': 'manual_console', 'scope': ['No configuration change: nothing to restore']}),
+        'maintenance.reboot.v1': ActionSpec(
+            'maintenance.reboot.v1', 1, IMPLEMENTATION_SHA256, ('maintenance',), validator(RebootFamily), 60,
+            title='Reboot the VM to complete applied changes (boot-ID verified)',
+            recovery={'kind': 'snapshot_restore', 'scope': ['VirtualBox recovery snapshot', 'VM console']}),
+    }
+
+
 # Auxiliary operations: same approval/runner protocol, never counted as CIS control families.
-AUXILIARY = {'recovery.restore.v1': _restore_spec(), 'acceptance.marker.v1': _acceptance_spec()}
+AUXILIARY = {'recovery.restore.v1': _restore_spec(), 'acceptance.marker.v1': _acceptance_spec(), **_maintenance_specs()}
 
 
 @dataclass(frozen=True)

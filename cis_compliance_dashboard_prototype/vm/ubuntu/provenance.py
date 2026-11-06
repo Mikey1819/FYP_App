@@ -14,7 +14,7 @@ from .evidence_schema import validate_observations
 # Exact helper bundle. A deployed copy must be byte-identical to the host copy that computes the expected digest.
 HELPER_FILES = ('__init__.py', 'collection.py', 'collector.py', 'evidence_schema.py', 'inventory.py',
                 'probes.py', 'provenance.py', 'scap_results.py', 'spec.py', 'cli.py', 'collect',
-                'remediation_schema.py', 'runner.py', 'runner_cli.py', 'families.py', 'family_sysctl.py', 'family_core.py', 'family_auth.py', 'family_aging.py', 'family_package.py', 'family_ssh.py', 'family_ufw.py', 'family_service.py', 'family_audit.py', 'family_grub.py', 'family_patch.py', 'family_acceptance.py', 'family_restore.py', 'supervision.py', 'runner')
+                'remediation_schema.py', 'runner.py', 'runner_cli.py', 'families.py', 'family_sysctl.py', 'family_core.py', 'family_auth.py', 'family_aging.py', 'family_package.py', 'family_ssh.py', 'family_ufw.py', 'family_service.py', 'family_audit.py', 'family_grub.py', 'family_patch.py', 'family_acceptance.py', 'family_maintenance.py', 'family_restore.py', 'supervision.py', 'runner')
 REQUEST = {
     'target_id': r'ubuntu:[A-Za-z0-9-]{1,64}',
     'registration_epoch': r'[A-Za-z0-9_-]{1,64}',

@@ -602,3 +602,7 @@ Added the **Execution acceptance** section to the Ubuntu page, and `install-runn
 ## 7 November 2026 — fix: VM clock skew in the first live acceptance attempt (integration)
 
 The VM's clock drifted relative to the laptop's, so the first acceptance attempt was refused by the VM, and the second was blocked by the laptop's freshness check. Preview freshness now uses only the laptop clock, the runner tolerates 60 s, and offsets above 30 s are reported plainly by the deployment check. Full suite: **506 passed**. Reinstall the helper and re-run `install-runner.sh`.
+
+## 7 November 2026 — package-list refresh and approved reboot (integration)
+
+Added the two maintenance operations from the plan, each approved and run once through the Fixes tab. A package-list refresh is bound to the exact apt sources. A reboot completes already-applied changes and is proven by a new boot ID: the request holds its lock until the VM is back. Neither counts as a CIS fix or joins "Execute approved fixes". Full suite: **517 passed**. The runner changed: reinstall and repeat the acceptance runs before live use.

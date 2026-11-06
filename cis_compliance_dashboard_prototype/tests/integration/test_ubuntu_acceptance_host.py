@@ -17,7 +17,12 @@ class AcceptanceCase(SupervisedBackendCase):
         from vm.ubuntu.runner import Runner
         family = family or self.family
         marker = AcceptanceMarkerFamily(self.marker)
-        return Runner(self.state, {family.action_id: family, marker.action_id: marker},
+        from vm.ubuntu.family_maintenance import AptRefreshFamily, RebootFamily
+        from tests.integration.test_ubuntu_maintenance_target import FakeMaintenance
+        maintenance = FakeMaintenance()  # a real runner registers every auxiliary the host expects
+        return Runner(self.state, {family.action_id: family, marker.action_id: marker,
+                       'maintenance.apt_refresh.v1': AptRefreshFamily(maintenance),
+                       'maintenance.reboot.v1': RebootFamily(maintenance)},
                       lambda: identity or ('a' * 32, 'ubuntu-fixture'),
                       clock=lambda: datetime.now(timezone.utc) + self.vm_offset,  # the VM's own clock, always
                       require_root_owned=False, launcher=self.launcher)

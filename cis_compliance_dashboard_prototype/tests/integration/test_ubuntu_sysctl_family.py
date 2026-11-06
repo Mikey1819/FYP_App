@@ -156,7 +156,8 @@ class SysctlFamilyTests(unittest.TestCase):
         from vm.ubuntu.families import build
         target = build(FakeSystem())
         host = dict(FAMILIES, **{a: s for a, s in AUXILIARY.items() if a in target})
-        self.assertEqual(set(target), set(FAMILIES) | {'acceptance.marker.v1'})
+        self.assertEqual(set(target), set(FAMILIES) | {'acceptance.marker.v1', 'maintenance.apt_refresh.v1',
+                                                       'maintenance.reboot.v1'})
         for action_id, family in target.items():
             self.assertEqual((family.version, family.implementation_sha256),
                              (host[action_id].version, host[action_id].implementation_sha256))
