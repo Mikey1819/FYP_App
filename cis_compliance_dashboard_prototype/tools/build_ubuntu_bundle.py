@@ -43,7 +43,12 @@ install -o root -g root -m 0440 sudoers/fyp-hardening /etc/sudoers.d/fyp-hardeni
 visudo -c >/dev/null || {{ rm -f /etc/sudoers.d/fyp-hardening; echo "Sudo configuration invalid; rule removed"; exit 1; }}
 echo "Installed. Report these lines back:"
 python3 --version
-command -v oscap >/dev/null && oscap --version | head -1 || echo "oscap: not installed (installing it is a separate approval)"
+if command -v oscap >/dev/null; then
+  version_output="$(oscap --version)"  # read fully: a closed pipe under pipefail would falsely report failure
+  printf '%s\n' "${{version_output%%$'\n'*}}"
+else
+  echo "oscap: not installed (installing it is a separate approval)"
+fi
 '''
 
 UNINSTALL = '''#!/bin/bash

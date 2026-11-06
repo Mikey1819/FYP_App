@@ -41,6 +41,8 @@ class BundleTests(unittest.TestCase):
             self.assertIn(required, script)
         for forbidden in ('apt ', 'apt-get', 'dpkg -i', 'systemctl', 'ufw ', 'sshd', 'pam', 'reboot', 'curl', 'wget'):
             self.assertNotIn(forbidden, script.lower() if forbidden != 'pam' else script)
+        # pipefail + head closing the pipe made oscap exit with SIGPIPE and print a false 'not installed' line.
+        self.assertNotIn('| head', script)
         uninstall = (out / 'uninstall.sh').read_text()
         self.assertLess(uninstall.index('/etc/sudoers.d/fyp-hardening'), uninstall.index('rm -rf /usr/local/libexec/fyp-hardening'))
         for path in (out / 'install.sh', out / 'uninstall.sh'):
