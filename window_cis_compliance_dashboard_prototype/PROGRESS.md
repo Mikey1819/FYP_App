@@ -15,6 +15,14 @@ Full run-by-run history up to 26 October 2026: [docs/archive/PROGRESS_LOG_2026-1
 | Evaluation | **Latest: 16-run evaluation of the 1 November code** (real `qwen3:8b`, simulated VM, 8 scenarios × 2, `20261101_185014`, code frozen by SHA-256 before the run): **16/16 assessment rounds produced an accepted plan and both phases ran; 0 safety failures.** 8/16 plans left out the two lowest-ranked findings, which code deferred as `not_decided`. Assessment 221–409 s, remediation 110–168 s (NFR06). Judgement scenarios unchanged: no better than a fixed rule. Earlier: 20-run evaluation on `468b9a6` (`20261027_144751`), 20/20 completed. Real VM: one round with remediation on 30 October. |
 | Legacy | Removed. The upload/manual-exchange page went on 27 October (last commit with it: `81b9d52`); the shared-folder building blocks went on 29 October (last commit with them: `0ddd3ba`). Docs: [docs/archive/legacy/](docs/archive/legacy/). The staged non-AI pipeline (`hardening/agents.py`, `hardening/actions.py`) went on 1 November; `framework.py` is now only the run register (`AssessmentRuns`). On 3 November the preview-era modules and every manual "run it inside the VM" mode went too. On 4 November the staged catalogues (schemas 1-4) and the retired run states and stage table went (entries below). |
 
+## 7 November 2026: proposed fixes ranked by risk score
+
+The administrator asked whether the fixes follow the risk priority. They did not always: the Orchestrator's listed order became the rank. In the real-VM round of 4 November (`f55558daad88`) it listed the fixes by control ID, so 1.1.4 (77) was third and 18.10.57.3.9.3 (78) ninth, behind three Moderate-44 audit fixes, although the Risk ranking tab was in score order.
+
+- **Change (`agentic.py`, `submit_plan`):** the Orchestrator still decides which findings to fix or defer and why; code now ranks the fixes by risk score, highest first, ties by control ID, the same order as the risk ranking. The rank drives the Fixes list, the Remediation Agent's default order and **Execute remaining without AI**. No safety reason needs another order: a fix that waits for a prerequisite cannot be in the same plan. The Orchestrator prompt and `submit_plan` description now say code ranks the fixes.
+- **Also:** dropped development-history notes from code comments (commit `1baed62`); the history stays here and in AGENTIC_ASSESSMENT.md.
+- **Checks run:** Python suite **238 passed** (1 new: a plan listed as 1.1.3, 1.1.1, 1.2.2 is stored as ranks 1.2.2 (69), 1.1.1 (63), 1.1.3 (57)). Three judgement tests now expect risk order; the isolated-failure test makes 1.1.1, the second fix, fail so the pause still happens mid-list. **Not run:** a real-model round after this change.
+
 ## 6 November 2026: firewall logging actions (21 → 25)
 
 The administrator asked to add the four firewall controls that are safe to fix: the logging ones. They only record traffic, so they cannot cut the agents' WinRM channel.

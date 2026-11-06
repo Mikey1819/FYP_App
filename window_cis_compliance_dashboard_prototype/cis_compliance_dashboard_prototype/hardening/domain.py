@@ -133,7 +133,7 @@ def assess(assessment_id: str, control: Control, evidence: Evidence) -> Assessme
     else:
         try:
             passed = control.rule.matches(evidence.value)
-            # Compliant or Non Compliant: the benchmark's rule is satisfied or not by the observed value. The evidence's value is what the collector found on the target system, and the control's rule is what the benchmark says that
+            # Compliant or Non Compliant: the benchmark's rule is satisfied or not by the observed value. The evidence's value is what the collector found on the target system, and the control's rule is what the benchmark says
             status = Status.COMPLIANT if passed else Status.NON_COMPLIANT
             detail = "Observed value satisfies the rule" if passed else "Observed value does not satisfy the rule"
         except ValueError as error:

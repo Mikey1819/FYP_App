@@ -8,7 +8,7 @@ The target is always one saved server that the administrator paired with and con
 
 | Agent | What it decides itself | What it can never do |
 | --- | --- | --- |
-| **AI Agent Orchestrator** | Delegation order. Whether to send the Scanner back when Analysis asks for a rescan. Which fixes to propose, in what order, and why the others wait. After remediation, whether to finish, run a new round or send a failure to remediation review. | Scan, score, approve or execute |
+| **AI Agent Orchestrator** | Delegation order. Whether to send the Scanner back when Analysis asks for a rescan. Which fixes to propose and why the others wait (code ranks the proposed fixes by risk score). After remediation, whether to finish, run a new round or send a failure to remediation review. | Scan, score, approve or execute |
 | **Scanner Agent** | When to scan. Whether coverage is acceptable. Whether to rescan an Error once. It also runs the verification rescan. | Change any setting |
 | **Analysis Agent** | Which findings to investigate (factor derivation, history). Which findings to flag for your attention. How to triage each Unknown/Error gap. | Change any risk factor or score (decision D2) |
 | **Remediation Agent** | Prechecks the VM read-only, then executes or skips each *approved* request. Stops after an uncertain outcome. | Approve, choose values, write commands, retry |
