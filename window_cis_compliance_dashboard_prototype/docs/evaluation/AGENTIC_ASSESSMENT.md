@@ -22,7 +22,7 @@ The fix is not to remove the safety guards. It is to give the AI one task where 
 | Acts on a real environment | Yes | WinRM collection, precheck, execution and verification against the VM |
 | Behaviour depends on what it observes | Partly | Rescan only after an Error; skip only when the precheck shows a change; stop after an uncertain outcome. Most of these are **forced by code**, not chosen (see below) |
 | Memory across rounds | Partly | History and drift (D factor, `check_history`); the agents themselves hold no memory beyond one round |
-| Goal-directed planning | Weak | The Orchestrator's `submit_plan` chooses which fixes to propose and in what order, but the plan always matched the risk rank, apart from a consistent reordering |
+| Goal-directed planning | Weak | The Orchestrator's `submit_plan` chooses which fixes to propose and in what order, but the plan always matched the risk rank, apart from a consistent reordering. *Since 7 November code ranks the proposed fixes by risk score, so the order is no longer an AI choice; the composition (fix or defer, and why) still is.* |
 
 ## What the AI decides, and what code decides
 
@@ -155,12 +155,12 @@ The second attempt suggested above was half carried out. The plan became **one d
 
 | Question | Honest answer today |
 | --- | --- |
-| "What does the AI add over a script?" | Coordination via tool calls, the plan order and composition, gap triage and attention flags, the next-step choice, and explanations. In the test scenarios its choices were nearly constant and close to a rank-order rule. |
+| "What does the AI add over a script?" | Coordination via tool calls, the plan composition (its order was also an AI choice until 7 November), gap triage and attention flags, the next-step choice, and explanations. In the test scenarios its choices were nearly constant and close to a rank-order rule. |
 | "Are the agents just following the prompt's numbered steps?" | Largely, yes. The prompts give step lists, and code offers one valid tool at most steps. This was done for reliability and speed on an 8B local model on a laptop GPU (26–27 Oct probes). |
 | "Did the AI ever make a decision the code did not force?" | Yes, a few: rescan 4/4, deferring low-impact fixes 3/20, `next_round` 5/5, plan order 20/20, which findings to flag. The examples are listed in the table above. |
 | "Can it judge a situation a fixed rule gets wrong?" | Tested with pre-registered judgement scenarios: **not shown**. Recurring drift 0/4; after a failure it stopped in 7/8 runs whatever the cause, so isolated failure 1/4 and systemic failure 4/4, no better than "stop at the first failure". Repeated on 1 November with the redesigned plan step: 0/2, 0/2, 2/2. Safety held in every run. |
 | "Why is the AI not allowed to change scores or choose values?" | By design (D1, D2): deterministic, auditable compliance and risk; the AI coordinates and decides within guardrails, and a human approves every change (NFR01). This is a strength if framed as *bounded autonomy*. |
-| "Does it still work without the AI?" | Assessment and scoring yes (deterministic fallback); remediation yes via **Execute without AI**. This shows safety, but it also shows the AI is not required for the core result. |
+| "Does it still work without the AI?" | Partly. A new round cannot start without the model, because the Orchestrator starts the scan; the round is stored as *incomplete* with nothing collected or changed. Once a scan is collected, its compliance results and risk ranking are computed by code whatever the agents do, and approved fixes can be applied via **Execute remaining without AI**. So the AI is required to coordinate a round, but not for any number or verdict in it. (Corrected 7 November 2026: this row used to say assessment works without the AI.) |
 
 ## Recommendations, in order of value
 
