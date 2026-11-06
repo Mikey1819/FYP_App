@@ -7,10 +7,11 @@
     python scripts/tools/show_database.py round ID [--log]     one round: plan, decisions, verdicts (--log: agent steps)
     python scripts/tools/show_database.py proposals [--limit N]
     python scripts/tools/show_database.py drift [--limit N]
+    python scripts/tools/show_database.py servers                saved servers ("My servers"); no password is stored
     python scripts/tools/show_database.py table NAME [--limit N]   raw rows of any table, JSON decoded
 
 Every file is opened with SQLite's read-only mode, so this tool cannot create, change or delete anything.
-`--database` takes the imported-evidence file; the framework and agentic files sit next to it with the same
+`--database` takes the imported-evidence file; the framework, agentic and servers files sit next to it with the same
 names the dashboard uses. Times are shown in Malaysia time (MYT); storage stays UTC.
 """
 import argparse
@@ -28,10 +29,11 @@ STATUSES = ('Compliant', 'Non-Compliant', 'Unknown', 'Error')
 
 
 def paths(imports):
-    """The three files, named exactly as the dashboard names them (framework.py, agentic_view.py)."""
+    """The four files, named exactly as the dashboard names them (framework.py, agentic_view.py, databases.py)."""
     imports = Path(imports)
     return {'imports': imports, 'framework': imports.with_name(imports.stem + '_framework.sqlite3'),
-            'agentic': imports.with_name(imports.stem + '_agentic.sqlite3')}
+            'agentic': imports.with_name(imports.stem + '_agentic.sqlite3'),
+            'servers': imports.with_name(imports.stem + '_servers.sqlite3')}
 
 
 def connect(path):
@@ -126,6 +128,7 @@ class Viewer:
                                                    "AND name NOT LIKE 'sqlite_%' ORDER BY name")]
                 table(('table', 'rows'), [(t, db.execute(f'SELECT COUNT(*) FROM "{t}"').fetchone()[0])
                                           for t in tables])
+        self.servers()
         self.scans(5)
         self.rounds(5)
 
@@ -179,10 +182,8 @@ class Viewer:
             outcome = r.get('outcome') or {}
             detail = (f"{len(outcome.get('proposals') or [])} proposed" if r['kind'] == 'assessment'
                       else f"{len(r.get('verdicts') or [])} verdict(s)")
-            goal = (r.get('goal') or {}).get('text') or ''
-            out.append((when(r['created_at']), r['round_id'][:12], r['kind'], outcome.get('outcome', '-'), detail,
-                        goal))
-        table(('created (MYT)', 'round ID', 'kind', 'outcome', 'detail', 'goal'), out)
+            out.append((when(r['created_at']), r['round_id'][:12], r['kind'], outcome.get('outcome', '-'), detail))
+        table(('created (MYT)', 'round ID', 'kind', 'outcome', 'detail'), out)
 
     def proposal_rows(self, sql_where='', params=()):
         out = []
@@ -212,8 +213,6 @@ class Viewer:
         print(f"  created {when(r['created_at'])} MYT, session {r['session_id']}")
         run = r.get('framework_run_id') or r.get('remediated_run_id')
         print(f"  scan run {run or '-'}" + (' (remediated)' if r['kind'] != 'assessment' else ''))
-        if r.get('goal'):
-            print(f"  goal: {r['goal']['text']!r}, read as: {r['goal']['read_as']}")
         print(f"  outcome: {outcome.get('outcome', '-')}")
         print(f"  {outcome.get('reason', '')}")
         if r['kind'] == 'assessment':
@@ -269,6 +268,14 @@ class Viewer:
                 print(f"  {myt(created, '%H:%M:%S')}  " + text.get(kind, lambda: f'{kind}: {compact(e)}')())
 
     # ------------------------------------------------------------------ other views
+    def servers(self):
+        heading('Saved servers (most recently used first)')
+        table(('server', 'address', 'system', 'account', 'note', 'added (MYT)', 'last connected (MYT)', 'machine UUID'),
+              [(h, f'{a}:{p}', o, u, n, when(added), when(last) if last else 'never', m)
+               for m, h, o, a, p, u, n, added, last in self.rows(
+                   'servers', 'SELECT machine_uuid, hostname, os_caption, host, port, username, note, added_at, '
+                   'last_connected_at FROM servers ORDER BY COALESCE(last_connected_at, added_at) DESC')])
+
     def proposals(self, limit):
         heading(f'Latest {limit} proposals (newest first)')
         table(('created (MYT)', 'proposal', 'control', 'action', 'change', 'risk', 'decision', 'verdict'),
@@ -330,6 +337,7 @@ def main():
     for name, default in (('scans', 10), ('rounds', 10), ('proposals', 20), ('drift', 20)):
         commands.add_parser(name).add_argument('--limit', type=int, default=default)
     commands.add_parser('scan').add_argument('id')
+    commands.add_parser('servers')
     one = commands.add_parser('round')
     one.add_argument('id')
     one.add_argument('--log', action='store_true', help='show every agent step')
@@ -346,7 +354,8 @@ def main():
         {'scans': lambda: viewer.scans(args.limit), 'rounds': lambda: viewer.rounds(args.limit),
          'proposals': lambda: viewer.proposals(args.limit), 'drift': lambda: viewer.drift(args.limit),
          'scan': lambda: viewer.scan(args.id), 'round': lambda: viewer.round(args.id, args.log),
-         'table': lambda: viewer.raw_table(args.name, args.limit), None: viewer.overview}[args.command]()
+         'table': lambda: viewer.raw_table(args.name, args.limit), 'servers': viewer.servers,
+         None: viewer.overview}[args.command]()
     finally:
         viewer.close()
 

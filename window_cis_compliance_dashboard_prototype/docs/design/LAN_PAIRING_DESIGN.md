@@ -1,6 +1,13 @@
-# Plan: pairing the main program with a server by code (proposed)
+# Plan: pairing the main program with a server by code (built)
 
-> **Status, 5 November 2026: agreed in discussion, not built.** Nothing in the code has changed yet. When it is built, the delivered design moves into [ARCHITECTURE.md](ARCHITECTURE.md) and [VM_CONNECTION_SETUP.md](../vm/VM_CONNECTION_SETUP.md), and this page stays as the original proposal.
+> **Status, 5 November 2026 (night): built in six steps on branch `lan-pairing`, tested on this laptop, not yet on a real server.** The delivered design is summarised in [ARCHITECTURE.md](ARCHITECTURE.md#which-server-the-agents-reach-decision-d7). How to use it is in [VM_CONNECTION_SETUP.md](../vm/VM_CONNECTION_SETUP.md). What was built and checked, step by step, is in [PROGRESS.md](../../PROGRESS.md). This page stays as the proposal. Differences from it:
+>
+> - **Close all access** removes every paired laptop and both rules, but does **not** turn PowerShell Remoting off. Doing that over the same WinRM session would cut the session midway and could leave the revert half-done. The page says to click **Revert changes** on the server when the helper had turned Remoting on.
+> - **Adding by address was built, then removed (5 November 2026).** It was a second tab for the lab VM's NAT port forward and for networks that block pairing, with `-Action Allow -ScannerAddress` on the server. The administrator asked for the pairing code to be the only way to connect, so both went. The lab VM now needs a host-only or bridged adapter. Servers saved before then still connect, and Re-pair turns them into paired ones.
+> - **The server says which system it runs (5 November 2026).** The `found` answer carries three more signed fields, `os`, `os_name` and `os_version` (for example `windows`, `Microsoft Windows Server 2022 Standard`, `10.0.20348`). `hardening/system_detect.py` sorts them into Windows Server 2022 (supported), another Windows Server, a Windows desktop, Ubuntu, other or unknown, and the page shows a note before the login. Only a supported system is offered the login; the identity probe after login still decides. Ubuntu is recognised but not linked yet: an Ubuntu helper would answer with `os` = the `ID` from `/etc/os-release`.
+> - **A lost answer is answered again** for 10 seconds after pairing (same question from the same address); nothing new is recorded.
+> - **Pairing without a window:** `-Action Pair` (for Server Core).
+> - **Packaging:** `Start.cmd` calls a small launcher (`launch.py`) instead of Streamlit directly. Streamlit asks for an e-mail address on first use when it opens the browser itself, which would block a client. The launcher runs it headless, picks a free port and opens the browser when the dashboard answers. The package ships the venv's Python 3.15 and libraries, pinned in `requirements-lock.txt`.
 
 ## Idea in one paragraph
 
@@ -89,7 +96,7 @@ Small JSON messages over UDP, version 1. Both proofs are HMAC-SHA256 keyed with 
 | Message | Sent by | Fields | Proof covers |
 | --- | --- | --- | --- |
 | `find` | Main program (broadcast) | `v`, `nonce_l` (random), `laptop_name`, `mac` | `find`, `nonce_l`, `laptop_name` |
-| `found` | Server helper (reply to sender) | `v`, `nonce_l`, `nonce_s`, `hostname`, `machine_uuid`, `port`, `pairing_id`, `mac` | `found` and every other field |
+| `found` | Server helper (reply to sender) | `v`, `nonce_l`, `nonce_s`, `hostname`, `machine_uuid`, `port`, `pairing_id`, `os`, `os_name`, `os_version`, `mac` | `found` and every other field |
 
 The server takes the laptop's address from the packet's source, never from a field. The main program takes the server's address from the reply's source. The echoed `nonce_l` stops an old reply being replayed. Windows Firewall on the laptop already lets a reply to its own broadcast in for a few seconds, so the laptop needs no firewall change.
 

@@ -272,7 +272,12 @@ class ApprovedActionExecutor:
             output, had_errors, errors = self.scanner._run(RUNNER.read_text(encoding='utf-8-sig'), parameters)
         except ChannelError as exc:
             return self.store.record_refusal(proposal_id, 'channel_lost', exc.detail)
-        if had_errors or len(output) != 1:
+        # The runner refuses (throws, no output) before its attempt claim, and turns every failure after the claim into
+        # a receipt. So one output line is judged as a receipt even if the error stream is not empty: calling it
+        # "refused" could hide a write that happened. Only no output at all means nothing was written.
+        if len(output) != 1:
+            if output:  # Unexpected extra output: something ran, so the outcome is uncertain.
+                return self.store.record_refusal(proposal_id, 'invalid_receipt', f'{len(output)} outputs, expected 1')
             return self.store.record_refusal(proposal_id, 'refused', errors[0] if errors else 'No receipt returned')
         try:
             return self.store.accept_receipt(output[0].encode('utf-8'), now=now)

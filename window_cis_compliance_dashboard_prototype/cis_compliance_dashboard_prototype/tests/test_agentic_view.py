@@ -14,8 +14,6 @@ from hardening.winrm_channel import LiveScanner
 from test_agentic import FakeVm, TeamDouble, call, clients, plan
 from test_winrm_channel import MACHINE_UUID, target
 
-APP = Path(__file__).resolve().parents[1] / 'app.py'
-
 
 def agentic_page():
     from hardening.databases import imports_database
@@ -126,25 +124,6 @@ class AgenticPageTests(unittest.TestCase):
                               and b.key != 'agentic_approve_all']), 2)
         self.assertNotIn('agentic_run', [b.key for b in app.button])  # Fixes still await a decision.
 
-    def test_goal_is_passed_to_the_round_and_its_reading_shown(self):
-        t = 'windows:' + MACHINE_UUID
-        ScriptedModel.team = TeamDouble(clients(t, [
-            call('interpret_goal', t, only_areas=[], exclude_areas=['remote_desktop'], exclude_controls=[],
-                 focus='none', max_fixes=0, unclear=False),
-            call('delegate_scanner', t), call('delegate_analysis', t),
-            plan(t, fixes=[('1.2.2', 'REM-1.2.2', 'high_risk')],
-                 skipped=[('18.10.57.3.9.4', 'outside_goal')] + [(c, 'lower_priority') for c in ('2.3.10.3', '1.1.1', '1.1.3')])]))
-        app = self._page()
-        app.text_input(key='agentic_goal').input('Keep RDP usable for remote support').run()
-        app.button(key='agentic_run').click().run()
-        self.assertEqual(len(app.exception), 0, [e.value for e in app.exception])
-        shown = [m.value.replace('\\', '') for m in app.markdown if m.value.startswith('**Your goal:**')]
-        self.assertEqual(shown, ['**Your goal:** Keep RDP usable for remote support  \n'
-                                 '**Read by the Orchestrator as:** leave Remote Desktop Services unchanged'])
-        app.text_input(key='agentic_operator').input('admin01').run()
-        next(b for b in app.button if b.key.startswith('agentic_reject_') and b.key != 'agentic_reject_all').click().run()
-        self.assertEqual(app.text_input(key='agentic_goal').value, '')  # A goal is for one round only.
-
     def test_session_of_another_vm_is_not_shown(self):
         first = self._start_round()
         app = AppTest.from_function(agentic_page, default_timeout=60)
@@ -168,13 +147,7 @@ class AgenticPageTests(unittest.TestCase):
     def test_page_without_connection_asks_to_connect(self):
         app = AppTest.from_function(agentic_page, default_timeout=30).run()
         self.assertEqual(len(app.exception), 0)
-        self.assertTrue(any('Connect to the VM' in i.value for i in app.info))
-
-    def test_app_opens_on_overview_with_empty_state(self):
-        app = AppTest.from_file(str(APP), default_timeout=30).run()
-        self.assertEqual(len(app.exception), 0, [e.value for e in app.exception])
-        self.assertEqual(app.title[0].value, 'Overview')
-        self.assertTrue(any('No assessments yet' in i.value for i in app.info))
+        self.assertTrue(any('Connect to a server' in i.value for i in app.info))
 
 
 if __name__ == '__main__':

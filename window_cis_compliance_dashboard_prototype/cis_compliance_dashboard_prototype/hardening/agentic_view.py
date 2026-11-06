@@ -8,8 +8,7 @@ from uuid import uuid4
 import streamlit as st
 
 from .action_library import LIBRARY
-from .agentic import (ANALYSIS, MAX_GOAL_CHARS, ORCHESTRATOR, REMEDIATION, SCANNER, AgenticHardening, explain_finding,
-                      verdict_kind)
+from .agentic import ANALYSIS, ORCHESTRATOR, REMEDIATION, SCANNER, AgenticHardening, explain_finding, verdict_kind
 from .connection_view import render_connection
 from .framework import AssessmentRuns
 from .import_storage import ImportedEvidenceStore
@@ -24,7 +23,6 @@ CONFIRM = 'agentic_confirm'
 # Widget keys that are reset on purpose when a new round or remediation result arrives.
 TAB = 'agentic_tab'
 ROUND_VIEW = 'agentic_round_view'
-GOAL = 'agentic_goal'
 COMMENT = 'agentic_comment'
 
 TABS = ('Fixes', 'Risk ranking', 'Controls', 'Results', 'Agent log')
@@ -129,37 +127,28 @@ def _reset_view():
         st.session_state.pop(key, None)
 
 
-def _goal_input():
-    return st.text_input('Goal for this round (optional)', key=GOAL, max_chars=MAX_GOAL_CHARS, persist_state='session',
-                         placeholder='e.g. Keep RDP usable for remote support this week',
-                         help='The Orchestrator reads the goal and may only narrow or reorder its plan. '
-                              'You see how it was read before you approve anything.')
-
-
-def _run_round(hardening, session_id, goal):
+def _run_round(hardening, session_id):
     # The session is kept before the round starts, so its records stay reachable whatever happens to the page.
     session_id = session_id or uuid4().hex
     st.session_state[SESSION] = session_id
     with st.spinner('Round running: Orchestrator → Scanner → Analysis → plan. This can take up to 10 minutes.'):
-        hardening.run_round(session_id, goal=goal)
+        hardening.run_round(session_id)
     _reset_view()
-    st.session_state.pop(GOAL, None)  # A goal is for one round; the next one starts without it.
     st.rerun()
 
 
 def _show_start(hardening, store, runtime, target):
-    st.markdown('No round in this session yet. A round scans the VM, ranks the findings and proposes fixes. '
-                'Nothing changes on the VM until you approve and execute.')
+    st.markdown('No round in this session yet. A round scans the server, ranks the findings and proposes fixes. '
+                'Nothing changes on the server until you approve and execute.')
     previous = _previous_session(store, runtime, target)
     if previous:
         state = _round_state(store, store.rounds(previous['session_id']), previous)
         open_items = len(state['undecided']) + len(state['pending'])
         st.caption(f"Earlier session on {md_escape(target.hostname)}: last round {myt(previous['created_at'])}"
                    + (f', {open_items} fix(es) still open.' if open_items else '.'))
-    goal = _goal_input()
     with st.container(horizontal=True):
         if st.button('Start agentic round', type='primary', key='agentic_run'):
-            _run_round(hardening, None, goal)
+            _run_round(hardening, None)
         if previous and st.button('Resume earlier session', key='agentic_resume'):
             st.session_state[SESSION] = previous['session_id']
             _reset_view()
@@ -183,12 +172,11 @@ def _action_bar(hardening, session_id, latest, state, rounds, target):
                                 (verification.get('outcome') or {}).get('reason_code') == 'remediation_incomplete')
     # A new round is offered once nothing in the latest one awaits a decision or execution.
     can_run = not state['undecided'] and not state['pending']
-    goal = _goal_input() if can_run else None
     with st.container(horizontal=True, vertical_alignment='center'):
         if can_run:
             if st.button('Run next round', type='primary', key='agentic_run', icon=':material/refresh:',
-                         help='Rescan the VM, re-rank the findings and propose again'):
-                _run_round(hardening, session_id, goal)
+                         help='Rescan the server, re-rank the findings and propose again'):
+                _run_round(hardening, session_id)
         if state['pending'] and st.session_state.get(CONFIRM) != latest['round_id']:
             if st.button(f"Execute {len(state['pending'])} approved fix(es)…", type='primary',
                          key='agentic_execute_review', icon=':material/play_arrow:'):
@@ -229,7 +217,7 @@ def _confirm_execution(hardening, session_id, state, target):
         st.dataframe(rows, hide_index=True)
         st.caption('The Remediation Agent prechecks each value and skips anything that changed since the scan. '
                    'A fresh Scanner rescan verifies the result. Expired approvals are refused. '
-                   'Take a VM snapshot first if you want a quick way back.')
+                   'If the server is a virtual machine, take a snapshot first for a quick way back.')
         with st.container(horizontal=True):
             if st.button('Confirm and execute', type='primary', key='agentic_execute'):
                 st.session_state.pop(CONFIRM, None)
@@ -279,13 +267,6 @@ def _decision_cell(store, record, operator, comment, editable):
 
 def _show_fixes(store, assessment_round, state, analysis, *, editable):
     outcome = assessment_round['outcome']
-    goal = assessment_round.get('goal')
-    if goal:
-        with st.container(border=True):
-            st.markdown(f"**Your goal:** {md_escape(goal['text'])}  \n**Read by the Orchestrator as:** "
-                        f"{md_escape(goal['read_as'])}")
-            st.caption('Code enforces this reading on the plan. If it is wrong, reject the fixes and run the next '
-                       'round with a clearer goal.')
     if outcome['outcome'] in PLANNED:
         st.caption('Orchestrator summary: ' + md_escape(outcome['reason']))
     if not state['records']:
@@ -305,7 +286,7 @@ def _show_fixes(store, assessment_round, state, analysis, *, editable):
                 store.decide(record['proposal']['request_id'], approve=approve_all, operator=operator, comment=comment)
             st.session_state.pop(COMMENT, None)
             st.rerun()
-        st.caption('Each approval is bound to that exact request on this VM and expires after one hour.')
+        st.caption('Each approval is bound to that exact request on this server and expires after one hour.')
     levels = {f['control_id']: f['level'] for f in (analysis or {}).get('ranked', [])}
     for record in state['records']:
         p = record['proposal']
@@ -473,7 +454,7 @@ def render_agentic(database_path: Path):
         st.error(md_escape(exc))
         target = None
     if target is None:
-        st.info('Connect to the VM to start an agentic round.')
+        st.info('Connect to a server on the **Servers** page to start an agentic round.')
         return
     try:
         runtime, store, hardening = _services(database_path, target)
@@ -482,7 +463,7 @@ def render_agentic(database_path: Path):
         assessments = [r for r in rounds if r['kind'] == 'assessment']
         scanned = {_round_target(runtime, r) for r in assessments} - {None}
         if scanned and scanned != {_target_id(target)}:
-            # A session belongs to one VM: connecting to another one starts afresh instead of mixing records.
+            # A session belongs to one server: connecting to another one starts afresh instead of mixing records.
             del st.session_state[SESSION]
             _reset_view()
             rounds, assessments = [], []
@@ -521,6 +502,6 @@ def render_agentic(database_path: Path):
             _show_agent_log(hardening, [('Assessment phase', viewing)]
                             + ([('Remediation phase', state['verification'])] if state['verification'] else []))
     except ChannelError as exc:
-        st.error('VM channel (' + exc.state + '): ' + md_escape(exc.detail))
+        st.error('Server channel (' + exc.state + '): ' + md_escape(exc.detail))
     except (ValueError, OSError, sqlite3.Error) as exc:
         st.error('Agentic workflow: ' + md_escape(exc))

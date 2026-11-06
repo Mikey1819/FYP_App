@@ -43,6 +43,17 @@ if ($rdpEntry.key -ne 'SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services'
 Assert-Refused @{ control_id = '17.5.1'; action_id = 'REM-17.5.1'; value = 3; expected_before = 1 } 'audit value differs from library'
 $nla = Assert-RemediationRequest (New-Request @{ control_id = '18.10.57.3.9.4'; action_id = 'REM-18.10.57.3.9.4'; value = 1; expected_before = $null }) 'WIN-LAB' 'e5d10741-f200-4292-a099-e6be76032f4e' $now
 if ($nla.name -ne 'UserAuthentication') { throw 'Not-configured NLA policy request resolved incorrectly.' }
+$fwLog = Assert-RemediationRequest (New-Request @{ control_id = '9.3.6'; action_id = 'REM-9.3.6'; value = 1; expected_before = $null }) 'WIN-LAB' 'e5d10741-f200-4292-a099-e6be76032f4e' $now
+if ($fwLog.kind -ne 'reg_dword' -or $fwLog.key -ne 'SOFTWARE\Policies\Microsoft\WindowsFirewall\PublicProfile\Logging' -or $fwLog.name -ne 'LogDroppedPackets') { throw 'Firewall logging action resolved incorrectly.' }
+Assert-Refused @{ control_id = '9.3.6'; action_id = 'REM-9.3.6'; value = 0; expected_before = $null } 'firewall logging value differs from library'
+# Channel safety: no action may write firewall on/off or inbound-block policy; firewall actions write only under Logging.
+foreach ($id in $Library.Keys) {
+    $entry = $Library[$id]
+    if ($entry.control_id -in @('9.2.1', '9.2.2', '9.3.1', '9.3.2')) { throw "$id would change which traffic the firewall allows." }
+    if ($entry.ContainsKey('key') -and $entry.key -like 'SOFTWARE\Policies\Microsoft\WindowsFirewall*' -and $entry.key -notlike '*\Logging') {
+        throw "$id writes firewall policy outside Logging."
+    }
+}
 Assert-Refused @{ expected_before = $null } 'not-configured precondition for a net accounts action'
 $missing = [pscustomobject]@{ observations = @([pscustomobject]@{ control_id = '18.10.57.3.9.4'; state = 'missing'; value = $null }) }
 $setTo0 = [pscustomobject]@{ observations = @([pscustomobject]@{ control_id = '18.10.57.3.9.4'; state = 'ok'; value = 0 }) }
@@ -54,4 +65,7 @@ if (Test-SameTypedValue 5.0 5) { throw 'Floating-point values must not match int
 if ((Get-FailureText "Requested registry access`r`nis not allowed.") -cne 'Requested registry access is not allowed.') { throw 'Failure text must be one line.' }
 if ((Get-FailureText ('x' * 300)).Length -ne 200) { throw 'Failure text must be bounded.' }
 if ((Get-FailureText '  ') -cne 'no detail') { throw 'An empty failure needs a placeholder.' }
+# Every control character (NUL to 0x1F, not just line breaks) becomes one space.
+$controls = 'Access' + [char]0 + [char]31 + 'denied' + [char]9 + 'end'
+if ((Get-FailureText $controls) -cne 'Access denied end') { throw 'Control characters must not reach the agent or the page.' }
 Write-Host 'PASS: remediation runner library, identity, value, type, expiry and extra-field guards (fixtures only).'

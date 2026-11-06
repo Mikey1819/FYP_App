@@ -1,8 +1,8 @@
 # Database schema
 
-The dashboard stores everything in **3 SQLite files** with **10 tables**, under `cis_compliance_dashboard_prototype/data/` (the environment variable `CIS_DASHBOARD_DB` changes the base path). Most of the detail is stored as JSON inside a few columns, so each table lists both its columns and the JSON fields inside them.
+The dashboard stores everything in **4 SQLite files** with **11 tables**, under `cis_compliance_dashboard_prototype/data/` (the environment variable `CIS_DASHBOARD_DB` changes the base path; the client package uses `%LOCALAPPDATA%\FYP-Hardening\data`). Most of the detail is stored as JSON inside a few columns, so each table lists both its columns and the JSON fields inside them.
 
-Checked against the real databases on 4 November 2026.
+Checked against the real databases on 4 November 2026; the servers file (file 4) was added on 5 November 2026.
 
 ## At a glance
 
@@ -29,7 +29,7 @@ How the IDs connect:
 - `framework_run_id` (in rounds, proposals and drift) = `framework_runs.run_id`.
 - `rem_decisions.id`, `rem_comments.id` and `rem_receipts.id` = `rem_proposals.id`: one proposal, at most one of each.
 - `investigation_runs.payload.team_id` = `agentic_rounds.id`. `investigation_events.run_id` = `investigation_runs.run_id`.
-- `target_id` is always `windows:<machine UUID>` of the VM.
+- `target_id` is always `windows:<machine UUID>` of the server; `servers.machine_uuid` is that same UUID.
 
 All times are UTC, in ISO 8601 format. The dashboard shows them in Malaysia time.
 
@@ -109,7 +109,7 @@ A run is complete when it is created and never changes: triggers refuse updates,
 | `outcome` | both | Assessment: `outcome` (`awaiting_approval`, `no_fix_proposed`, `no_findings`, `incomplete`, …), `reason`, `proposals` (proposal IDs), `skipped` (deferred findings with `reason_code` and `reason`). Verification: `outcome` (`finish`, `next_round`, `remediation_review`, `fallback`, `incomplete`), `reason_code`, `reason`. |
 | `analysis` | assessment | The risk ranking calculated by code: findings with score, level and factors; Unknown/Error gaps |
 | `analysis_outcome` | assessment | The Analysis Agent's decisions: `attention` flags, `gap_triage`, `rescan_requested` |
-| `goal` | assessment | The administrator's goal: `text`, `constraints`, `read_as`. `null` if none was given. |
+| `goal` | assessment | Rounds from 30 October to 6 November 2026 only: the administrator's goal (`text`, `constraints`, `read_as`), or `null`. The goal feature was removed on 6 November; new rounds do not write this field and nothing reads it. |
 | `scanned_runs` | assessment | Every scan taken in the round, including replaced ones |
 | `remediated_run_id` | verification | The assessment scan whose approved fixes were executed |
 | `verdicts` | verification | One per fix: `proposal_id`, `control_id`, `action_id`, `verdict` |
@@ -186,17 +186,39 @@ The comment is kept separate so the approved request bytes stay exactly what the
 
 ---
 
+## File 4: `preview_imports_servers.sqlite3`, saved servers
+
+### `servers`: one row per saved server ("My servers")
+
+| Column | Type | Meaning |
+| --- | --- | --- |
+| `machine_uuid` | TEXT, key | The server's machine UUID, read from the server itself (lower case) |
+| `hostname` | TEXT | Its computer name, read from the server |
+| `os_caption` | TEXT | Its Windows edition, read from the server |
+| `host`, `port` | TEXT, INTEGER | Where it was last reached (WinRM) |
+| `username` | TEXT | The administrator account used (never the password) |
+| `note` | TEXT | The administrator's own note, at most 120 characters |
+| `added_at`, `last_connected_at` | TEXT | When it was saved and last connected |
+| `pairing_id` | TEXT or NULL | The helper's record of this laptop's pairing (32 hex). NULL only for a server saved by address before that was removed (5 November 2026); Re-pair fills it |
+| `laptop_address`, `paired_at` | TEXT or NULL | This laptop's address as the server saw it, and when it paired |
+
+The server keeps its own side of each pairing in `C:\ProgramData\FYP-ServerAccess\pairings.json` (Administrators and SYSTEM only), not in these files.
+
+---
+
 ## Rules and how to look inside
 
-- **Append-only.** All 11 tables have database triggers that refuse `UPDATE`, `DELETE` and inserting over an existing ID; the database aborts with a message such as "Immutable agentic audit". A record can be added but never changed, which keeps the audit trail trustworthy.
-- **No secrets.** VM passwords are never stored. They stay in the dashboard's session memory only.
+- **Append-only.** The 10 audit tables (files 1 to 3) have database triggers that refuse `UPDATE`, `DELETE` and inserting over an existing ID; the database aborts with a message such as "Immutable agentic audit". A record can be added but never changed, which keeps the audit trail trustworthy.
+- **Editable.** `servers` (file 4) is the laptop's own list of servers, so it can be changed: a note, a new address, a removed server. Removing a server never touches its audit records.
+- **No secrets.** Server passwords are never stored. They stay in the dashboard's session memory only.
 - **Viewing.** The read-only viewer decodes the JSON and can't change anything. From the project folder:
 
 ```powershell
 .\cis_compliance_dashboard_prototype\.venv\Scripts\python.exe scripts\tools\show_database.py                    # files, tables, row counts, latest scans and rounds
 .\cis_compliance_dashboard_prototype\.venv\Scripts\python.exe scripts\tools\show_database.py table rem_proposals  # raw rows of any table
+.\cis_compliance_dashboard_prototype\.venv\Scripts\python.exe scripts\tools\show_database.py servers                # saved servers
 ```
 
 A generic SQLite browser also works, but open the files read-only, and expect the JSON columns to show as long text.
 
-Code that creates these tables: `hardening/import_storage.py` (file 1), `hardening/framework.py` (file 2), `hardening/remediation.py` (file 3).
+Code that creates these tables: `hardening/import_storage.py` (file 1), `hardening/framework.py` (file 2), `hardening/remediation.py` (file 3), `hardening/servers.py` (file 4).

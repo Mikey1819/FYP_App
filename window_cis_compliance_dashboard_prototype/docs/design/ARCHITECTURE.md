@@ -1,6 +1,6 @@
 # Agentic framework architecture
 
-Current design as of 1 November 2026. It implements decisions D1–D6 in [AGENTS.md](../../AGENTS.md). Page: **Agentic hardening** (`app.py`). Code: [agentic.py](../../cis_compliance_dashboard_prototype/hardening/agentic.py).
+Current design as of 5 November 2026. It implements decisions D1–D7 in [AGENTS.md](../../AGENTS.md). Page: **Agentic hardening** (`app.py`). Code: [agentic.py](../../cis_compliance_dashboard_prototype/hardening/agentic.py).
 
 Every role is a bounded local-LLM tool loop (`qwen3:8b`). It chooses its own tool calls, observes the results and acts on them (D6). PowerShell scripts are the agents' tools. Deterministic code does three jobs: it computes compliance and risk (D2), it validates every call, and it enforces approval.
 
@@ -16,7 +16,7 @@ flowchart TD
       A -->|inspect_finding · check_history| A
       A -->|attention + gap triage; rescan_requested| O1
       O1 -.->|once, only if Analysis asked| S
-      O1 -->|submit_plan: fix or defer per finding, order, reason codes| P[(Proposals)]
+      O1 -->|submit_plan: fix or defer per finding, reason codes| P[(Proposals)]
     end
     Admin -->|approve / reject each| P
     Admin -->|execute approved| O2
@@ -32,22 +32,33 @@ flowchart TD
     end
 ```
 
+## Which server the agents reach (decision D7)
+
+The dashboard opens on the **Servers** page and offers nothing else until a server is connected: the workspace pages are not in the menu, and typing their address leads back to Servers ([app.py](../../cis_compliance_dashboard_prototype/app.py)). Once connected, the workspace for that server's system opens on Overview, always with the same three pages (Overview, Agentic hardening, History and drift). The connected target names its workspace: `windows` for a WinRM target (the pages in `hardening/`), `ubuntu` for the future Linux target (the pages in `ubuntu/`, placeholders until Ubuntu is linked). Before any round, the administrator connects to one saved server on the **Servers** page ([servers_view.py](../../cis_compliance_dashboard_prototype/hardening/servers_view.py)). A server is added by **pairing**. The server access helper on the server shows a one-time code. The laptop finds the server by that code on the local network ([pairing_client.py](../../cis_compliance_dashboard_prototype/hardening/pairing_client.py); HMAC-signed messages in [pairing.py](../../cis_compliance_dashboard_prototype/hardening/pairing.py), so the code never travels). The helper then opens WinRM to paired laptops only. The server is saved only when four checks agree:
+
+1. the administrator login works;
+2. the machine behind it has the hostname and UUID that answered the code;
+3. it is a stand-alone Server 2022;
+4. the server's own pairing record, read over WinRM, holds this pairing for this laptop.
+
+Pairing is the only way to add a server: nobody types an address (the lab VM needs a host-only or bridged adapter). The pairing answer also says which system the server runs, and the Servers page shows it as a note before the login (`system_detect.py`: Windows Server 2022 is supported; Ubuntu is recognised but not linked yet). Every later connection, and every agent tool call, checks that the same hostname and UUID answer (`wrong_target` otherwise), so the agents can only act on the server the administrator saved. The models never see addresses, passwords or the pairing; nothing in the agent design below changed. Design and security limits: [LAN_PAIRING_DESIGN.md](LAN_PAIRING_DESIGN.md).
+
 ## Who decides what
 
 | Role | Tools (validated by code) | Decides | Cannot |
 | --- | --- | --- | --- |
-| AI Agent Orchestrator, assessment phase | `interpret_goal` (only when the administrator gave a goal), `delegate_scanner`, `delegate_analysis`, `submit_plan` | How to read the administrator's goal, if any (see below). Delegation order. Whether to send the Scanner back **once**, only when Analysis requested a rescan or the Scanner stopped without handing off (a stopped Scanner is reported as `scan_not_handed_off`, never as a collection failure, and its delegation result says `retry_allowed`). **Which fixes to propose, in what order, and why each other fixable finding waits.** | Scan, score, approve, execute. Fix a gap, use an action outside the library or the finding's list, fix a blocked finding, leave a fixable finding undecided, give a reason that contradicts the analysis. |
+| AI Agent Orchestrator, assessment phase | `delegate_scanner`, `delegate_analysis`, `submit_plan` | Delegation order. Whether to send the Scanner back **once**, only when Analysis requested a rescan or the Scanner stopped without handing off (a stopped Scanner is reported as `scan_not_handed_off`, never as a collection failure, and its delegation result says `retry_allowed`). **Which fixes to propose, in what order, and why each other fixable finding waits.** | Scan, score, approve, execute. Fix a gap, use an action outside the library or the finding's list, fix a blocked finding, leave a fixable finding undecided, give a reason that contradicts the analysis. |
 | AI Agent Orchestrator, remediation phase | `delegate_remediation`, `delegate_verification`, `submit_review` | Next step: `finish`, `next_round` or `remediation_review` (report Figure 4.4), with a fact-checked reason code | Decide before verifying executed fixes. Finish while a fix failed, is uncertain or was not attempted. |
 | Scanner Agent | `scan_target`, `read_coverage`, `inspect_observation`, `rescan`, `handoff_analysis` / `handoff_verification`, `report_failure` | When to scan. Whether coverage is acceptable. Whether to rescan once (Error results only). | Change settings or send anything but the fixed collector |
 | Analysis Agent | `score_findings`, `inspect_finding`, `check_history`, `submit_analysis` | What to investigate (at most 2 investigations). **Which findings need your attention first** (≤ 3). **How to triage every gap:** rescan, resolves with a prerequisite, or manual review. | Change any factor, score or level (D2). There is no tool that could. |
 | Remediation Agent | `list_approved`, `precheck`, `execute_fixes`, `skip_fix`, `stop_execution`, `report_results` | Order of execution among approved requests. **Execute or skip each one** after observing the VM. **Whether to continue after a failure:** execution pauses after a failed result and shows its cause, and the agent continues (`execute_fixes`) or stops (`stop_execution`, available only after a failure). | Act on an unapproved request, execute before a precheck or when the precheck shows it is not ready (a list containing one unready request executes nothing), continue after an uncertain outcome, choose values, retry |
 | Administrator | Dashboard | Approve or reject each proposal. Fall back to execution without AI. | — |
 
-**One decision per finding.** `submit_plan` takes a single list `decisions`, with one entry per `must_decide` finding: `fix` (with `action_id` and a fix code) or `defer` (with a defer code). Fixes run in the order listed.
+**One decision per finding.** `submit_plan` takes a single list `decisions`, with one entry per `must_decide` finding: `fix` (with `action_id` and a fix code) or `defer` (with a defer code). Code ranks the fixes by risk score, highest first, ties by control ID, whatever order the Orchestrator lists them in (since 7 November 2026; before, its listed order was the rank). A fix that waits for a prerequisite cannot be in the plan, so no order between fixes is needed for safety.
 - Until 31 October the plan was two lists, `fixes` and `skipped`, that must not overlap. Real `qwen3:8b` repeatedly put findings in both: the 29 October J1 runs, the 30 October regression and goal runs, and the real VM on 31 October.
 - One list cannot express that conflict; a second entry for the same finding is refused by name.
-- A deferral that code already handles never fails the plan: a finding with nothing to decide is ignored, and a finding outside the goal gets the reason `outside_goal`.
-- **Strict on what can lead to a write, lenient on what cannot (1 November).** A fix is always checked: its action, its reason code and the goal. A deferral proposes nothing, so it never fails the plan. A deferral whose code is not a true defer code, and a finding the plan leaves out, are recorded as `not_decided` ("Not decided by the Orchestrator this round; deferred by code") and named in the round summary, so the administrator sees which findings the Orchestrator did not decide. `not_decided` is written by code only and never offered to the model. Reason: after the one-list redesign, real qwen3:8b still failed the `lab` plan by leaving out 1.1.3 and 18.10.57.3.9.4 and by giving `low_impact` as a defer code (31 October, `20261031_010516` and `20261031_013118`).
+- A deferral that code already handles never fails the plan: a finding with nothing to decide is ignored.
+- **Strict on what can lead to a write, lenient on what cannot (1 November).** A fix is always checked: its action and its reason code. A deferral proposes nothing, so it never fails the plan. A deferral whose code is not a true defer code, and a finding the plan leaves out, are recorded as `not_decided` ("Not decided by the Orchestrator this round; deferred by code") and named in the round summary, so the administrator sees which findings the Orchestrator did not decide. `not_decided` is written by code only and never offered to the model. Reason: after the one-list redesign, real qwen3:8b still failed the `lab` plan by leaving out 1.1.3 and 18.10.57.3.9.4 and by giving `low_impact` as a defer code (31 October, `20261031_010516` and `20261031_013118`).
 
 **Only valid tools are offered.** At each step an agent is shown only the tools that are valid in its current state. For example, the Analysis Agent sees only `score_findings` first and only `submit_analysis` once its investigations are used up. The Orchestrator sees `submit_plan` only after analysis. Code still validates every call, offered or not.
 
@@ -68,28 +79,22 @@ In an earlier trial, free-text reasons were invented: the model justified the an
 
 | Agent | Codes | Fact that must hold |
 | --- | --- | --- |
-| Orchestrator plan, fixes | `high_risk`, `unblocks_other`, `improves_detection`, `low_impact`, `serves_goal` | High/Critical level; another finding waits on this control; audit/logging control; the control fits the goal's focus |
-| Orchestrator plan, skips | `outside_goal`, `waits_for_prerequisite`, `needs_review`, `lower_priority`, `keeps_reverting`; code only: `not_decided` | The interpreted goal excludes the control; a prerequisite is not compliant; the control went from Compliant back to Non-Compliant at least twice in this VM's stored scans. `not_decided`: the plan left the finding out, or deferred it with a code that does not fit |
+| Orchestrator plan, fixes | `high_risk`, `unblocks_other`, `improves_detection`, `low_impact` | High/Critical level; another finding waits on this control; audit/logging control |
+| Orchestrator plan, skips | `waits_for_prerequisite`, `needs_review`, `lower_priority`, `keeps_reverting`; code only: `not_decided` | A prerequisite is not compliant; the control went from Compliant back to Non-Compliant at least twice in this VM's stored scans. `not_decided`: the plan left the finding out, or deferred it with a code that does not fit |
 | Analysis attention | `keeps_reverting`, `regression`, `high_risk`, `unblocks_other`, `manual_fix_needed` | Reverted at least twice **and** the agent checked that control's history itself (the fact is shown only by `check_history`); D = 5; High/Critical; a finding or gap depends on it; no library action |
 | Analysis gap triage | `rescan`, `resolves_with_prerequisite`, `manual_review` | Status is Error; the gap is a lockout timer left unrecorded while the threshold is 0 |
 | Remediation skip | `precondition_changed`, `prerequisite_not_met`, `expired`, `stop_after_failure` | Fresh precheck observation; an earlier result in this task failed |
 | Orchestrator review | `finish`: `all_verified`, `nothing_fixable`, `nothing_executed`. `next_round`: `unblocked_findings`, `remaining_findings`. `remediation_review`: `verification_failed`, `uncertain_outcome`, `remediation_incomplete` | Receipt verdicts plus the verification rescan. `finish` and `next_round` require no failed, uncertain or unattempted fix. |
 
-As a result, every reason shown to the administrator is true by construction. The choices themselves stay with the models: what to investigate, what to flag, what to fix, in what order, what to skip, and what happens next.
+As a result, every reason shown to the administrator is true by construction. The choices themselves stay with the models: what to investigate, what to flag, what to fix, what to skip, and what happens next.
 
-## Administrator goals
+## Administrator goals (removed 6 November 2026)
 
-Before a round, the administrator may type a goal in plain words, at most 300 characters, for example *"Keep RDP usable for remote support this week"*. The goal is untrusted data. It travels in the Orchestrator's first message; the system prompt does not change.
-
-1. **The model interprets it.** Only `interpret_goal` is offered until the goal is read. Its arguments form a closed set: `only_areas` and `exclude_areas` (the 5 security areas), `exclude_controls` (controls with a library action), `focus` (`detection`, `account_security`, `remote_desktop` or `none`), `max_fixes` (0–10, where 0 means no limit) and `unclear`. Code validates them; with `unclear`, every other field must be empty.
-2. **Code enforces it.** Findings the reading excludes are taken out of `must_decide`, listed as `outside_goal`, and recorded as skipped with `outside_goal` by code. In the first goal evaluation, the model often read the goal correctly and then failed the plan by copying the exclusions by hand. A plan that fixes an excluded control, or more than `max_fixes`, is refused, and the refusal names the goal. `serves_goal` is offered only where it is true.
-3. **The administrator sees it.** The Fixes tab and the round report show the goal and the reading written by code ("leave Remote Desktop Services unchanged"), next to the proposals and before any approval.
-
-A goal can only **narrow or reorder** a plan. It cannot add a fix, choose a value, skip approval or change a score. A wrong reading is visible and costs at most a rejected proposal. Rounds without a goal are unchanged: the goal codes are neither offered nor accepted. The pre-registered evaluation is `--goals` in [scripts/evaluation/evaluate_agentic_rounds.py](../../scripts/evaluation/evaluate_agentic_rounds.py).
+From 30 October to 6 November the administrator could type a free-text goal for a round, which the Orchestrator translated into constraints (`interpret_goal`, codes `serves_goal` and `outside_goal`). It was removed on 6 November because its results were too inconsistent: in the evaluation, about half of the goal rounds had their plan refused for format errors, and end to end it did no better than a keyword rule (see [AGENTIC_ASSESSMENT.md](../evaluation/AGENTIC_ASSESSMENT.md#administrator-goals-added-30-october)). Rounds now always run without a goal. Older stored rounds may still carry a `goal` field; nothing reads it. The original design is kept in [archive/ADMIN_GOALS_DESIGN.md](../archive/ADMIN_GOALS_DESIGN.md).
 
 ## Fallbacks (report Section 4.1.2)
 
-- **Model unavailable during assessment:** the deterministic ranking is still computed and shown. If only the Analysis Agent fails, the Orchestrator still plans from the same ranking.
+- **Model unavailable during assessment:** once a scan is collected, the deterministic ranking is still computed and shown. If only the Analysis Agent fails, the Orchestrator still plans from the same ranking. If the model is unavailable from the start, no scan runs: the Orchestrator starts every round, so the round is stored as *incomplete* with nothing collected or changed.
 - **Agents stop during remediation:** remaining approvals stay open. The administrator may choose **Execute remaining approved fixes without AI**. That path makes one read-only precheck, as the Remediation Agent must, then runs the same executor in rank order. A request whose value changed since approval, or whose prerequisite is not compliant, is closed unexecuted, as the agent's `skip_fix` would close it. It stops after an uncertain outcome. If the VM cannot be prechecked, nothing runs and every approval stays open.
 - **A possible write is never left unobserved:** if any fix was executed and no verification rescan happened, code runs the rescan itself.
 
@@ -119,8 +124,9 @@ The library is defined in two places that must agree: the Python metadata in [ac
 | REM-2.3.1.2, REM-2.3.10.2, REM-2.3.10.3 | LSA DWORDs = 1 | 64-bit registry `SetValue` |
 | REM-17.1.1, 17.2.2, 17.2.3, 17.5.1, 17.5.4 | Advanced audit subcategories | `auditpol /set /subcategory:{GUID}` that only *enables* the required flags |
 | REM-18.10.57.2.2, 3.9.1, 3.9.3, 3.9.4 (NLA), 3.9.5 | RDP policy values (also fixes a "Not configured" policy) | 64-bit registry `CreateSubKey` + `SetValue` under `Policies\…\Terminal Services` |
+| REM-9.2.6, 9.2.7, 9.3.6, 9.3.7 (added 6 November) | Firewall **logging** on the Private and Public profiles: log dropped packets, log successful connections = 1 (also fixes a "Not configured" policy) | 64-bit registry `CreateSubKey` + `SetValue` under `Policies\Microsoft\WindowsFirewall\<Profile>\Logging`, the same path the collector reads |
 
-That makes 21 actions for 32 controls. Assessment-only: `1.1.5` and `1.1.7` (need `secedit /configure`), `2.3.10.1`, and all **firewall policy** controls. Firewall policy writes could cut the agents' own WinRM channel, so they wait for a channel-safety precheck.
+That makes 25 actions for 32 controls. Assessment-only: `1.1.5` and `1.1.7` (need `secedit /configure`), `2.3.10.1`, and the four firewall controls that decide **which traffic is allowed**: `9.2.1`/`9.3.1` (firewall on) and `9.2.2`/`9.3.2` (inbound: Block). Those writes could cut the agents' own WinRM channel, so they wait for a channel-safety precheck. The logging actions only record traffic and never change what is allowed, so they cannot cut the channel. A test in each language (`LibraryParityTests.test_no_action_can_change_which_traffic_the_firewall_allows` and `test_remediation_runner.ps1`) fails if any action targets those four controls or writes firewall policy outside `…\Logging`.
 
 **Decision D5, "Not configured" policy.** An absent firewall or RDP Group Policy value is Non-Compliant. For a library action, the approved precondition is then `null` ("still not configured"). The VM runner accepts `null` only for registry actions.
 
