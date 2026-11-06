@@ -39,6 +39,10 @@ class LibraryAction:
 _ACCOUNT = 'Applies when local passwords are next set or changed; existing passwords are not rotated. '
 _AUDIT = 'Adds Security event log entries for this subcategory; increases log volume slightly. Nothing is disabled.'
 _RDP = 'Sets the local Remote Desktop policy value; existing sessions are unaffected until reconnect. '
+# Firewall logging only: which traffic is allowed never changes, so the agents' WinRM channel cannot be cut. Firewall
+# on/off and inbound-block policy (9.2.1, 9.2.2, 9.3.1, 9.3.2) stay assessment-only for that reason.
+_FWLOG = ('Sets the local firewall policy logging value; it only records traffic. Which connections are allowed does not '
+          'change, so remote access is unaffected. The firewall log file grows. ')
 LIBRARY = MappingProxyType({a.action_id: a for a in (
     LibraryAction('REM-1.1.1', '1.1.1', 'Enforce password history: 24', 24,
                   _ACCOUNT + 'Users cannot reuse their previous 24 passwords.'),
@@ -69,6 +73,14 @@ LIBRARY = MappingProxyType({a.action_id: a for a in (
     LibraryAction('REM-17.2.3', '17.2.3', 'Audit User Account Management: Success and Failure', 3, _AUDIT),
     LibraryAction('REM-17.5.1', '17.5.1', 'Audit Account Lockout: enable Failure', 2, _AUDIT),
     LibraryAction('REM-17.5.4', '17.5.4', 'Audit Logon: Success and Failure', 3, _AUDIT),
+    LibraryAction('REM-9.2.6', '9.2.6', 'Private firewall: log dropped packets', 1,
+                  _FWLOG + 'Dropped packets on the Private profile are written to the log.'),
+    LibraryAction('REM-9.2.7', '9.2.7', 'Private firewall: log successful connections', 1,
+                  _FWLOG + 'Successful connections on the Private profile are written to the log.'),
+    LibraryAction('REM-9.3.6', '9.3.6', 'Public firewall: log dropped packets', 1,
+                  _FWLOG + 'Dropped packets on the Public profile are written to the log.'),
+    LibraryAction('REM-9.3.7', '9.3.7', 'Public firewall: log successful connections', 1,
+                  _FWLOG + 'Successful connections on the Public profile are written to the log.'),
     LibraryAction('REM-18.10.57.2.2', '18.10.57.2.2', 'RDP: do not allow passwords to be saved', 1,
                   _RDP + 'Remote Desktop clients on this server can no longer save passwords.'),
     LibraryAction('REM-18.10.57.3.9.1', '18.10.57.3.9.1', 'RDP: always prompt for password', 1,
