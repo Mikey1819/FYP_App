@@ -166,7 +166,40 @@ def _aging_specs():
     return specs
 
 
-FAMILIES = dict(_sysctl_specs(), **_core_spec(), **_auth_specs(), **_aging_specs())
+def _package_specs():
+    """Host specs for the supervised package jobs; fixture-tested, not validated on the VM. The target's apt
+    simulation decides eligibility (no removals or upgrades on install, no dependent packages on purge)."""
+    import json
+    from system.contracts import ComplianceStatus
+    from vm.ubuntu.family_package import IMPLEMENTATION_SHA256, SPECS
+    titles = {'1.3.1.1': 'Install AppArmor and its utilities (supervised apt job)',
+              '1.5.4': 'Undo prelinking, then purge prelink (supervised apt job)',
+              '2.1.2': 'Stop and purge avahi-daemon when nothing depends on it (supervised apt job)',
+              '6.3.1.1': 'Install auditd and audispd-plugins (supervised apt job)'}
+    specs = {}
+    for control_id, spec in SPECS.items():
+        params = {'packages': list(spec['packages'])}
+
+        def propose(cid, evidence, params=params):
+            result = next((a for a in evidence.assessments if a.control_id == cid), None)
+            if result is None or result.status is not ComplianceStatus.NON_COMPLIANT:
+                return None
+            facts = json.loads(evidence.raw)['observations'][cid]
+            if any(facts.get('package.' + name, {}).get('state') != 'ok' for name in params['packages']):
+                return None
+            return json.loads(json.dumps(params))
+
+        def validate(candidate, params=params):
+            if type(candidate) is not dict or candidate != params:
+                raise ValueError('Only the CIS package set for this control is managed')
+        action_id = 'ubuntu.%s.v1' % control_id
+        specs[action_id] = ActionSpec(action_id, 1, IMPLEMENTATION_SHA256, (control_id,), validate, 900,
+                                      propose=propose, title=titles[control_id],
+                                      recovery={'kind': 'restore_backup', 'scope': ['dpkg:' + n for n in spec['packages']]})
+    return specs
+
+
+FAMILIES = dict(_sysctl_specs(), **_core_spec(), **_auth_specs(), **_aging_specs(), **_package_specs())
 
 
 def _restore_spec():

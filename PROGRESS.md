@@ -554,3 +554,7 @@ A live **Assess without AI** failed with "Ubuntu workflow binding required". Str
 ## 6 November 2026 — supervised fixes on the page: status and reconnect-to-confirm (integration, in progress)
 
 Running and waiting Ubuntu changes now show on the page with **Check status** and **Confirm change**. A confirmation is accepted only over a login that started after the app saw the change waiting; the dispatching connection is refused. Disconnecting is always allowed, and connecting to a different VM is refused while one has an unsettled change. Full suite: **422 passed**; baseline passes. Fixture-only; the execution gate is closed.
+
+## 6 November 2026 — Ubuntu package fix families (integration, in progress)
+
+Added supervised apt jobs: install AppArmor (1.3.1.1) and auditd (6.3.1.1), and purge prelink (1.5.4) and avahi-daemon (2.1.2). apt's own read-only simulation decides eligibility: no removals or upgrades on install, and no dependent packages on purge. Restore removes exactly what was added, or reinstalls the recorded version. Fourteen fix families now exist. Full suite: **432 passed**. Fixture-only; the execution gate is closed.

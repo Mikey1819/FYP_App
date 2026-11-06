@@ -620,3 +620,24 @@ These are the mechanisms the package, SSH, UFW and audit families need. No famil
   - `tests/integration/test_routing.py` (+1): disconnect is allowed, another VM is refused, the same VM is allowed.
   - **Mutation checks, all caught:** removing the fresh-login check, loosening its time comparison, removing status de-duplication, removing the awaiting check, removing the other-VM refusal, and not restoring the workflow key.
 - Full suite **422 tests, all passed**; baseline: no protected changes. Fixture-only: no family uses supervision yet, and the execution gate stays closed.
+
+## 2026-11-06 supervised package families (CIS 1.3.1.1, 1.5.4, 2.1.2, 6.3.1.1)
+
+I read the CIS remediation text for each control first: 1.3.1.1 p.136 `apt install apparmor apparmor-utils`; 1.5.4 p.160 `prelink -ua` then `apt purge prelink`; 2.1.2 pp.221–222 stop the socket and service, then `apt purge avahi-daemon`, or mask them when a dependent package is required; 6.3.1.1 p.752 `apt install auditd audispd-plugins`.
+
+- **`vm/ubuntu/family_package.py`:** one `PackageFamily` with four registered actions. Each is a **systemd-supervised job** (`supervision = 'job'`, 900 s) that runs outside the SSH session. Parameters are exactly the CIS package set.
+- **Eligibility is apt's own read-only simulation** (`apt-get -s`, with `--no-install-recommends` for installs):
+  - an install may only add new packages; any removal, or an upgrade of an installed package, is refused;
+  - a purge may only remove the installed CIS targets. If apt would take a dependent package with it, which is the CIS impact warning, the purge is refused, and the mask-and-retain branch stays a human decision;
+  - half-installed targets, nothing to do, or an unavailable package are refused.
+- **Exact state:** the recorded state is each target's dpkg status and version plus the simulated plan. After the change, the expected state is every target present (at its planned version) or absent, with an empty plan. The runner's after-state check therefore stays exact.
+- **Steps:** 1.5.4 runs `prelink -ua` before the purge, and 2.1.2 runs `systemctl stop -- avahi-daemon.socket avahi-daemon.service` before it. Both are fixed allowlisted argv.
+  - apt runs with `DEBIAN_FRONTEND=noninteractive`, `NEEDRESTART_MODE=l` (list only: needrestart never restarts services such as sshd), `--force-confdef/--force-confold` and a 120 s dpkg lock wait.
+  - Package lists are not refreshed, so an unavailable download fails the job before dpkg changes anything.
+- **Restore:** after an install, it purges exactly the packages the install added and nothing else. After a purge, it reinstalls the recorded versions. Purged configuration returns to package defaults, and prelinking is not redone. Both are stated in the approval summary.
+- **Host specs:** a fix is proposed only for a Non-Compliant control whose package facts were collected. Coverage for 1.3.1.1, 1.5.4, 2.1.2 and 6.3.1.1 is now `fixture_tested`; live validation is pending.
+- **On your VM:** 6.3.1.1 and 2.1.2 are the Non-Compliant ones, and 1.3.1.1 and 1.5.4 already comply. Whether the avahi purge is eligible depends on the VM's real dependents: if a desktop meta-package needs it, the purge is refused.
+- **Tests:** 10 new tests in `tests/integration/test_ubuntu_package_families.py` (RED: 10 errors) with an in-memory apt fake, plus a simulation parser test.
+  - **Mutation checks, all caught:** allowing upgrades, allowing dependent removals, allowing half-installed packages, an over-broad restore, and skipping the preparation steps.
+  - Registry tests list exactly 14 implemented families; 16 reserved IDs remain.
+- Full suite **432 tests, all passed**; baseline: no protected changes; source check passes; bundle rebuilt (reinstall before the next live scan). Execution gate still closed.
