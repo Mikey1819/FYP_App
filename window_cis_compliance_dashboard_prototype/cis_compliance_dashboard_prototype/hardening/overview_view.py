@@ -85,8 +85,7 @@ def latest_assessment_run(store, runtime, target):
 def awaiting_you(store, runtime, target):
     """Undecided fixes the administrator can still act on: those of this server's newest assessment round.
     Proposals of older rounds belong to scans that a later round replaced; the Agentic page never offers them, so
-    counting them would overstate the work waiting (on 5 November the real data showed 21, while the latest round
-    had none left to decide)."""
+    counting them would overstate the work waiting."""
     run_id = latest_assessment_run(store, runtime, target)
     return sum(p['decision'] is None for p in store.for_run(run_id)) if run_id else 0
 

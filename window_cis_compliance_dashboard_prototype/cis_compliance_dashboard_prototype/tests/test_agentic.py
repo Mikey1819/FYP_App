@@ -23,7 +23,7 @@ from test_investigation import MockClient
 from evidence_fixture import evidence_fixture
 from test_winrm_channel import IDENTITY, target
 
-# The registered lab VM as observed on 26 October 2026 (live WinRM scan), used as fixture state.
+# The registered lab VM as observed by a live WinRM scan, used as fixture state.
 LAB_STATE = {'1.2.2': 0, '1.2.1': None, '1.2.4': None, '1.1.1': 0, '1.1.3': 0, '1.1.2': 42,
              '2.3.10.3': 0, '9.3.1': None, '18.10.57.3.9.4': None}
 
@@ -377,11 +377,11 @@ class AgenticRoundTests(AgenticTestCase):
                    call('read_coverage', t), call('handoff_analysis', t, reason='Error persists after one rescan.')]
         result = self.hardening(FakeVm(error_controls=('1.1.5',)), [call('delegate_scanner', t),
             call('delegate_analysis', t), plan(t, skipped=DEFER_ALL)], scanner=scanner).run_round()
-        self.assertEqual(result['outcome']['outcome'], 'no_fix_proposed')  # Found in the 26 Oct evaluation.
+        self.assertEqual(result['outcome']['outcome'], 'no_fix_proposed')
 
     def test_a_rescan_in_the_same_round_is_not_history_for_the_drift_factor(self):
-        # 27 Oct error_gap evaluation: every finding got D=3 (1.2.2 scored 73, not 69) because the round's own first
-        # scan, replaced by the Scanner's rescan, counted as an earlier assessment.
+        # The round's own first scan, replaced by the Scanner's rescan, must not count as an earlier assessment
+        # (otherwise every finding gets D=3 and 1.2.2 scores 73, not 69).
         t = 'windows:' + target().machine_uuid
         scanner = [call('scan_target', t), call('read_coverage', t), call('rescan', t, reason='Error on 1.1.5'),
                    call('read_coverage', t), call('handoff_analysis', t, reason='ok')]
@@ -499,7 +499,7 @@ class OrchestratorAccountabilityTests(AgenticTestCase):
         self.assertEqual(undecided['reason'], 'Not decided by the Orchestrator this round; deferred by code')
 
     def test_a_deferral_with_a_code_that_does_not_fit_is_recorded_as_not_decided(self):
-        # 31 Oct real-model lab run: low_impact (a fix code) given as a defer code failed the whole plan.
+        # low_impact is a fix code; given as a defer code it must not fail the whole plan.
         t = 'windows:' + target().machine_uuid
         result = self.hardening(FakeVm(), [call('delegate_scanner', t), call('delegate_analysis', t),
             plan(t, fixes=[('1.2.2', 'REM-1.2.2', 'high_risk')],
@@ -912,7 +912,7 @@ class RemediationPhaseTests(AgenticTestCase):
         events = next(t for t in hardening.traces(verification['round_id']) if t['agent_role'] == REMEDIATION)['events']
         stopped = next(e['data']['result'] for e in events if e['kind'] == 'tool' and e['data']['name'] == 'execute_fixes')
         self.assertTrue(stopped['must_stop'])
-        self.assertIn('target_id only', stopped['next'])  # Real qwen3:8b otherwise copied the results along.
+        self.assertIn('target_id only', stopped['next'])  # The model need not copy the results along.
 
     def test_next_step_codes_are_checked_and_unblocked_findings_lead_to_a_new_round(self):
         state = dict(LAB_STATE, **{'1.2.1': 5})  # Duration non-compliant and blocked while the threshold is 0.
