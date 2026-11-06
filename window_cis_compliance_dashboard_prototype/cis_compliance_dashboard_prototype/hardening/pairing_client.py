@@ -109,8 +109,11 @@ def find_server(code, *, name=None, port=PAIRING_PORT, timeout=6.0, attempts=3, 
                     return FoundServer(address, answer['hostname'], answer['machine_uuid'], answer['port'],
                                        answer['pairing_id'], s.getsockname()[0], answer['os'], answer['os_name'],
                                        answer['os_version'])
-        raise PairingError('No server answered with this code. Check that the code is still shown on the server, '
-                           'that you typed it correctly, and that this laptop is on the same network as the server.')
+        # A server never answers a wrong code (an answer it could not sign would prove nothing, and silence keeps it
+        # hidden), so the laptop cannot tell a wrong code from no server. The helper window on the server can.
+        raise PairingError('No server answered. The code may be wrong or expired: the helper window on the server '
+                           'shows "Wrong code" if so, and after 5 wrong codes it stops pairing until you click Start '
+                           'pairing again. Otherwise, this laptop is not on the same network as the server.')
     finally:
         for s in sockets:
             s.close()

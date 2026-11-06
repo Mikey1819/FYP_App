@@ -94,7 +94,7 @@ The password stays in the Streamlit session's memory only. It is never written t
 | `unsupported_target` | After login: not a stand-alone Windows Server 2022 (another version, a workstation, or joined to a domain), whatever the pairing answer said. Not saved |
 | `pairing_not_confirmed` | The server's own records do not hold this pairing for this laptop. Start pairing again and use the new code |
 | `collection_failed` | The collector threw on the server. No assessment is created |
-| *No server answered with this code* | The code expired or was mistyped, pairing was stopped on the server, or the laptop is not on the same network as the server |
+| *No server answered* | The code expired or was mistyped (the helper window on the server shows "Wrong code from …"), pairing was stopped on the server after 5 wrong codes, or the laptop is not on the same network as the server. The server never answers a wrong code, so the laptop cannot say which |
 
 ## Limits and design notes
 
