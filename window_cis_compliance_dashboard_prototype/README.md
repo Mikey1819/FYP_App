@@ -30,7 +30,7 @@ From `cis_compliance_dashboard_prototype`:
 .\.venv\Scripts\python.exe -s launch.py
 ```
 
-`launch.py` starts the dashboard on this laptop only (127.0.0.1), on the first free port from 8501, and opens the browser once it answers. `python -m streamlit run app.py` still works too. The venv runs **Python 3.15**. For a fresh checkout, create it with Python 3.15 and install `requirements-lock.txt` (the exact tested versions) or `requirements.txt`. The agents need Ollama running locally with `qwen3:8b`; without it, assessment and risk scores still work and the page says the AI is unavailable.
+`launch.py` starts the dashboard on this laptop only (127.0.0.1), on the first free port from 8501, and opens the browser once it answers. `python -m streamlit run app.py` still works too, and `Run-Dashboard.cmd` in this folder does that from any folder (double-click it, or type its path; it keeps reloading the page when code is saved). The venv runs **Python 3.15**. For a fresh checkout, create it with Python 3.15 and install `requirements-lock.txt` (the exact tested versions) or `requirements.txt`. The agents need Ollama running locally with `qwen3:8b`; without it, assessment and risk scores still work and the page says the AI is unavailable.
 
 **For a client** there is a ready-to-run package: `Start.cmd` plus its own Python and libraries, with nothing to install. Build it with `.\cis_compliance_dashboard_prototype\.venv\Scripts\python.exe scripts\packaging\build_client_package.py` from this folder. It writes `dist\FYP-Hardening\` and a zip, and checks that the package starts. The package never contains `data\`.
 
