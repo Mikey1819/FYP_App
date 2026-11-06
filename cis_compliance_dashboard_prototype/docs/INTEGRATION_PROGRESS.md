@@ -440,3 +440,11 @@ The user (Teoh Kai Hong) wrote in chat: "continue the development, i approve the
 - Commits on `integrate/unified-vm-hardening` are now authorized (local only; no push, merge or deploy).
 
 Six risk tests that encoded the pending state were updated to the recorded approval, or now use an explicit pending copy; none were deleted. Full suite **346 tests in 32.440s, all passed**; baseline, sources and `pip check` pass.
+
+## 2026-11-06 VM facts reported by the user; provisioning bundle built
+
+- **Reported by the user:** VM `FYP-Ubuntu2204`, console login works, `whoami` vboxuser, hostname FYP-Ubuntu2204, `/usr/bin/oscap` version 1.2.17. Existing snapshot `03-pre-demo-acceptance-20261021` (created 21/10/2026 by Codex; its description mentions an earlier deployed framework). A fresh snapshot before provisioning was requested.
+- **Compatibility finding:** the pinned datastream is SCAP 1.3 / OVAL 5.11.2, and OpenSCAP 1.2.17 likely cannot evaluate it. This is recorded in `source-lock.json` `openscap_validation`; `openscap_version` stays null and activation false. A read-only `oscap info` / `oscap ds sds-validate` check on the VM was requested before any engine or content decision.
+- **Bundle:** `tools/build_ubuntu_bundle.py` builds `dist/ubuntu-helper` (git-ignored) with the exact helper bytes, launchers, pinned datastream, `SHA256SUMS`, `install.sh` and `uninstall.sh`. The sudo rule covers the read-only collector only. Two new tests check exact bytes, hashes, scope and script syntax.
+- **Bug found and fixed:** the installed package directory must also contain the launcher copies, or the target-side collector digest could never be computed.
+- Full suite **348 tests, all passed**; baseline: no protected changes. Nothing was run on the VM by the assistant.

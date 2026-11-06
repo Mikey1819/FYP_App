@@ -51,3 +51,38 @@ Prepared 6 November 2026 for `FYP-Ubuntu2204` (`192.168.56.10:22`, machine ID `f
   - a reviewed UFW ownership registration, if 4.1.4/4.1.7 should be determinate.
 
   Until all of these are done, **Assess without AI** stays disabled for Ubuntu.
+
+## Running the approved provisioning bundle (administrator steps)
+
+The preview above was approved by the user in chat on 2026-11-06. The bundle implements exactly that preview with one scope decision: its sudo rule covers **only the read-only `collect` command**. The runner files are installed but cannot run as root until a separate rule is approved, after the execution acceptance gates.
+
+1. Build it on the host, from the application directory:
+
+   ```powershell
+   ..\.venv-integration\Scripts\python.exe -B -m tools.build_ubuntu_bundle
+   ```
+
+   This writes `dist\ubuntu-helper\` (git-ignored).
+2. In VirtualBox, take a snapshot of `FYP-Ubuntu2204` (for example `before-fyp-helper`), and confirm you can log in on the VM console.
+3. Copy the folder to the VM from a host terminal (you type your own password):
+
+   ```powershell
+   scp -r dist\ubuntu-helper vboxuser@192.168.56.10:~/
+   ```
+
+4. On the VM console:
+
+   ```sh
+   cd ~/ubuntu-helper && sudo bash install.sh
+   ```
+
+5. The script refuses, and changes nothing, unless all of these hold:
+   - the machine ID and hostname match;
+   - Python is 3.10;
+   - every file matches `SHA256SUMS`;
+   - the launcher copies are identical;
+   - the sudo rule passes `visudo`.
+
+   It installs files and the one rule only: no packages, services, firewall, SSH or PAM changes.
+6. Report the last lines it prints (the Python and `oscap` versions). If `oscap` is not installed, installing `libopenscap8` is a separate package change that needs its own approval.
+7. To undo: `sudo bash ~/ubuntu-helper/uninstall.sh` (removes the sudo rule first), or restore the snapshot.
