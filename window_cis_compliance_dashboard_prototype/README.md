@@ -19,7 +19,7 @@ Every choice is a structured tool call that code validates. Reasons are fixed co
 
 - **Benchmark:** CIS Microsoft Windows Server 2022 **Stand-alone** Benchmark v2.0.0, Level 1. The report's v5.1.0 is for domain-joined servers and is not used ([BENCHMARK_MAPPING.md](docs/design/BENCHMARK_MAPPING.md)).
 - **32 assessed controls:** Account Policies 9, Local Security Options 5, Windows Defender Firewall 8, Advanced Audit Policy 5, Remote Desktop Services 5.
-- **21 library actions** for remediation. Firewall-policy controls are assessment-only, because a firewall change could cut the agents' own WinRM channel.
+- **25 library actions** for remediation. Firewall **logging** (9.2.6, 9.2.7, 9.3.6, 9.3.7) can be fixed, because it only records traffic. Firewall on/off and inbound-block (9.2.1, 9.2.2, 9.3.1, 9.3.2) stay assessment-only, because changing which traffic is allowed could cut the agents' own WinRM channel.
 - **Risk:** `R = 6I + 5E + 4P + 3L + 2D`. I, P and L are derived by rule from benchmark attributes, never assigned by hand ([RISK_DERIVATION.md](docs/design/RISK_DERIVATION.md)).
 
 ## Run
@@ -37,7 +37,7 @@ From `cis_compliance_dashboard_prototype`:
 ## Using the dashboard
 
 1. The dashboard opens on **Servers**, and that is the only page until a server is connected. **Overview**, **Agentic hardening** and **History and drift** appear once one is, and the dashboard then moves to Overview by itself. The connected server's system decides which pages open: Windows Server 2022 gets the pages in `hardening/`; an Ubuntu server will get the same three places from `ubuntu/` (placeholders until Ubuntu is linked). The sidebar has a **Servers** link (switch server, re-pair, manage access) and **Disconnect**, which goes back to Servers. **Add a server**: On the server, run the server access helper (download it from the same page) and click **Start pairing**. Type the code it shows and click **Find server**: the page shows the server and the system it reported, for example *Windows Server 2022 · Supported* (Ubuntu is recognised, with a note that its checks are not linked yet). Then log in with the built-in Administrator account. The pairing code is the only way to add a server; nobody types an address. The server is saved under **My servers** only after the login, its identity and its own pairing record all check out. Later, pick it under My servers and type the password. If its address changed, use **Re-pair**. The lab VM needs a host-only or bridged network adapter, so it can be paired like any server. While connected, **Who can reach…** lists the paired laptops and can disconnect any of them, this laptop, or all of them. The sidebar shows the connected server and whether `qwen3:8b` is ready on every page. Details: [VM_CONNECTION_SETUP.md](docs/vm/VM_CONNECTION_SETUP.md) and [LAN_PAIRING_DESIGN.md](docs/design/LAN_PAIRING_DESIGN.md).
-2. Optionally type a **goal for this round**, for example *Keep RDP usable for remote support this week*. Then click **Start agentic round**. With a goal, the Orchestrator first reads it into fixed constraints that code enforces; the Fixes tab shows how it was read. The Orchestrator delegates the Scanner and Analysis agents and submits a plan. A step bar (Scan → Analyse → Plan → Approve → Execute → Verify) shows where the round stands, and the tabs hold the detail: **Fixes**, **Risk ranking**, **Controls**, **Results** and **Agent log**.
+2. Click **Start agentic round**. The Orchestrator delegates the Scanner and Analysis agents and submits a plan. A step bar (Scan → Analyse → Plan → Approve → Execute → Verify) shows where the round stands, and the tabs hold the detail: **Fixes**, **Risk ranking**, **Controls**, **Results** and **Agent log**.
 3. In **Fixes**, enter your name once (and optionally a comment for the next decision), then approve or reject each proposal (or all undecided at once). An approval is bound to the exact request and expires after one hour. Findings the Orchestrator deferred are listed with their reasons; one it left out of its plan is shown as *not decided*.
 4. **Execute approved fixes…** opens a confirmation listing each change, its current value and the approval expiry. **Confirm and execute** delegates the Remediation Agent and then a verification rescan; the page opens on **Results** with the verdicts and the next step.
 5. **Run next round** to rescan, re-rank and propose again, for example once a fixed prerequisite has unblocked another finding. Earlier rounds of the session stay viewable (read-only) from the **Round** selector.
@@ -115,7 +115,7 @@ scripts/
   tools/           laptop tools: cross-check, benchmark extraction, risk derivation, approval proof, database viewer
   evaluation/      real-model probe and repeated evaluation, report figures
 docs/
-  design/          architecture, benchmark mapping, risk derivation, administrator goals, pairing, database schema
+  design/          architecture, benchmark mapping, risk derivation, pairing, database schema
   vm/              VM connection setup and the real VM trial runbook
   evaluation/      agentic assessment, first VM import validation
   report/          original report text, requirements coverage, revisions, alignment plan
@@ -133,7 +133,6 @@ docs/
 | [ARCHITECTURE.md](docs/design/ARCHITECTURE.md) | Agent design, tools, guarantees, evidence |
 | [BENCHMARK_MAPPING.md](docs/design/BENCHMARK_MAPPING.md) | The 32 controls, rules, benchmark pages, report ID corrections |
 | [RISK_DERIVATION.md](docs/design/RISK_DERIVATION.md) | Generated risk-factor derivation for every control (`scripts\tools\generate_risk_derivation.py`) |
-| [ADMIN_GOALS_DESIGN.md](docs/design/ADMIN_GOALS_DESIGN.md) | Administrator goals: design, safeguards and evaluation plan |
 | [LAN_PAIRING_DESIGN.md](docs/design/LAN_PAIRING_DESIGN.md) | Pairing a server by code, paired laptops and Disconnect, the client package (D7) |
 | [DATABASE_SCHEMA.md](docs/design/DATABASE_SCHEMA.md) | Every SQLite table, column and JSON field |
 | **VM** | |

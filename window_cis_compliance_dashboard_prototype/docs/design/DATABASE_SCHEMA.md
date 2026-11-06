@@ -109,7 +109,7 @@ A run is complete when it is created and never changes: triggers refuse updates,
 | `outcome` | both | Assessment: `outcome` (`awaiting_approval`, `no_fix_proposed`, `no_findings`, `incomplete`, …), `reason`, `proposals` (proposal IDs), `skipped` (deferred findings with `reason_code` and `reason`). Verification: `outcome` (`finish`, `next_round`, `remediation_review`, `fallback`, `incomplete`), `reason_code`, `reason`. |
 | `analysis` | assessment | The risk ranking calculated by code: findings with score, level and factors; Unknown/Error gaps |
 | `analysis_outcome` | assessment | The Analysis Agent's decisions: `attention` flags, `gap_triage`, `rescan_requested` |
-| `goal` | assessment | The administrator's goal: `text`, `constraints`, `read_as`. `null` if none was given. |
+| `goal` | assessment | Rounds from 30 October to 6 November 2026 only: the administrator's goal (`text`, `constraints`, `read_as`), or `null`. The goal feature was removed on 6 November; new rounds do not write this field and nothing reads it. |
 | `scanned_runs` | assessment | Every scan taken in the round, including replaced ones |
 | `remediated_run_id` | verification | The assessment scan whose approved fixes were executed |
 | `verdicts` | verification | One per fix: `proposal_id`, `control_id`, `action_id`, `verdict` |

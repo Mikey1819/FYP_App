@@ -1,6 +1,6 @@
-# Plan: administrator goals for the Orchestrator (approved and built)
+# Plan: administrator goals for the Orchestrator (built, then removed)
 
-> **Status, 1 November 2026: built on 30 October 2026** after the user approved this plan. The delivered design is in [ARCHITECTURE.md](ARCHITECTURE.md#administrator-goals) and its evaluation in [AGENTIC_ASSESSMENT.md](../evaluation/AGENTIC_ASSESSMENT.md#administrator-goals-added-30-october). This page is the original proposal, kept for the record. Differences from it: the focus `remote_access` became `remote_desktop`, `max_fixes` 0 means no limit, and code (not the model) defers findings outside the goal.
+> **Removed on 6 November 2026.** The goal feature was built on 30 October and removed on 6 November because its results were too inconsistent. This page is the original proposal, kept for the record only; nothing in the program uses it now. See [ARCHITECTURE.md](../design/ARCHITECTURE.md#administrator-goals-removed-6-november-2026) and the evaluation in [AGENTIC_ASSESSMENT.md](../evaluation/AGENTIC_ASSESSMENT.md#administrator-goals-added-30-october).
 
 30 October 2026. This is AGENTIC_ASSESSMENT Recommendation 1. It was set aside on 29 October because free text has endless possible inputs, so a few scenarios could not show that it behaves well. The design below addresses that objection.
 
