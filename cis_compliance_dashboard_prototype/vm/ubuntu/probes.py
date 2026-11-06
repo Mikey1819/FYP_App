@@ -76,6 +76,8 @@ def ssh_context(text, context_id, options):
         name, value = parts
         if name in ('maxauthtries','clientaliveinterval','clientalivecountmax'):
             value = _integer(value)
+        elif value == 'without-password':
+            value = 'prohibit-password'  # sshd -T prints the legacy alias (observed on Ubuntu 22.04)
         elif value not in ('no','yes','prohibit-password','forced-commands-only'):
             raise ValueError('Unsupported effective SSH value')
         result[name] = value

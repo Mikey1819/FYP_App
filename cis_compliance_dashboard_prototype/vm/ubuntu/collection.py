@@ -69,6 +69,9 @@ def collect_observations(io, *, registered_firewall_manager=None, scap_request=N
         for name in names:result[cid]['package.'+name] = _ok(package_map.get(name,'absent')) if package_map is not None else _error()
     def unit(name,field):
         values=dict(line.split('=',1) for line in command('unit.'+name).splitlines() if '=' in line)
+        if values.get('LoadState') == 'not-found':
+            # A unit that is not installed: systemctl reports an empty unit-file state (observed on the target).
+            return 'not-found' if field == 'UnitFileState' else values.get(field) or 'inactive'
         if field not in values:raise ValueError('Missing unit state')
         return values[field]
     for name in ('avahi-daemon.service','avahi-daemon.socket'):
