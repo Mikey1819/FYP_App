@@ -1,0 +1,282 @@
+{
+  "schema_version": 1,
+  "policy_version": "ubuntu-risk-2026-11-06-draft1",
+  "review_status": "approved",
+  "reviewer": "Teoh Kai Hong (blanket chat approval 2026-11-06; not an itemized review)",
+  "reviewed_at": "2026-11-06T06:55:55+00:00",
+  "method": "Windows hardening/risk.py rubric: R = 6I + 5E + 4P + 3L + 2D; I/P from consequence/privilege categories, L from Server level and Automated/Manual, E from surface baseline, D from compatible history.",
+  "extensions": {
+    "consequence": {
+      "session_hygiene": {
+        "score": 2,
+        "reason": "Session management weakness unrelated to passwords: minor reduction in security posture (4.14a score 2 tier)."
+      }
+    },
+    "surface": {
+      "remote_shell": {
+        "score": 4,
+        "reason": "Remote interactive administrative service (OpenSSH): significant network/remote exposure on the shared scale, the same semantic tier as the Windows remote-desktop surface baseline, derived from SSH facts only."
+      },
+      "local_exploit_mitigation": {
+        "score": 2,
+        "reason": "Kernel/userspace exploit mitigation or confinement that matters after an attacker already runs code locally: limited local exposure."
+      },
+      "system_software": {
+        "score": 3,
+        "reason": "Installed package versions across all services; reachability depends on which services listen, so controlled network/remote exposure without asserting Internet reachability."
+      }
+    },
+    "privilege": {
+      "privilege_escalation_path": {
+        "score": 4,
+        "reason": "Weakens a barrier between unprivileged code and root: may contribute to administrative access (same tier as the Windows 4.14c score 4 wording)."
+      },
+      "host_network_path": {
+        "score": 2,
+        "reason": "Governs host packet handling rather than accounts or rights: limited privilege implications (4.14c score 2 tier)."
+      }
+    }
+  },
+  "controls": {
+    "1.2.2.1": {
+      "level": 1,
+      "assessment": "Manual",
+      "consequence": "protection_weakened",
+      "privilege_scope": "privilege_escalation_path",
+      "surface": "system_software",
+      "rationale": "Outstanding security updates leave known, published vulnerabilities in place."
+    },
+    "1.3.1.1": {
+      "level": 1,
+      "assessment": "Automated",
+      "consequence": "protection_weakened",
+      "privilege_scope": "privilege_escalation_path",
+      "surface": "local_exploit_mitigation",
+      "rationale": "Without the AppArmor packages, mandatory access control cannot confine compromised programs."
+    },
+    "1.5.1": {
+      "level": 1,
+      "assessment": "Automated",
+      "consequence": "misuse_easier",
+      "privilege_scope": "privilege_escalation_path",
+      "surface": "local_exploit_mitigation",
+      "rationale": "Predictable memory layout makes memory-corruption exploits easier to write."
+    },
+    "1.5.3": {
+      "level": 1,
+      "assessment": "Automated",
+      "consequence": "misuse_easier",
+      "privilege_scope": "privilege_escalation_path",
+      "surface": "local_exploit_mitigation",
+      "rationale": "Core dumps of privileged programs can disclose sensitive memory contents."
+    },
+    "1.5.4": {
+      "level": 1,
+      "assessment": "Automated",
+      "consequence": "misuse_easier",
+      "privilege_scope": "privilege_escalation_path",
+      "surface": "local_exploit_mitigation",
+      "rationale": "Prelinking modifies binaries, interfering with integrity checking and easing shared-library tampering."
+    },
+    "2.1.2": {
+      "level": 1,
+      "assessment": "Automated",
+      "consequence": "misuse_easier",
+      "privilege_scope": "guest_or_anonymous",
+      "surface": "network_anonymous",
+      "rationale": "An unneeded unauthenticated discovery service adds network attack surface and discloses host information."
+    },
+    "5.3.3.2.2": {
+      "level": 1,
+      "assessment": "Automated",
+      "consequence": "protection_weakened",
+      "privilege_scope": "all_local_accounts",
+      "surface": "network_logon",
+      "rationale": "Short passwords are practical to guess or crack."
+    },
+    "5.4.1.1": {
+      "level": 1,
+      "assessment": "Automated",
+      "consequence": "minor_reduction",
+      "privilege_scope": "all_local_accounts",
+      "surface": "network_logon",
+      "rationale": "Passwords without a maximum age extend the useful life of a stolen credential."
+    },
+    "5.4.1.3": {
+      "level": 1,
+      "assessment": "Automated",
+      "consequence": "minor_reduction",
+      "privilege_scope": "all_local_accounts",
+      "surface": "network_logon",
+      "rationale": "Too little expiry warning leads to rushed, weaker password choices or lockouts."
+    },
+    "5.4.1.5": {
+      "level": 1,
+      "assessment": "Automated",
+      "consequence": "minor_reduction",
+      "privilege_scope": "all_local_accounts",
+      "surface": "network_logon",
+      "rationale": "Accounts with expired passwords stay usable indefinitely instead of being disabled."
+    },
+    "5.2.2": {
+      "level": 1,
+      "assessment": "Automated",
+      "consequence": "misuse_easier",
+      "privilege_scope": "privilege_escalation_path",
+      "surface": "local_account",
+      "rationale": "Without a pseudo-terminal, a program run through sudo can keep access to the user's terminal after it exits."
+    },
+    "5.2.3": {
+      "level": 1,
+      "assessment": "Automated",
+      "consequence": "detection_only",
+      "privilege_scope": "logging_only",
+      "surface": "detection",
+      "rationale": "Privileged command use is harder to review without a dedicated sudo log."
+    },
+    "3.3.1": {
+      "level": 1,
+      "assessment": "Automated",
+      "consequence": "protection_weakened",
+      "privilege_scope": "host_network_path",
+      "surface": "network_boundary",
+      "rationale": "A host that forwards packets can act as a router and bypass network segmentation."
+    },
+    "3.3.2": {
+      "level": 1,
+      "assessment": "Automated",
+      "consequence": "misuse_easier",
+      "privilege_scope": "host_network_path",
+      "surface": "network_boundary",
+      "rationale": "Sending ICMP redirects can be abused to alter other hosts' routing."
+    },
+    "3.3.8": {
+      "level": 1,
+      "assessment": "Automated",
+      "consequence": "misuse_easier",
+      "privilege_scope": "host_network_path",
+      "surface": "network_boundary",
+      "rationale": "Accepting source-routed packets lets senders dictate paths around network controls."
+    },
+    "4.1.3": {
+      "level": 1,
+      "assessment": "Automated",
+      "consequence": "critical_protection_lost",
+      "privilege_scope": "remote_admin_logon",
+      "surface": "network_boundary",
+      "rationale": "An inactive host firewall exposes every listening service."
+    },
+    "4.1.4": {
+      "level": 1,
+      "assessment": "Automated",
+      "consequence": "protection_weakened",
+      "privilege_scope": "remote_admin_logon",
+      "surface": "network_boundary",
+      "rationale": "Missing loopback rules allow spoofed loopback traffic from the network or break local services."
+    },
+    "4.1.7": {
+      "level": 1,
+      "assessment": "Automated",
+      "consequence": "protection_weakened",
+      "privilege_scope": "remote_admin_logon",
+      "surface": "network_boundary",
+      "rationale": "Permissive default policies admit traffic that no rule explicitly allows."
+    },
+    "6.3.1.1": {
+      "level": 2,
+      "assessment": "Automated",
+      "consequence": "detection_only",
+      "privilege_scope": "logging_only",
+      "surface": "detection",
+      "rationale": "Without the audit packages, security-relevant events cannot be recorded."
+    },
+    "6.3.1.2": {
+      "level": 2,
+      "assessment": "Automated",
+      "consequence": "detection_only",
+      "privilege_scope": "logging_only",
+      "surface": "detection",
+      "rationale": "A stopped audit service records no events."
+    },
+    "6.3.1.3": {
+      "level": 2,
+      "assessment": "Automated",
+      "consequence": "detection_only",
+      "privilege_scope": "logging_only",
+      "surface": "detection",
+      "rationale": "Processes started before the audit daemon are not audited unless auditing is enabled at boot."
+    },
+    "6.3.3.4": {
+      "level": 2,
+      "assessment": "Automated",
+      "consequence": "detection_only",
+      "privilege_scope": "logging_only",
+      "surface": "detection",
+      "rationale": "Unaudited time changes can hide activity by confusing log timelines."
+    },
+    "6.3.3.8": {
+      "level": 2,
+      "assessment": "Automated",
+      "consequence": "detection_only",
+      "privilege_scope": "logging_only",
+      "surface": "detection",
+      "rationale": "Changes to user and group identity files go unrecorded."
+    },
+    "6.3.3.6": {
+      "level": 2,
+      "assessment": "Automated",
+      "consequence": "detection_only",
+      "privilege_scope": "logging_only",
+      "surface": "detection",
+      "rationale": "Use of privileged programs by ordinary users goes unrecorded."
+    },
+    "5.1.20": {
+      "level": 1,
+      "assessment": "Automated",
+      "consequence": "protection_weakened",
+      "privilege_scope": "admin_identity_or_stored_credentials",
+      "surface": "remote_shell",
+      "rationale": "Direct root login over SSH exposes the root identity and removes individual accountability."
+    },
+    "5.1.19": {
+      "level": 1,
+      "assessment": "Automated",
+      "consequence": "critical_protection_lost",
+      "privilege_scope": "remote_admin_logon",
+      "surface": "remote_shell",
+      "rationale": "Accounts with empty passwords could log in remotely without any secret."
+    },
+    "5.1.16": {
+      "level": 1,
+      "assessment": "Automated",
+      "consequence": "misuse_easier",
+      "privilege_scope": "remote_admin_logon",
+      "surface": "remote_shell",
+      "rationale": "More authentication attempts per connection make online guessing easier."
+    },
+    "5.1.7": {
+      "level": 1,
+      "assessment": "Automated",
+      "consequence": "session_hygiene",
+      "privilege_scope": "remote_admin_logon",
+      "surface": "remote_shell",
+      "rationale": "Unresponsive sessions are not detected and remain open."
+    },
+    "5.1.10": {
+      "level": 1,
+      "assessment": "Automated",
+      "consequence": "protection_weakened",
+      "privilege_scope": "remote_admin_logon",
+      "surface": "remote_shell",
+      "rationale": "Host-based trust lets one compromised host authenticate users to another."
+    },
+    "5.1.21": {
+      "level": 1,
+      "assessment": "Automated",
+      "consequence": "misuse_easier",
+      "privilege_scope": "remote_admin_logon",
+      "surface": "remote_shell",
+      "rationale": "User-supplied environment variables can subvert access restrictions or programs at login."
+    }
+  }
+}

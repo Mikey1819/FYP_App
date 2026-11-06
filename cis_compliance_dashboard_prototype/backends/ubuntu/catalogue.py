@@ -125,8 +125,29 @@ def load_catalogue(path, source_lock, *, require_activation=False):
     mapping = _local(base, lock['mapping_source_path']).read_bytes()
     if hashlib.sha256(mapping).hexdigest() != lock['mapping_source_sha256']:
         raise ValueError('Upstream mapping source hash mismatch')
+    validate_mapping(raw,mapping.decode('utf-8'))
     stream = _local(base, lock['datastream_path']).read_bytes()
     catalogue = validate_catalogue(raw, lock, stream)
     if require_activation and not catalogue.activation_ready:
         raise ValueError('Ubuntu catalogue activation requires reviewed sources, engine and assessment acceptance')
     return catalogue
+
+
+def validate_mapping(raw, source):
+    """Verify associations against the pinned upstream control list, not just rule existence."""
+    for control in raw['controls']:
+        match = re.search(r'^    - id: '+re.escape(control['control_id'])+r'\n(.*?)(?=^    - id: |\Z)',
+                          source,re.S|re.M)
+        if not match:raise ValueError('Control absent from upstream mapping')
+        block = match.group(1)
+        rules_block = block.split('      rules:\n',1)[-1] if '      rules:\n' in block else ''
+        rule_names, selectors = [], {}
+        for entry in re.findall(r'^          - (.+)$',rules_block,re.M):
+            if '=' in entry:
+                name,selector=entry.split('=',1);selectors[name]=selector
+            else:rule_names.append(entry)
+        actual = [value.removeprefix('xccdf_org.ssgproject.content_rule_') for value in control['scap_rule_ids']]
+        actual_selectors = {key.removeprefix('xccdf_org.ssgproject.content_value_'):value['selector']
+                            for key,value in control['scap_variable_values'].items()}
+        if actual != rule_names or actual_selectors != selectors:
+            raise ValueError('Control mapping differs from pinned upstream associations')

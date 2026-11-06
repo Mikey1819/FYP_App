@@ -1,3 +1,7 @@
 # Vendor content is byte-pinned; checkout must not normalize its line endings.
 cis_compliance_dashboard_prototype/catalogues/vendor/* -text
 cis_compliance_dashboard_prototype/.streamlit/config.toml -text
+# Ubuntu helper bytes feed the collector provenance digest; checkout must not convert line endings.
+cis_compliance_dashboard_prototype/vm/ubuntu/*.py -text
+cis_compliance_dashboard_prototype/vm/ubuntu/collect -text
+cis_compliance_dashboard_prototype/vm/ubuntu/runner -text

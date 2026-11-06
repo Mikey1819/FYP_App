@@ -38,6 +38,14 @@ class CatalogueTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'activation'):
             load_catalogue(path / 'ubuntu2204.json', path / 'source-lock.json', require_activation=True)
 
+    def test_existing_but_unrelated_scap_rule_is_not_a_valid_mapping(self):
+        from backends.ubuntu.catalogue import validate_mapping
+        path = ROOT / 'catalogues'
+        raw = json.loads((path/'ubuntu2204.json').read_text())
+        source = (path/'vendor/cis_ubuntu2204.yml').read_text()
+        raw['controls'][1]['scap_rule_ids'] = raw['controls'][2]['scap_rule_ids']
+        with self.assertRaises(ValueError):validate_mapping(raw,source)
+
     def test_xml_entity_payload_refused_before_mapping(self):
         from backends.ubuntu.catalogue import validate_catalogue
         import hashlib

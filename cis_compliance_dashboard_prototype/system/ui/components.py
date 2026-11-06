@@ -45,24 +45,29 @@ def render_controls(snapshot):
         column.metric(label, count, border=True)
     st.caption(f'{s.selected} selected controls · coverage {s.coverage_percent:.0f}% · '
                + ('compliance unavailable' if s.compliance_percent is None else f'compliance {s.compliance_percent:.0f}%')
-               + '. Unknown and Error are never counted as passes.')
+               + '. Unknown and Error are never counted as passes. Evidence: '
+               + md_escape(snapshot.target.evidence_mode) + '.')
     if snapshot.controls:
         st.dataframe([{'Control': row.control_id, 'Title': row.title, 'Area': row.area,
             'Profile': row.profile, 'Status': row.status.value, 'Applicability': row.applicability,
             'Observed': row.observed, 'Required': row.expected, 'Source': row.source} for row in snapshot.controls], hide_index=True)
 
 
-def render_snapshot_tabs(snapshot, *, tabs=None):
-    """Read-only common panels, also used while a verified backend requires setup."""
+def render_snapshot_tabs(snapshot, *, tabs=None, fix_actions=None):
+    """Common panels, also used while a verified backend requires setup. `fix_actions` renders the page's own
+    decision/execution controls inside Fixes; the panels themselves never call a backend."""
     fixes, risk, controls, results, log = tabs or st.tabs(TABS)
     with fixes:
         if not snapshot.proposals:
             st.info('No fixes have been proposed for this round.')
         else:
             for row in snapshot.proposals:
-                st.markdown('**' + md_escape(row.title) + '**')
+                st.markdown('**' + md_escape(row.title) + '** · ' + md_escape(row.control_id or '') + ' · '
+                            + md_escape(row.decision or 'awaiting decision'))
                 st.text(row.exact_preview)
-                st.caption(md_escape(row.reason))
+                st.caption(md_escape(row.reason) + ' Recovery: ' + md_escape(row.recovery))
+        if fix_actions is not None:
+            fix_actions()
     with risk:
         if snapshot.findings:
             st.dataframe([{'Rank': f.rank, 'Control': f.control_id, 'Risk': f.score, 'Level': f.level,

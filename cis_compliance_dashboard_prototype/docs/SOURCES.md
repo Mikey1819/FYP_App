@@ -35,3 +35,20 @@ The password parser applies sorted drop-ins, then the main configuration, then s
 Audit normalization uses exact path/permission/syscall/filter tokens following the Ubuntu 22.04 [auditctl manual](https://manpages.ubuntu.com/manpages/jammy/man8/auditctl.8.html). Suppression rules and unsupported filters are refused; substring matches and command exit zero do not establish coverage.
 
 Current tests use synthetic normalized evidence. The fixed target I/O class and pure parsers are implemented, but a complete deployed collector, pinned engine invocation and authenticated end-to-end assessment are not yet implemented or validated.
+
+## SCAP and direct-probe reconciliation rule (proposed 6 November 2026; pending human review)
+
+Selected ComplianceAsCode rule results are extra subchecks on the control. They do not replace the direct effective-state probes, which stay authoritative:
+
+| SCAP result | Direct probes have a failure | Direct probes have no failure |
+| --- | --- | --- |
+| `pass` | subcheck pass; the control stays Non-Compliant (a SCAP pass never cancels a direct failure) | subcheck pass |
+| `fail` | subcheck fail (agrees) | `conflict` → control **Unknown**, never a confirmed finding or risk input |
+| `error` | Error unless the direct failure already makes it Non-Compliant | Error |
+| `notapplicable` | neutral (`inapplicable`); cannot make a control pass on its own | neutral |
+| `unknown`/`notchecked`/`notselected`/`informational`/`fixed` | unresolved (`missing`) | unresolved → Unknown |
+
+- **Reviewed Avahi retention exception:** with an explicitly reviewed retention exception (2.1.2), a failing `package_avahi_removed` rule is recorded as superseded, not as a conflict.
+- **Why conflict is not a failure:** upstream rule variables and checks can differ from the PDF. Examples: SSH keepalive 300/3 versus the PDF's "positive" requirement, and the `zipl` rule on GRUB. A SCAP-only failure therefore needs investigation before it counts as a confirmed failure.
+- **Where the rule set comes from:** the target helper builds the rule set only from `vm/ubuntu/spec.py`, which a test keeps equal to the pinned catalogue mapping, profile and datastream hash.
+- **Live envelopes:** a Live (SSH) envelope must carry a `scap_rules` observation for every mapped control. That observation may be `error`, but it cannot be omitted. Synthetic fixtures may omit it, which gives direct-only results.

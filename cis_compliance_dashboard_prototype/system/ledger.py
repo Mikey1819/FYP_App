@@ -203,6 +203,26 @@ class CoordinationLedger:
             row = db.execute('SELECT state,result FROM operation_claims WHERE operation_id=?', (operation_id,)).fetchone()
         return OperationState(operation_id, row[0], detail=row[1]) if row else OperationState(operation_id, 'refused', code='unknown_operation')
 
+    def reconcile(self, operation_id, state, *, detail=''):
+        """Settle an unresolved or interrupted operation from backend/target evidence; never a time-based takeover.
+
+        The caller must hold target evidence for `state` (for example a target receipt). Appends an audit event.
+        """
+        if state not in ('completed', 'refused'):
+            raise ValueError('Reconciliation settles to completed or refused only')
+        with self._db() as db:
+            db.execute('BEGIN IMMEDIATE')
+            old = db.execute('SELECT state FROM operation_claims WHERE operation_id=?', (operation_id,)).fetchone()
+            if not old or old[0] not in ('unresolved', 'running', 'cancel_requested'):
+                raise ValueError('Only an unsettled operation can be reconciled')
+            stamp = now()
+            db.execute('UPDATE operation_claims SET state=?,updated_at=?,result=? WHERE operation_id=?',
+                       (state, stamp, detail, operation_id))
+            db.execute('INSERT INTO operation_events(operation_id,time,kind,payload) VALUES(?,?,?,?)',
+                       (operation_id, stamp, 'reconciled_' + state, canonical({'from': old[0], 'detail': detail})))
+            db.execute('DELETE FROM target_owners WHERE operation_id=?', (operation_id,))
+        return self.operation_state(operation_id)
+
     def transition(self, operation_id, state, *, detail=''):
         allowed = {'running': {'completed', 'refused', 'unresolved', 'cancel_requested'},
                    'cancel_requested': {'completed', 'unresolved'}, 'unresolved': set()}

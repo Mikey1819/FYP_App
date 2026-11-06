@@ -27,9 +27,9 @@
       "action_ids": [
         "ubuntu.1.2.2.1.v1"
       ],
-      "review_status": "pending_human_review",
+      "review_status": "approved",
       "coverage": {
-        "assessment": "not_implemented",
+        "assessment": "fixture_tested",
         "remediation": "not_implemented",
         "refusal": "not_implemented",
         "verification": "not_implemented",
@@ -65,9 +65,9 @@
       "action_ids": [
         "ubuntu.1.3.1.1.v1"
       ],
-      "review_status": "pending_human_review",
+      "review_status": "approved",
       "coverage": {
-        "assessment": "not_implemented",
+        "assessment": "fixture_tested",
         "remediation": "not_implemented",
         "refusal": "not_implemented",
         "verification": "not_implemented",
@@ -102,12 +102,12 @@
       "action_ids": [
         "ubuntu.1.5.1.v1"
       ],
-      "review_status": "pending_human_review",
+      "review_status": "approved",
       "coverage": {
-        "assessment": "not_implemented",
-        "remediation": "not_implemented",
-        "refusal": "not_implemented",
-        "verification": "not_implemented",
+        "assessment": "fixture_tested",
+        "remediation": "fixture_tested",
+        "refusal": "fixture_tested",
+        "verification": "fixture_tested",
         "recovery": "not_implemented"
       },
       "live_validation": "not_run"
@@ -140,9 +140,9 @@
       "action_ids": [
         "ubuntu.1.5.3.v1"
       ],
-      "review_status": "pending_human_review",
+      "review_status": "approved",
       "coverage": {
-        "assessment": "not_implemented",
+        "assessment": "fixture_tested",
         "remediation": "not_implemented",
         "refusal": "not_implemented",
         "verification": "not_implemented",
@@ -177,9 +177,9 @@
       "action_ids": [
         "ubuntu.1.5.4.v1"
       ],
-      "review_status": "pending_human_review",
+      "review_status": "approved",
       "coverage": {
-        "assessment": "not_implemented",
+        "assessment": "fixture_tested",
         "remediation": "not_implemented",
         "refusal": "not_implemented",
         "verification": "not_implemented",
@@ -215,9 +215,9 @@
       "action_ids": [
         "ubuntu.2.1.2.v1"
       ],
-      "review_status": "pending_human_review",
+      "review_status": "approved",
       "coverage": {
-        "assessment": "not_implemented",
+        "assessment": "fixture_tested",
         "remediation": "not_implemented",
         "refusal": "not_implemented",
         "verification": "not_implemented",
@@ -257,9 +257,9 @@
       "action_ids": [
         "ubuntu.5.3.3.2.2.v1"
       ],
-      "review_status": "pending_human_review",
+      "review_status": "approved",
       "coverage": {
-        "assessment": "not_implemented",
+        "assessment": "fixture_tested",
         "remediation": "not_implemented",
         "refusal": "not_implemented",
         "verification": "not_implemented",
@@ -300,9 +300,9 @@
       "action_ids": [
         "ubuntu.5.4.1.1.v1"
       ],
-      "review_status": "pending_human_review",
+      "review_status": "approved",
       "coverage": {
-        "assessment": "not_implemented",
+        "assessment": "fixture_tested",
         "remediation": "not_implemented",
         "refusal": "not_implemented",
         "verification": "not_implemented",
@@ -342,9 +342,9 @@
       "action_ids": [
         "ubuntu.5.4.1.3.v1"
       ],
-      "review_status": "pending_human_review",
+      "review_status": "approved",
       "coverage": {
-        "assessment": "not_implemented",
+        "assessment": "fixture_tested",
         "remediation": "not_implemented",
         "refusal": "not_implemented",
         "verification": "not_implemented",
@@ -385,9 +385,9 @@
       "action_ids": [
         "ubuntu.5.4.1.5.v1"
       ],
-      "review_status": "pending_human_review",
+      "review_status": "approved",
       "coverage": {
-        "assessment": "not_implemented",
+        "assessment": "fixture_tested",
         "remediation": "not_implemented",
         "refusal": "not_implemented",
         "verification": "not_implemented",
@@ -422,9 +422,9 @@
       "action_ids": [
         "ubuntu.5.2.2.v1"
       ],
-      "review_status": "pending_human_review",
+      "review_status": "approved",
       "coverage": {
-        "assessment": "not_implemented",
+        "assessment": "fixture_tested",
         "remediation": "not_implemented",
         "refusal": "not_implemented",
         "verification": "not_implemented",
@@ -459,9 +459,9 @@
       "action_ids": [
         "ubuntu.5.2.3.v1"
       ],
-      "review_status": "pending_human_review",
+      "review_status": "approved",
       "coverage": {
-        "assessment": "not_implemented",
+        "assessment": "fixture_tested",
         "remediation": "not_implemented",
         "refusal": "not_implemented",
         "verification": "not_implemented",
@@ -497,12 +497,12 @@
       "action_ids": [
         "ubuntu.3.3.1.v1"
       ],
-      "review_status": "pending_human_review",
+      "review_status": "approved",
       "coverage": {
-        "assessment": "not_implemented",
-        "remediation": "not_implemented",
-        "refusal": "not_implemented",
-        "verification": "not_implemented",
+        "assessment": "fixture_tested",
+        "remediation": "fixture_tested",
+        "refusal": "fixture_tested",
+        "verification": "fixture_tested",
         "recovery": "not_implemented"
       },
       "live_validation": "not_run"
@@ -535,12 +535,12 @@
       "action_ids": [
         "ubuntu.3.3.2.v1"
       ],
-      "review_status": "pending_human_review",
+      "review_status": "approved",
       "coverage": {
-        "assessment": "not_implemented",
-        "remediation": "not_implemented",
-        "refusal": "not_implemented",
-        "verification": "not_implemented",
+        "assessment": "fixture_tested",
+        "remediation": "fixture_tested",
+        "refusal": "fixture_tested",
+        "verification": "fixture_tested",
         "recovery": "not_implemented"
       },
       "live_validation": "not_run"
@@ -575,12 +575,12 @@
       "action_ids": [
         "ubuntu.3.3.8.v1"
       ],
-      "review_status": "pending_human_review",
+      "review_status": "approved",
       "coverage": {
-        "assessment": "not_implemented",
-        "remediation": "not_implemented",
-        "refusal": "not_implemented",
-        "verification": "not_implemented",
+        "assessment": "fixture_tested",
+        "remediation": "fixture_tested",
+        "refusal": "fixture_tested",
+        "verification": "fixture_tested",
         "recovery": "not_implemented"
       },
       "live_validation": "not_run"
@@ -613,9 +613,9 @@
       "action_ids": [
         "ubuntu.4.1.3.v1"
       ],
-      "review_status": "pending_human_review",
+      "review_status": "approved",
       "coverage": {
-        "assessment": "not_implemented",
+        "assessment": "fixture_tested",
         "remediation": "not_implemented",
         "refusal": "not_implemented",
         "verification": "not_implemented",
@@ -650,9 +650,9 @@
       "action_ids": [
         "ubuntu.4.1.4.v1"
       ],
-      "review_status": "pending_human_review",
+      "review_status": "approved",
       "coverage": {
-        "assessment": "not_implemented",
+        "assessment": "fixture_tested",
         "remediation": "not_implemented",
         "refusal": "not_implemented",
         "verification": "not_implemented",
@@ -687,9 +687,9 @@
       "action_ids": [
         "ubuntu.4.1.7.v1"
       ],
-      "review_status": "pending_human_review",
+      "review_status": "approved",
       "coverage": {
-        "assessment": "not_implemented",
+        "assessment": "fixture_tested",
         "remediation": "not_implemented",
         "refusal": "not_implemented",
         "verification": "not_implemented",
@@ -725,9 +725,9 @@
       "action_ids": [
         "ubuntu.6.3.1.1.v1"
       ],
-      "review_status": "pending_human_review",
+      "review_status": "approved",
       "coverage": {
-        "assessment": "not_implemented",
+        "assessment": "fixture_tested",
         "remediation": "not_implemented",
         "refusal": "not_implemented",
         "verification": "not_implemented",
@@ -762,9 +762,9 @@
       "action_ids": [
         "ubuntu.6.3.1.2.v1"
       ],
-      "review_status": "pending_human_review",
+      "review_status": "approved",
       "coverage": {
-        "assessment": "not_implemented",
+        "assessment": "fixture_tested",
         "remediation": "not_implemented",
         "refusal": "not_implemented",
         "verification": "not_implemented",
@@ -800,9 +800,9 @@
       "action_ids": [
         "ubuntu.6.3.1.3.v1"
       ],
-      "review_status": "pending_human_review",
+      "review_status": "approved",
       "coverage": {
-        "assessment": "not_implemented",
+        "assessment": "fixture_tested",
         "remediation": "not_implemented",
         "refusal": "not_implemented",
         "verification": "not_implemented",
@@ -840,9 +840,9 @@
       "action_ids": [
         "ubuntu.6.3.3.4.v1"
       ],
-      "review_status": "pending_human_review",
+      "review_status": "approved",
       "coverage": {
-        "assessment": "not_implemented",
+        "assessment": "fixture_tested",
         "remediation": "not_implemented",
         "refusal": "not_implemented",
         "verification": "not_implemented",
@@ -884,9 +884,9 @@
       "action_ids": [
         "ubuntu.6.3.3.8.v1"
       ],
-      "review_status": "pending_human_review",
+      "review_status": "approved",
       "coverage": {
-        "assessment": "not_implemented",
+        "assessment": "fixture_tested",
         "remediation": "not_implemented",
         "refusal": "not_implemented",
         "verification": "not_implemented",
@@ -921,9 +921,9 @@
       "action_ids": [
         "ubuntu.6.3.3.6.v1"
       ],
-      "review_status": "pending_human_review",
+      "review_status": "approved",
       "coverage": {
-        "assessment": "not_implemented",
+        "assessment": "fixture_tested",
         "remediation": "not_implemented",
         "refusal": "not_implemented",
         "verification": "not_implemented",
@@ -958,9 +958,9 @@
       "action_ids": [
         "ubuntu.5.1.20.v1"
       ],
-      "review_status": "pending_human_review",
+      "review_status": "approved",
       "coverage": {
-        "assessment": "not_implemented",
+        "assessment": "fixture_tested",
         "remediation": "not_implemented",
         "refusal": "not_implemented",
         "verification": "not_implemented",
@@ -995,9 +995,9 @@
       "action_ids": [
         "ubuntu.5.1.19.v1"
       ],
-      "review_status": "pending_human_review",
+      "review_status": "approved",
       "coverage": {
-        "assessment": "not_implemented",
+        "assessment": "fixture_tested",
         "remediation": "not_implemented",
         "refusal": "not_implemented",
         "verification": "not_implemented",
@@ -1037,9 +1037,9 @@
       "action_ids": [
         "ubuntu.5.1.16.v1"
       ],
-      "review_status": "pending_human_review",
+      "review_status": "approved",
       "coverage": {
-        "assessment": "not_implemented",
+        "assessment": "fixture_tested",
         "remediation": "not_implemented",
         "refusal": "not_implemented",
         "verification": "not_implemented",
@@ -1084,9 +1084,9 @@
       "action_ids": [
         "ubuntu.5.1.7.v1"
       ],
-      "review_status": "pending_human_review",
+      "review_status": "approved",
       "coverage": {
-        "assessment": "not_implemented",
+        "assessment": "fixture_tested",
         "remediation": "not_implemented",
         "refusal": "not_implemented",
         "verification": "not_implemented",
@@ -1121,9 +1121,9 @@
       "action_ids": [
         "ubuntu.5.1.10.v1"
       ],
-      "review_status": "pending_human_review",
+      "review_status": "approved",
       "coverage": {
-        "assessment": "not_implemented",
+        "assessment": "fixture_tested",
         "remediation": "not_implemented",
         "refusal": "not_implemented",
         "verification": "not_implemented",
@@ -1158,9 +1158,9 @@
       "action_ids": [
         "ubuntu.5.1.21.v1"
       ],
-      "review_status": "pending_human_review",
+      "review_status": "approved",
       "coverage": {
-        "assessment": "not_implemented",
+        "assessment": "fixture_tested",
         "remediation": "not_implemented",
         "refusal": "not_implemented",
         "verification": "not_implemented",

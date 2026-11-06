@@ -190,6 +190,47 @@ def _run_round(hardening, session_id, goal, mode=AssessmentMode.AGENTIC):
     st.rerun()
 
 
+def _ubuntu_fix_actions(backend, connection, snapshot, capabilities):
+    """Ubuntu decisions and execution through the backend's typed commands only."""
+    workflow = st.session_state.get(WORKFLOW_KEY)
+    undecided = [p for p in snapshot.proposals if p.eligible_commands]
+    approved = [p for p in snapshot.proposals if p.decision == 'approved' and p.approved_request_id]
+    executed = {r.proposal_reference for r in snapshot.results}
+    if undecided:
+        operator = st.text_input('Your name (recorded with each decision)', key='agentic_operator')
+        comment = st.text_input('Comment (optional)', key='agentic_comment')
+        for p in undecided:
+            left, right = st.columns(2)
+            if left.button('Approve ' + p.control_id, key='ubuntu_approve_' + p.reference.record_id,
+                           disabled=not operator.strip()):
+                backend.decide(connection, workflow, p.reference, True, operator, comment, uuid4().hex)
+                st.rerun()
+            if right.button('Reject ' + p.control_id, key='ubuntu_reject_' + p.reference.record_id,
+                            disabled=not operator.strip()):
+                backend.decide(connection, workflow, p.reference, False, operator, comment, uuid4().hex)
+                st.rerun()
+    if approved:
+        pending = [p for p in approved if p.reference not in executed]
+        ids = tuple(p.approved_request_id for p in approved)
+        st.caption('Approved set: ' + ', '.join(md_escape(p.control_id + ' (' + p.approved_request_id[:8] + ')')
+                                                for p in approved))
+        error = st.session_state.pop('ubuntu_execute_error', None)
+        if error:
+            st.error(md_escape(error))
+        confirmed = st.checkbox(f'I confirm executing exactly these {len(pending)} approved change(s) on the VM',
+                                key='ubuntu_confirm_execute', disabled=not pending)
+
+        def execute():
+            # Runs once per click, before the rerun; the confirmation is cleared so it never carries over.
+            st.session_state['ubuntu_confirm_execute'] = False
+            try:
+                backend.execute_approved(connection, workflow, snapshot.current_round_reference, ids, True, uuid4().hex)
+            except ValueError as failure:
+                st.session_state['ubuntu_execute_error'] = str(failure)[:300]
+        st.button('Execute approved fixes', key='ubuntu_execute', on_click=execute,
+                  disabled=not (capabilities.can_remediate and confirmed and pending))
+
+
 def _show_start(hardening, store, runtime, target):
     st.markdown('No round in this session yet. A round scans the VM, ranks the findings and proposes fixes. '
                 'Nothing changes on the VM until you approve and execute.')
@@ -548,11 +589,16 @@ def render_agentic(database_path: Path):
             if backend.session.identity.platform == 'ubuntu':
                 snapshot = backend.snapshot(connection, st.session_state.get(WORKFLOW_KEY))
                 _show_progress(dict(zip(STEPS, snapshot.step_states)), None)
-                _goal_input()
+                goal = _goal_input()
                 with st.container(horizontal=True):
-                    st.button('Start agentic round', key='agentic_run', disabled=not capabilities.can_use_model)
-                    st.button('Assess without AI', key='agentic_assess_without_ai', disabled=not capabilities.can_assess)
-                render_snapshot_tabs(snapshot)
+                    if st.button('Start agentic round', key='agentic_run', disabled=not capabilities.can_use_model):
+                        # Bounded Ubuntu agents through the backend; no Ubuntu fix can be proposed yet.
+                        _run_round(None, None, goal)
+                    if st.button('Assess without AI', key='agentic_assess_without_ai', disabled=not capabilities.can_assess):
+                        # Read-only deterministic scan through the backend; the helper gate is checked again there.
+                        _run_round(None, None, None, AssessmentMode.DETERMINISTIC)
+                render_snapshot_tabs(snapshot, fix_actions=lambda: _ubuntu_fix_actions(backend, connection, snapshot,
+                                                                                      capabilities))
                 return
         runtime, store, hardening = _services(database_path, target)
         session_id = st.session_state.get(SESSION)

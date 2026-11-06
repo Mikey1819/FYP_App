@@ -5,6 +5,7 @@ must place this helper and its dependencies under a verified root-owned director
 All command execution requires Linux/Ubuntu/machine-identity preflight first.
 """
 from dataclasses import dataclass
+import hashlib
 import os
 from pathlib import Path
 import platform
@@ -20,10 +21,12 @@ SYSCTL_KEYS = ('kernel.randomize_va_space','fs.suid_dumpable','net.ipv4.ip_forwa
     'net.ipv4.conf.all.send_redirects','net.ipv4.conf.default.send_redirects',
     'net.ipv4.conf.all.accept_source_route','net.ipv4.conf.default.accept_source_route',
     'net.ipv6.conf.all.accept_source_route','net.ipv6.conf.default.accept_source_route')
-UNITS = ('avahi-daemon.service','avahi-daemon.socket','ufw.service','auditd.service')
+UNITS = ('avahi-daemon.service','avahi-daemon.socket','ufw.service','auditd.service',
+         'nftables.service','netfilter-persistent.service','firewalld.service')
 COMMANDS = {
     'packages':('/usr/bin/dpkg-query','-W','-f=${binary:Package}\t${db:Status-Status}\n'),
     'sysctl_config':('/usr/lib/systemd/systemd-sysctl','--cat-config'),
+    'coredump_config':('/usr/bin/systemd-analyze','cat-config','systemd/coredump.conf'),
     'ssh_global':('/usr/sbin/sshd','-T'),
     'ssh_syntax':('/usr/sbin/sshd','-t'),
     'sudoers_syntax':('/usr/sbin/visudo','-c'),
@@ -34,6 +37,8 @@ COMMANDS = {
     'openscap_version':('/usr/bin/oscap','--version'),
     'mounts':('/usr/bin/findmnt','--json','--list','--kernel','--output','TARGET,FSTYPE,OPTIONS'),
     'account_defaults':('/usr/sbin/useradd','-D'),
+    'identity_paths':('/usr/bin/stat','-c','%n','/etc/group','/etc/passwd','/etc/gshadow','/etc/shadow',
+                      '/etc/security/opasswd','/etc/nsswitch.conf','/etc/pam.conf','/etc/pam.d'),
 }
 COMMANDS.update({'sysctl.'+key:('/usr/sbin/sysctl','-n',key) for key in SYSCTL_KEYS})
 COMMANDS.update({'unit.'+unit:('/usr/bin/systemctl','show',unit,'--property=ActiveState,UnitFileState','--no-pager') for unit in UNITS})
@@ -72,8 +77,10 @@ class FixedProbeIO:
     def command(self, key):
         if key not in COMMANDS: raise ValueError('Unregistered read-only command')
         self._ready()
-        timeout = min(self.deadline,time.monotonic()+20)
-        argv = COMMANDS[key]
+        return self._run(COMMANDS[key], 20)
+
+    def _run(self, argv, seconds):
+        timeout = min(self.deadline,time.monotonic()+seconds)
         # An explicit environment prevents remote-user PATH/pager/locale command injection.
         proc = subprocess.Popen(argv,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,
             shell=False,env={'PATH':'/usr/sbin:/usr/bin:/sbin:/bin','LANG':'C','LC_ALL':'C','SYSTEMD_PAGER':'',
@@ -120,7 +127,42 @@ class FixedProbeIO:
         if name not in IDENTITY_FILES: self._ready()
         return self._read(Path(name))
 
+    def scap_results(self, request_id, engine_version):
+        """Selected-rule evaluation of the pinned datastream; sanitized rule results only.
+
+        Writes only the request's own result file under the approved scan directory, then removes it.
+        Not yet run on the target VM: engine output format and timing are unvalidated there.
+        """
+        from .scap_results import (DATASTREAM, RESULT_LIMIT, RESULT_ROOT, SELECTED, engine_version as parse_version,
+                                   result_path, sanitize_results, scan_argv)
+        from .spec import SCAP_DATASTREAM_SHA256, SCAP_PROFILE
+        self._ready()
+        argv, result = scan_argv(request_id), Path(result_path(request_id))
+        version = self.command('openscap_version')
+        if version.returncode != 0 or parse_version(version.stdout) != engine_version:
+            raise ValueError('OpenSCAP engine differs from the accepted version')
+        if hashlib.sha256(self._bytes(Path(DATASTREAM), 64*1024*1024)).hexdigest() != SCAP_DATASTREAM_SHA256:
+            raise ValueError('Installed SCAP datastream differs from the pinned content')
+        root = Path(RESULT_ROOT)
+        info = root.lstat()
+        if root.is_symlink() or not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o077:
+            raise ValueError('Untrusted SCAP result directory')
+        os.mkdir(result.parent, 0o700)  # Fails if the request directory already exists: no reuse.
+        try:
+            proc = self._run(argv, 300)
+            if proc.returncode not in (0, 2):  # 0 all pass, 2 at least one failed rule; others are errors.
+                raise ValueError('OpenSCAP evaluation failed')
+            return sanitize_results(self._bytes(result, RESULT_LIMIT), rule_ids=SELECTED, profile_id=SCAP_PROFILE,
+                                    expected_target=self._identity[1])
+        finally:
+            for leftover in result.parent.iterdir():
+                leftover.unlink()
+            result.parent.rmdir()
+
     def _read(self, path):
+        return self._bytes(path, 4*1024*1024).decode('utf-8',errors='strict')
+
+    def _bytes(self, path, limit):
         if time.monotonic() >= self.deadline: raise TimeoutError('Collection deadline exceeded')
         # Only os-release has an explicitly supported system symlink location.
         if path.is_symlink():
@@ -133,11 +175,11 @@ class FixedProbeIO:
             before = os.fstat(fd)
             if not stat.S_ISREG(before.st_mode) or before.st_uid != 0 or before.st_mode & 0o022:
                 raise ValueError('Untrusted configuration ownership/type')
-            with os.fdopen(fd,'rb',closefd=False) as stream: data = stream.read(4*1024*1024+1)
+            with os.fdopen(fd,'rb',closefd=False) as stream: data = stream.read(limit+1)
             after = os.fstat(fd)
-            if len(data)>4*1024*1024 or (before.st_mtime_ns,before.st_size)!=(after.st_mtime_ns,after.st_size):
+            if len(data)>limit or (before.st_mtime_ns,before.st_size)!=(after.st_mtime_ns,after.st_size):
                 raise ValueError('Configuration changed or exceeds limit')
-            return data.decode('utf-8',errors='strict')
+            return data
         finally: os.close(fd)
 
     def files(self, group):
@@ -152,6 +194,14 @@ class FixedProbeIO:
         paths = sorted(directory.glob(pattern),key=lambda p:p.name)
         if len(paths) > 256: raise ValueError('Too many configuration fragments')
         return tuple((p.name,self._read(p)) for p in paths)
+
+    def privileged_paths(self):
+        self._ready()
+        from .inventory import eligible_mounts, discover_privileged
+        output=self.command('mounts')
+        if output.returncode != 0:raise ValueError('Mount discovery failed')
+        mounts=eligible_mounts(output.stdout,self.read_file('/proc/filesystems'))
+        return discover_privileged(mounts,deadline_seconds=min(20,self.deadline-time.monotonic()))
 
 
 def preflight(io, request):
@@ -170,4 +220,5 @@ def preflight(io, request):
     if (io.read_file('/etc/machine-id').strip() != request['machine_id']
             or io.read_file('/proc/sys/kernel/hostname').strip().casefold() != request['hostname'].casefold()):
         raise ValueError('Collector target identity mismatch')
+    io._identity = (request['machine_id'], request['hostname'].casefold())
     io._verified = True

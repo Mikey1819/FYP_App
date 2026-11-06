@@ -16,6 +16,12 @@
   "selection_policy": "Only the explicit mapped rules for the 30 selected controls; never whole-profile remediation.",
   "openscap_version": null,
   "openscap_validation": "Awaiting authenticated VM inspection and compatible engine validation.",
-  "review_status": "pending_human_review",
-  "activation_ready": false
+  "review_status": "approved",
+  "activation_ready": false,
+  "review_record": {
+    "reviewer": "Teoh Kai Hong (blanket chat approval 2026-11-06; not an itemized review)",
+    "reviewed_at": "2026-11-06T06:55:55+00:00",
+    "scope": "Source interpretations, site policies and the SCAP/direct reconciliation rule as documented in docs/SOURCES.md.",
+    "basis": "User chat statement on 2026-11-06: \"i approve the stuff that need my decision\". No item-by-item review record exists."
+  }
 }

@@ -482,3 +482,51 @@ PowerShell script tests were **not re-run**: the `-ExecutionPolicy Bypass` comma
 ## 6 November 2026 — unified integration checkpoint (in progress)
 
 The existing app is extended on integrate/unified-vm-hardening; no push, deployment or VM writes. See cis_compliance_dashboard_prototype/docs/INTEGRATION_PROGRESS.md for task-by-task status. Latest full Python fixture run: 227 passed in 51.467s, including the original Windows suite. Protected engine/script hashes are unchanged. Real SCAP source pins and all 30 Ubuntu predicate definitions are now present with synthetic tests; complete Ubuntu collection, storage/risk/agents, all 30 remediation families, recovery and live validation remain outstanding. Ubuntu assessment and all live mutation gates remain closed.
+
+## 6 November 2026 — Development transfer
+
+Prepared `cis_compliance_dashboard_prototype/docs/handover/PROJECT_HANDOVER.md` and `NEW_AGENT_PROMPT.md` at the user's request. Preserve the dirty `integrate/unified-vm-hardening` tree after checkpoint `74065a8`. The next task is to implement missing `backends/ubuntu/storage.py` against three existing red tests. Fresh full suite: 242 tests in 23.599s, 239 passing and three missing-storage-module errors; baseline/source/dependency checks pass with catalogue activation false. No VM changes or completed-milestone claim. Details and remaining gates are in the handover and `docs/INTEGRATION_PROGRESS.md`.
+
+## 6 November 2026 — Ubuntu storage checkpoint (integration, in progress)
+
+Added `cis_compliance_dashboard_prototype/backends/ubuntu/storage.py`: isolated three-file Ubuntu store with 11 append-only tables. It refuses foreign or altered databases, keeps exact evidence bytes and digests, rejects conflicting requests, revalidates on read and reports orphans and broken links. Four recovery/link tests were added. Full Python suite: **246 passed in 23.741s**. Baseline, source and `pip check` pass. This uses synthetic fixture evidence only, and no VM was contacted. Task 7 is partial and M2 is not complete; details are in `docs/INTEGRATION_PROGRESS.md`.
+
+## 6 November 2026 — Ubuntu provenance and read-only history (integration, in progress)
+
+Added target-side envelope assembly with a helper-bundle digest (`vm/ubuntu/provenance.py`). Stored Ubuntu assessments are now served read-only through `UbuntuBackend` history, compare and snapshot. The shared Controls caption now shows the evidence mode on both platforms. Ubuntu assessment and execution remain disabled, and selected-rule SCAP execution is not yet implemented. Full Python suite: **257 passed in 26.523s**; baseline, source and `pip check` pass. This uses synthetic fixture evidence only, and no VM was contacted. Details are in `docs/INTEGRATION_PROGRESS.md`.
+
+## 6 November 2026 — Ubuntu selected-rule SCAP path (integration, in progress)
+
+Selected ComplianceAsCode rule results now enter the Ubuntu predicates as conflict-checked subchecks next to the direct probes. A SCAP pass never cancels a direct failure, and a SCAP-only failure shows as Unknown. Added the target-side pinned scanner argv, a standard-library result sanitizer and engine/datastream checks, and Live envelopes must now carry SCAP results. The reconciliation rule is recorded in `docs/SOURCES.md` for human review. Full suite: **273 passed in 28.815s**; baseline, source and `pip check` pass. The SCAP path has not run on the VM, live assessment remains disabled, and this uses fixture evidence only.
+
+## 6 November 2026 — Ubuntu risk derivation (integration, in progress)
+
+Added deterministic Ubuntu risk ranking (`backends/ubuntu/risk.py`) that reuses the Windows rubric code unchanged: same category tables, likelihood mapping, surface baselines, factor checks and bands. Added a draft per-control attribute manifest with named Linux extensions (`catalogues/ubuntu2204-risk.json`) and a generated reviewer table (`docs/UBUNTU_RISK_DERIVATION.md`). The manifest is **pending human review**, so the dashboard withholds Ubuntu scores and says why. Full suite: **286 passed in 28.362s**; baseline, source and `pip check` pass. This uses synthetic fixtures only, and no VM was contacted.
+
+## 6 November 2026 — Ubuntu helper invocation (integration, in progress)
+
+Added the target helper CLI and fixed launcher, a single fixed `sudo -n` SSH helper command, and a gated read-only Ubuntu `start_round` that claims the operation in the ledger, invokes the helper once, and validates and stores the result. Connected the Ubuntu **Assess without AI** button. The gate is closed (catalogue activation false), so the button stays disabled. A provisioning preview was added to `docs/VM_SETUP.md`; it has not been performed. Full suite: **296 passed in 25.248s**; baseline, source and `pip check` pass. This uses fakes only, and no VM was contacted.
+
+## 6 November 2026 — Ubuntu agents (integration, in progress)
+
+Added bounded Ubuntu Orchestrator, Scanner and Analysis roles (`backends/ubuntu/agents.py`) on the unchanged Coordinator and Ollama client, with code-validated tools, limits and reason codes, and no raw evidence shown to the model. Rounds defer every finding because no Ubuntu fix exists yet. The Ubuntu **Start agentic round** button is connected, and both Ubuntu buttons remain disabled while the assessment gate is closed. Also fixed a test-isolation bug where one open-gate test reached the local Ollama model on fixture data. Full suite: **310 passed in 27.507s**; baseline, source and `pip check` pass. This uses scripted fakes only, and no VM was contacted.
+
+## 6 November 2026 — Ubuntu target runner foundation (integration, in progress)
+
+Added exact-bytes `ubuntu-remediation` requests and receipts, host plan/approve/verify, and a target runner. The runner uses a persistent fence, a fresh read-set, a self-consistency check, an atomic claim, a pre-write re-read and an atomic receipt, plus reconciliation that never replays. Host execution uses ledger target ownership, treats a lost receipt as unresolved, and settles it through explicit ledger reconciliation. No real Ubuntu remediation family is registered, so nothing can run on the VM. Full suite: **325 passed in 28.445s**; baseline, source and `pip check` pass. Tested with a test-only file family on the Windows host, including real process-death and two-process race tests; no VM was contacted.
+
+## 6 November 2026 — Ubuntu proposals, approvals and gated execution (integration, in progress)
+
+Added Ubuntu proposal, decision, comment and receipt persistence, a read-only runner preview, a runner CLI behind a fixed `sudo -n` command, Orchestrator fix decisions limited to registered families, and backend `decide`/`execute_approved`. The Fixes tab now has approve/reject and confirmed execution. The execution gate is closed and no real family is registered, so nothing can change the VM. Fixed an encoding slip in a patch script that wrote invalid UTF-8; all sources were re-verified. Full suite: **337 passed in 33.771s**; baseline, source and `pip check` pass. This uses a test-only family and fakes only.
+
+## 6 November 2026 — Ubuntu sysctl remediation family (integration, in progress)
+
+Implemented the first real Ubuntu family: sysctl for 1.5.1, 3.3.1, 3.3.2 and 3.3.8, writing one managed drop-in plus runtime keys. It refuses when a later or UFW sysctl source would override, and the runner keeps the before-state for recovery. Host and target registries agree; coverage records are updated precisely (verification, recovery and live validation still pending). Full suite: **345 passed in 32.964s**; baseline, source and `pip check` pass. Fixture-only: no VM contacted, and the execution gate is closed.
+
+## 6 November 2026 — Ubuntu post-execution verification (integration, in progress)
+
+After an approved Ubuntu change is applied, a fresh read-only verification scan is recorded, and the result shows the control's verified status. A failed scan stays pending and is never retried. Full suite: **346 passed in 29.930s**. Fixture-only.
+
+## 6 November 2026 — Approvals recorded (integration)
+
+The user's chat approval is recorded as a blanket approval (not itemized) in the Ubuntu risk manifest and source lock. Risk scores are shown; source activation stays false until the VM's OpenSCAP version is recorded. Local commits are authorized. 346 tests pass.

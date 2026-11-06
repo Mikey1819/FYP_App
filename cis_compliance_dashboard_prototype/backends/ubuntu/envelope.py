@@ -7,6 +7,7 @@ import re
 from .catalogue import EXPECTED_IDS
 from .evidence import validate_observations
 from .predicates import evaluate, Assessment
+from vm.ubuntu.spec import SCAP_RULES
 
 FIELDS = frozenset(('namespace','schema_version','collector','catalogue','target_id','registration_epoch',
     'hostname','machine_id','request_id','benchmark_sha256','source_lock_sha256','collector_sha256','started_at',
@@ -93,6 +94,10 @@ def parse_bundle(raw, expected, *, now=None):
             if not started <= _time(probe['started_at']) <= _time(probe['completed_at']) <= completed:
                 raise ValueError('Probe time outside collection interval')
             validate_observations(cid,doc['observations'][cid])
+            # SCAP is the primary automated source for live scans; omission must be explicit, not silent.
+            if (expected.evidence_mode == 'Live (SSH)' and cid in SCAP_RULES
+                    and 'scap_rules' not in doc['observations'][cid]):
+                raise ValueError('Live evidence must account for the selected SCAP rules')
             if probe['exit_state'] != 'ok' and all(o['state']=='ok' for o in doc['observations'][cid].values()):
                 raise ValueError('Failed probe cannot supply only successful observations')
         if type(doc['artifacts']) is not list or len(doc['artifacts']) > 64:

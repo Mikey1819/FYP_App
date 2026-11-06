@@ -6,6 +6,7 @@ collector and source-review gate passes, these predicates are fixture-only.
 """
 from dataclasses import dataclass
 from system.contracts import ComplianceStatus as Status
+from vm.ubuntu.spec import SYSCTL, PACKAGES, SSH, IDENTITY_PATHS, SCAP_RULES, SCAP_RULE_PREFIX
 
 
 @dataclass(frozen=True)
@@ -55,22 +56,6 @@ class Facts:
         return value
 
 
-SYSCTL = {
-    '1.5.1': {'kernel.randomize_va_space': 2},
-    '3.3.1': {'net.ipv4.ip_forward': 0, 'net.ipv6.conf.all.forwarding': 0},
-    '3.3.2': {'net.ipv4.conf.all.send_redirects': 0, 'net.ipv4.conf.default.send_redirects': 0},
-    '3.3.8': {f'net.{family}.conf.{scope}.accept_source_route': 0
-              for family in ('ipv4', 'ipv6') for scope in ('all', 'default')},
-}
-PACKAGES = {'1.3.1.1': ('apparmor', 'apparmor-utils'), '1.5.4': ('prelink',),
-            '6.3.1.1': ('auditd', 'audispd-plugins')}
-SSH = {'5.1.20': ('permitrootlogin',), '5.1.19': ('permitemptypasswords',),
-       '5.1.16': ('maxauthtries',), '5.1.7': ('clientaliveinterval','clientalivecountmax'),
-       '5.1.10': ('hostbasedauthentication',), '5.1.21': ('permituserenvironment',)}
-IDENTITY_PATHS = frozenset(('/etc/group','/etc/passwd','/etc/gshadow','/etc/shadow',
-    '/etc/security/opasswd','/etc/nsswitch.conf','/etc/pam.conf','/etc/pam.d'))
-
-
 def _sysctl(facts, expected):
     ipv6 = facts.read('ipv6_enabled') if any('ipv6' in k for k in expected) else True
     for name, value in expected.items():
@@ -110,7 +95,7 @@ def _rules_cover(rules, *, paths=(), syscalls=(), arch=None, privileged=None, ui
         return any(r['action'] == 'always,exit' and r['path'] == privileged and 'x' in r['permissions']
                    and r['auid_min'] == uid_min and r['exclude_unset'] for r in rules)
     for path in paths:
-        if not any(r['path'] == path and {'w','a'} <= set(r['permissions']) and r['key']
+        if not any(r['path'] == path and {'w','a'} <= set(r['permissions']) and r['key'] and r['unrestricted']
                    and r['action'] in ('watch', 'always,exit') for r in rules):
             return False
     covered = {s for r in rules if r['action'] == 'always,exit' and r['arch'] == arch and r['key']
@@ -259,4 +244,37 @@ def evaluate(control_id, observations, *, reviewed_avahi_retention=False):
                     f.checks.append(Check('ssh.'+context['context_id']+'.'+option,'pass' if good else 'fail'))
     else:
         raise ValueError('Unregistered Ubuntu control')
+    _scap(f, control_id, reviewed_avahi_retention)
     return combine(control_id, f.checks)
+
+
+def _scap(f, control_id, reviewed_avahi_retention):
+    """Selected SCAP rule results are corroborating subchecks; direct effective-state probes stay authoritative.
+
+    A SCAP pass never cancels a direct failure. A SCAP failure without a direct failure is a conflict
+    (Unknown), not a confirmed finding. Unresolved results never pass; not-applicable is neutral.
+    """
+    observation = f.observations.get('scap_rules')
+    if observation is None:
+        return  # Direct-only fixture evidence; live envelopes must carry SCAP results (envelope check).
+    if observation['state'] != 'ok':
+        f.checks.append(Check('scap', observation['state'], 'Selected SCAP evaluation is unresolved'))
+        return
+    direct_failed = any(c.state == 'fail' for c in f.checks)
+    for rule in SCAP_RULES[control_id]:
+        name, result = 'scap.' + rule[len(SCAP_RULE_PREFIX):], observation['value'][rule]
+        if result == 'pass':
+            f.checks.append(Check(name, 'pass', 'Does not cancel the direct failure' if direct_failed else ''))
+        elif result == 'fail':
+            if direct_failed:
+                f.checks.append(Check(name, 'fail', 'Agrees with a direct failure'))
+            elif reviewed_avahi_retention and control_id == '2.1.2' and rule.endswith('_package_avahi_removed'):
+                f.checks.append(Check(name, 'inapplicable', 'Reviewed retention exception supersedes the removal rule'))
+            else:
+                f.checks.append(Check(name, 'conflict', 'SCAP rule failed without a corroborating direct failure'))
+        elif result == 'error':
+            f.checks.append(Check(name, 'error', 'SCAP rule evaluation error'))
+        elif result == 'notapplicable':
+            f.checks.append(Check(name, 'inapplicable', 'SCAP reports not applicable; direct checks decide'))
+        else:
+            f.checks.append(Check(name, 'missing', 'SCAP result ' + result + ' does not establish current state'))

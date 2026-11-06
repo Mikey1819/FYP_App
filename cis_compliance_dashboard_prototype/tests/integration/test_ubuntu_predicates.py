@@ -63,3 +63,11 @@ class UbuntuPredicateTests(unittest.TestCase):
         facts['package.apparmor-utils'] = {'state':'error','value':None}
         facts['package.apparmor'] = observation('absent')
         self.assertEqual(evaluate('1.3.1.1',facts).status,Status.NON_COMPLIANT)
+
+    def test_filtered_identity_watch_cannot_satisfy_unrestricted_required_watch(self):
+        from backends.ubuntu.predicates import evaluate
+        facts = cases()['6.3.3.8']
+        for source in ('persistent_audit_rules','loaded_audit_rules'):
+            for rule in facts[source]['value']:
+                rule.update(action='always,exit',auid_min=1000,exclude_unset=True,unrestricted=False)
+        self.assertEqual(evaluate('6.3.3.8',facts).status,Status.NON_COMPLIANT)

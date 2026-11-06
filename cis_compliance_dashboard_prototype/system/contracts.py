@@ -211,6 +211,8 @@ class ProposalRow:
     expiry: str | None
     reason: str
     eligible_commands: tuple[str, ...]
+    # Exact approved request ID shown for execution confirmation (Ubuntu); None when undecided or unused.
+    approved_request_id: str | None = None
 
 
 @dataclass(frozen=True)

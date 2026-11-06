@@ -41,3 +41,5 @@ class UbuntuProbeTests(unittest.TestCase):
         self.assertEqual(password_minlen([('10.conf','minlen=18')],'minlen=16','password requisite pam_pwquality.so minlen=12'),12)
         self.assertEqual(password_minlen([('10.conf','minlen=18')],'minlen=16','password requisite pam_pwquality.so'),16)
         with self.assertRaises(ValueError):password_minlen([], '', 'password requisite pam_unix.so')
+        with self.assertRaises(ValueError):password_minlen([], 'minlen=14',
+            'password sufficient pam_permit.so\npassword requisite pam_pwquality.so')

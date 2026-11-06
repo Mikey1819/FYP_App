@@ -95,8 +95,12 @@ def password_minlen(dropins, main, pam):
     modules = []
     for line in _bounded(pam).splitlines():
         tokens = shlex.split(line,comments=True)
+        if tokens and tokens[0] in ('@include','include','substack'):
+            raise ValueError('Unresolved PAM include')
         if not tokens or tokens[0] != 'password': continue
-        if 'pam_pwquality.so' not in tokens: continue
+        if 'pam_pwquality.so' not in tokens:
+            if not modules:raise ValueError('PAM flow before password quality requires review')
+            continue
         position = tokens.index('pam_pwquality.so')
         if position != 2 or tokens[1] not in ('requisite','required'):
             raise ValueError('Unsupported PAM control flow')

@@ -12,10 +12,15 @@ READ_ONLY_COMMANDS = {
     'os_release': 'cat /etc/os-release',
     'hostname': 'hostname',
     'machine_id': 'cat /etc/machine-id',
-    'helper': 'stat -c "%u %a %F" /usr/local/libexec/fyp-hardening/collector.py',
+    'helper': 'stat -c "%u %a %F" /usr/local/libexec/fyp-hardening/collect',
     'python': 'python3 --version',
     'openscap': 'oscap --version',
 }
+# The only privileged command. Approved setup installs the launcher root-owned and allows exactly
+# this command, with no arguments, for the management account.
+HELPER_COMMAND = 'sudo -n /usr/local/libexec/fyp-hardening/collect'
+# The only privileged write path: the fixed root-owned runner, no arguments; operations arrive on stdin.
+RUNNER_COMMAND = 'sudo -n /usr/local/libexec/fyp-hardening/runner'
 
 
 def fingerprint(key):
@@ -78,6 +83,49 @@ class SshChannel:
             if channel.recv_exit_status() != 0:
                 raise ValueError('Read-only probe unavailable: ' + operation)
             return output.decode('utf-8', errors='strict')
+        finally:
+            channel.close()
+
+    def invoke_helper(self, stdin_bytes, *, deadline_seconds=600, max_bytes=10*1024*1024 + 4096):
+        """Run the one fixed root-owned collector command; request on stdin, envelope bytes back.
+
+        `sudo -n` never prompts: a password is never sent over stdin, where cached sudo credentials
+        could deliver it to the helper instead. Remote stderr is bounded and never surfaced.
+        """
+        if type(stdin_bytes) is not bytes or len(stdin_bytes) > 64*1024:
+            raise ValueError('Invalid collector request')
+        return self._fixed(HELPER_COMMAND, stdin_bytes, deadline_seconds, max_bytes)
+
+    def invoke_runner(self, stdin_bytes, *, deadline_seconds=1900, max_bytes=65536):
+        """The one fixed remediation runner command; header line and exact payload on stdin."""
+        if type(stdin_bytes) is not bytes or len(stdin_bytes) > 260*1024:
+            raise ValueError('Invalid runner input')
+        return self._fixed(RUNNER_COMMAND, stdin_bytes, deadline_seconds, max_bytes)
+
+    def _fixed(self, command, stdin_bytes, deadline_seconds, max_bytes):
+        deadline = time.monotonic() + deadline_seconds
+        channel = self._transport.open_session(timeout=remaining(deadline))
+        output, error_bytes = bytearray(), 0
+        try:
+            channel.settimeout(remaining(deadline))
+            channel.exec_command(command)
+            channel.sendall(stdin_bytes)
+            channel.shutdown_write()
+            while True:
+                remaining(deadline)
+                if channel.recv_ready():
+                    output.extend(channel.recv(65536))
+                if channel.recv_stderr_ready():
+                    error_bytes += len(channel.recv_stderr(4096))
+                if len(output) > max_bytes or error_bytes > 65536:
+                    raise ValueError('Fixed command output exceeds limit')
+                if channel.exit_status_ready() and not channel.recv_ready() and not channel.recv_stderr_ready():
+                    break
+                time.sleep(.01)
+            status = channel.recv_exit_status()
+            if status != 0:
+                raise ValueError(f'Ubuntu fixed helper command refused or is not installed (exit status {status})')
+            return bytes(output)
         finally:
             channel.close()
 
