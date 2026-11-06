@@ -43,10 +43,16 @@ $vectors = Get-Content "$PSScriptRoot\pairing_vectors.json" -Raw | ConvertFrom-J
 $f = $vectors.find; $g = $vectors.found
 Assert-True ((Get-PairingMac $vectors.code @('find', 1, $f.nonce_l, $f.laptop_name)) -ceq $f.mac) 'find signature matches Python'
 Assert-True ((Get-PairingMac $vectors.code @('found', 1, $g.nonce_l, $g.nonce_s, $g.hostname, $g.machine_uuid, $g.port,
-    $g.pairing_id)) -ceq $g.mac) 'found signature matches Python'
-$found = New-PairFound $vectors.code $g.nonce_l $g.hostname $g.machine_uuid.ToUpper() $g.port $g.pairing_id $g.nonce_s
+    $g.pairing_id, $g.os, $g.os_name, $g.os_version)) -ceq $g.mac) 'found signature matches Python'
+$found = New-PairFound $vectors.code $g.nonce_l $g.hostname $g.machine_uuid.ToUpper() $g.port $g.pairing_id $g.nonce_s `
+    $g.os $g.os_name $g.os_version
 $foundBack = [Text.Encoding]::UTF8.GetString($found) | ConvertFrom-Json
 Assert-True ($foundBack.mac -ceq $g.mac -and $foundBack.machine_uuid -ceq $g.machine_uuid) 'built answer carries the same signature'
+Assert-True ($foundBack.os -ceq 'windows' -and $foundBack.os_version -ceq '10.0.20348') 'the answer says which system this is'
+# The system name is cleaned to what the dashboard accepts: printable ASCII, at most 100 characters.
+Assert-True ((ConvertTo-OsName ("Microsoft Windows Server 2022 Standard" + [char]0xAE + " ")) -ceq 'Microsoft Windows Server 2022 Standard') 'non-ASCII is dropped'
+Assert-True ((ConvertTo-OsName ('W' * 150)).Length -eq 100) 'a long name is cut to 100 characters'
+Assert-True ((ConvertTo-OsName '') -ceq 'Windows') 'an empty name still says Windows'
 $question = Read-PairFind ([Text.Encoding]::UTF8.GetBytes($f.raw)) $vectors.code
 Assert-True ($question.laptop_name -ceq 'DESKTOP-KHOO') 'accepts the Python-built question'
 function Get-PairError([byte[]]$Raw, [string]$Code) { try { $null = Read-PairFind $Raw $Code; 'accepted' } catch { $_.Exception.Message } }
@@ -120,7 +126,8 @@ $own = @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Wh
 $script:Saved = @()
 function Save-Pairings([object[]]$Pairings) { $script:Saved = @($Pairings | Where-Object { $null -ne $_ }) }
 function Get-Pairings { $script:Saved }
-function Get-ServerIdentity { [pscustomobject]@{ hostname = 'WIN-TEST'; machine_uuid = 'e5d10741-f200-4292-a099-e6be76032f4e' } }
+function Get-ServerIdentity { [pscustomobject]@{ hostname = 'WIN-TEST'; machine_uuid = 'e5d10741-f200-4292-a099-e6be76032f4e'
+    os = 'windows'; os_name = 'Microsoft Windows Server 2022 Standard'; os_version = '10.0.20348' } }
 
 # What the dashboard reads over WinRM: pairings is always a JSON list, also with none or one laptop.
 foreach ($n in 0, 1, 2) {
@@ -146,7 +153,8 @@ if ($own) {
         $from = New-Object Net.IPEndPoint([Net.IPAddress]::Any, 0)
         $answer = [Text.Encoding]::UTF8.GetString($laptop.Receive([ref]$from)) | ConvertFrom-Json
         $expected = Get-PairingMac $listener.session.code @('found', 1, $nonce, $answer.nonce_s, 'WIN-TEST',
-            'e5d10741-f200-4292-a099-e6be76032f4e', 5985, $answer.pairing_id)
+            'e5d10741-f200-4292-a099-e6be76032f4e', 5985, $answer.pairing_id, 'windows',
+            'Microsoft Windows Server 2022 Standard', '10.0.20348')
         Assert-True ($answer.mac -ceq $expected -and $answer.nonce_l -ceq $nonce) 'the laptop receives a signed answer to its question'
         Assert-True ($script:Saved.Count -eq 1 -and $script:Saved[0].laptop_address -ceq $own -and
                      $script:Saved[0].pairing_id -ceq $answer.pairing_id) 'the laptop is recorded at the address it came from'

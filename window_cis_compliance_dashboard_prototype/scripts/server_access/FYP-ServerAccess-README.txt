@@ -18,6 +18,8 @@ runs the dashboard, so that laptop can reach the server over WinRM (TCP 5985). I
 The pairing code
 - Works once, for 10 minutes, and only while this window shows it.
 - Is never sent over the network. The laptop and the server only prove to each other that they know it.
+- The server's answer also tells the laptop which system it runs (for example Windows Server 2022), so nobody
+  has to type it. The dashboard shows it before you log in.
 - Pairing stops after 5 wrong codes from one device, or 20 in total. Click "Start pairing" for a new code.
 
 What pairing changes
@@ -44,6 +46,6 @@ Command line (same actions, no window):
     powershell -ExecutionPolicy Bypass -File FYP-ServerAccess.ps1 -Action Pair       (shows the code, waits)
     powershell -ExecutionPolicy Bypass -File FYP-ServerAccess.ps1 -Action Status
     powershell -ExecutionPolicy Bypass -File FYP-ServerAccess.ps1 -Action Revert
-If the network blocks pairing (some guest or campus Wi-Fi does), allow one laptop by its address instead:
-    powershell -ExecutionPolicy Bypass -File FYP-ServerAccess.ps1 -Action Allow -ScannerAddress 192.168.1.23
-and add the server in the dashboard by address (Servers > Add a server > by address).
+Pairing is the only way to connect: nobody types an address. If the laptop cannot find the server, the network
+may stop devices from talking to each other (some guest or campus Wi-Fi does). Put both on another network, such
+as an office or home router, and start pairing again.

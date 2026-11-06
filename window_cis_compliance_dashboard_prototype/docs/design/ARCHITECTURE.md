@@ -41,7 +41,7 @@ Before any round, the administrator connects to one saved server on the **Server
 3. it is a stand-alone Server 2022;
 4. the server's own pairing record, read over WinRM, holds this pairing for this laptop.
 
-The lab VM through its port forward is added by address instead. Every later connection, and every agent tool call, checks that the same hostname and UUID answer (`wrong_target` otherwise), so the agents can only act on the server the administrator saved. The models never see addresses, passwords or the pairing; nothing in the agent design below changed. Design and security limits: [LAN_PAIRING_DESIGN.md](LAN_PAIRING_DESIGN.md).
+Pairing is the only way to add a server: nobody types an address (the lab VM needs a host-only or bridged adapter). The pairing answer also says which system the server runs, and the Servers page shows it as a note before the login (`system_detect.py`: Windows Server 2022 is supported; Ubuntu is recognised but not linked yet). Every later connection, and every agent tool call, checks that the same hostname and UUID answer (`wrong_target` otherwise), so the agents can only act on the server the administrator saved. The models never see addresses, passwords or the pairing; nothing in the agent design below changed. Design and security limits: [LAN_PAIRING_DESIGN.md](LAN_PAIRING_DESIGN.md).
 
 ## Who decides what
 

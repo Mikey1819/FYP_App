@@ -15,7 +15,7 @@ from .evidence_import import load_evidence
 
 COLLECTOR = Path(__file__).resolve().parents[2] / 'scripts' / 'vm' / 'Collect-Server2022Evidence.ps1'
 
-# WinRM over HTTP. The lab VM's VirtualBox port forward (127.0.0.1:55985) is added like any other address.
+# WinRM over HTTP. Servers are found by pairing (pairing_client.py), which also gives their address and port.
 DEFAULT_PORT = 5985
 IDENTITY_SCRIPT = r'''
 $os = Get-CimInstance Win32_OperatingSystem -OperationTimeoutSec 15

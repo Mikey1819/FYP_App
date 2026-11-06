@@ -1,7 +1,8 @@
 """Pairing messages: how this laptop and the server helper recognise each other by a one-time code.
 
 The server helper (scripts/server_access/FYP-ServerAccess.ps1) shows a 9-digit code. The administrator types it here.
-The laptop then asks the local network "is there a server with this code?" (`find`), and the server answers (`found`).
+The laptop then asks the local network "is there a server with this code?" (`find`), and the server answers (`found`)
+with its name, machine UUID and operating system (system_detect.py turns the last into a note on the page).
 Each side proves it knows the code with an HMAC-SHA256 signature keyed by the code, so the code itself never travels
 on the network. The PowerShell helper builds and checks the same messages; both sides are tested against the same
 examples in scripts/server_access/pairing_vectors.json. Design: docs/design/LAN_PAIRING_DESIGN.md.
@@ -24,6 +25,13 @@ _HEX32 = re.compile(r'[0-9a-f]{32}')
 _HEX64 = re.compile(r'[0-9a-f]{64}')
 # Windows computer names: letters, digits and hyphens. Underscore and dot are allowed for safety; nothing else.
 _NAME = re.compile(r'[A-Za-z0-9._-]{1,63}')
+# The server's operating system, as the helper reports it (read by system_detect.py):
+#   os          a short id: "windows", or the ID line of /etc/os-release on Linux ("ubuntu", "debian"...)
+#   os_name     the full name, plain printable ASCII ("Microsoft Windows Server 2022 Standard Evaluation")
+#   os_version  the version number ("10.0.20348" on Windows, "22.04" on Ubuntu)
+_OS_ID = re.compile(r'[a-z0-9._-]{1,32}')
+_OS_NAME = re.compile(r'[ -~]{1,100}')
+_OS_VERSION = re.compile(r'[A-Za-z0-9._-]{1,32}')
 
 
 class PairingError(Exception):
@@ -75,7 +83,7 @@ def _find_fields(m):
 
 def _found_fields(m):
     return ('found', VERSION, m['nonce_l'], m['nonce_s'], m['hostname'], m['machine_uuid'], m['port'],
-            m['pairing_id'])
+            m['pairing_id'], m['os'], m['os_name'], m['os_version'])
 
 
 def _encode(message):
@@ -113,7 +121,8 @@ def _verify(code, message, fields):
 
 
 FIND_KEYS = ('v', 'type', 'nonce_l', 'laptop_name', 'mac')
-FOUND_KEYS = ('v', 'type', 'nonce_l', 'nonce_s', 'hostname', 'machine_uuid', 'port', 'pairing_id', 'mac')
+FOUND_KEYS = ('v', 'type', 'nonce_l', 'nonce_s', 'hostname', 'machine_uuid', 'port', 'pairing_id', 'os', 'os_name',
+              'os_version', 'mac')
 
 
 def make_find(code, name, nonce_l=None):
@@ -132,10 +141,12 @@ def read_find(raw, code):
     return m
 
 
-def make_found(code, nonce_l, hostname, machine_uuid, port, pairing_id, nonce_s=None):
-    """Server side (mirrors the PowerShell helper, used in tests): the answer to one checked question."""
+def make_found(code, nonce_l, hostname, machine_uuid, port, pairing_id, nonce_s=None, *, os, os_name, os_version):
+    """Server side (mirrors the PowerShell helper, used in tests): the answer to one checked question, including
+    which operating system the server runs."""
     message = dict(v=VERSION, type='found', nonce_l=nonce_l, nonce_s=nonce_s or new_nonce(), hostname=hostname,
-                   machine_uuid=str(UUID(machine_uuid)), port=port, pairing_id=pairing_id)
+                   machine_uuid=str(UUID(machine_uuid)), port=port, pairing_id=pairing_id, os=os, os_name=os_name,
+                   os_version=os_version)
     message['mac'] = _mac(code, *_found_fields(message))
     return _encode(message)
 
@@ -148,6 +159,9 @@ def read_found(raw, code, nonce_l):
     _check(type(m['pairing_id']) is str and _HEX32.fullmatch(m['pairing_id']), 'pairing id')
     _check(type(m['hostname']) is str and _NAME.fullmatch(m['hostname']), 'hostname')
     _check(type(m['port']) is int and 1 <= m['port'] <= 65535, 'port')
+    _check(type(m['os']) is str and _OS_ID.fullmatch(m['os']), 'system id')
+    _check(type(m['os_name']) is str and _OS_NAME.fullmatch(m['os_name']), 'system name')
+    _check(type(m['os_version']) is str and _OS_VERSION.fullmatch(m['os_version']), 'system version')
     try:
         _check(type(m['machine_uuid']) is str and str(UUID(m['machine_uuid'])) == m['machine_uuid'], 'machine UUID')
     except ValueError:

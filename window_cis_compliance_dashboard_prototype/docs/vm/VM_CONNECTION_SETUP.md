@@ -3,14 +3,16 @@
 The Scanner Agent reaches the VM itself over WinRM. Nobody copies scripts in or JSON out. It sends only the repository's fixed collector ([scripts/vm/Collect-Server2022Evidence.ps1](../../scripts/vm/Collect-Server2022Evidence.ps1)) with typed parameters. Model text is never sent to the VM. The Remediation Agent uses the same channel for its read-only precheck and for approved actions.
 
 ```text
-Laptop: Streamlit + agents (Python, pypsrp)  --NTLM-encrypted WinRM-->  127.0.0.1:55985
-        VirtualBox NAT port forward "fyp-winrm"  ------------------->  VM 10.0.2.15:5985 (WinRM HTTP listener)
+Laptop: Streamlit + agents (Python, pypsrp)  --NTLM-encrypted WinRM-->  server 192.168.x.y:5985 (WinRM HTTP listener)
+        found by its pairing code on the same network (UDP 47815); the address is never typed
 ```
+
+**Servers are added by pairing code only** (since 5 November 2026). The administrator never types an address or a port. The server's pairing answer also says which operating system it runs, and the dashboard shows that as a note (`hardening/system_detect.py`). Only Windows Server 2022 goes on to the login; Ubuntu Linux is recognised but its checks are not linked yet.
 
 ## Already done on the laptop (26 October 2026)
 
 - `pypsrp==0.8.1` installed in the project venv (in `requirements.txt`). No laptop WinRM service, TrustedHosts or firewall change is needed. The laptop is only the client.
-- VirtualBox NAT rule on `FYP-Server2022-Manual` (UUID `e5d10741-…`): `fyp-winrm,tcp,127.0.0.1,55985,,5985`. It is bound to loopback, so only this laptop can reach it.
+- VirtualBox NAT rule on `FYP-Server2022-Manual` (UUID `e5d10741-…`): `fyp-winrm,tcp,127.0.0.1,55985,,5985`. It is bound to loopback, so only this laptop can reach it. **The dashboard no longer uses it** (it cannot carry the pairing broadcast). Only the lab cross-check tool (`scripts/tools/cross_check_controls.py`) still connects through it.
   - Inspect: `VBoxManage showvminfo e5d10741-f200-4292-a099-e6be76032f4e --machinereadable | findstr Forwarding`
   - Remove: `VBoxManage controlvm e5d10741-f200-4292-a099-e6be76032f4e natpf1 delete fyp-winrm`
 
@@ -29,7 +31,7 @@ Use the **built-in Administrator** account. Windows strips the admin token from 
 
 Restoring `Clean_Server2022_Before_Hardening` undoes this setup. Run it again after a restore.
 
-**After a snapshot restore, check the laptop-side port forward too.** Restoring brings back the VM's VirtualBox settings from when the snapshot was taken. That can remove the `fyp-winrm` rule, and the dashboard then reports `unreachable` (this happened on 30 October). Re-add it from the laptop (allowed while the VM is running):
+**After a snapshot restore, check the VM's network adapters too.** Restoring brings back the VM's VirtualBox settings from when the snapshot was taken. That can remove the host-only adapter the dashboard needs, and the `fyp-winrm` forward the cross-check tool uses (this happened on 30 October). Re-add the forward from the laptop (allowed while the VM is running):
 
 ```powershell
 & "C:\Program Files\Oracle\VirtualBox\VBoxManage.exe" controlvm e5d10741-f200-4292-a099-e6be76032f4e natpf1 "fyp-winrm,tcp,127.0.0.1,55985,,5985"
@@ -39,13 +41,13 @@ Check: `Invoke-WebRequest http://127.0.0.1:55985/wsman -Method Post` should fail
 
 ## Pairing a server: the server access helper
 
-For any server reached by its network address, including the lab VM through a **host-only or bridged adapter**, the server access helper pairs the server with the laptop. Design: [LAN_PAIRING_DESIGN.md](../design/LAN_PAIRING_DESIGN.md). The lab VM through the NAT port forward (`127.0.0.1:55985`) does not need the helper: add it **By address** (below).
+Every server, the lab VM included, is added by pairing with the server access helper. Design: [LAN_PAIRING_DESIGN.md](../design/LAN_PAIRING_DESIGN.md).
 
 The helper lives in [scripts/server_access/](../../scripts/server_access/): `FYP-ServerAccess.ps1`, `Start-ServerAccess.cmd`, the README, the shared pairing examples (`pairing_vectors.json`) and the fixture test `test_server_access.ps1`. The **Servers** page offers the first three as **Download helper (.zip)**. On the server, as administrator:
 
 1. Check `Get-FileHash .\FYP-ServerAccess.ps1` against the SHA-256 shown under the download button.
 2. Double-click `Start-ServerAccess.cmd` and click **Start pairing**. The window shows a one-time 9-digit code. It works once, for 10 minutes, and only while the window shows it. On Server Core: `FYP-ServerAccess.ps1 -Action Pair`.
-3. On the laptop: **Servers → Add a server → With a pairing code**, type the code, **Find server**, then log in with the built-in Administrator account.
+3. On the laptop: **Servers → Add a server**, type the code, **Find server**. The page shows the server's name and the system it reported (for example *Windows Server 2022 · Supported*). Then log in with the built-in Administrator account. For a system that is not supported yet, the page shows a note instead of the login, and nothing is saved.
 4. Check the server from **Agentic hardening**.
 5. When finished, click **Revert changes** on the server.
 
@@ -61,22 +63,20 @@ The helper lives in [scripts/server_access/](../../scripts/server_access/): `FYP
 
 **From the dashboard** (Servers → *Who can reach …*, while connected), the helper's own text runs over WinRM. It can list the paired laptops, disconnect one, or close every laptop's access. Closing all access does not turn Remoting off, because that would cut the session doing it. The page then says to click Revert on the server.
 
-**Fallback when the network blocks pairing** (some guest or campus Wi-Fi stops devices talking to each other): on the server, `FYP-ServerAccess.ps1 -Action Allow -ScannerAddress <laptop address>`. Then add the server **By address**.
+**When the laptop cannot find the server** although the code is right: some guest or campus Wi-Fi stops devices talking to each other. There is no fallback by address any more (removed on 5 November 2026, with the helper's `-Action Allow`). Put both machines on another network, such as an office or home router, and start pairing again.
 
-The helper refuses to run on a workstation, never changes a CIS setting, never enables Basic login or unencrypted traffic, and never handles a password. Its tests use fixtures and UDP on the laptop's own address only. **Start pairing, Allow and Revert have not yet been run on a real server.**
+The helper refuses to run on a workstation, never changes a CIS setting, never enables Basic login or unencrypted traffic, and never handles a password. Its tests use fixtures and UDP on the laptop's own address only. **Start pairing and Revert have not yet been run on a real server.**
 
-### Testing pairing with the lab VM
+### The lab VM
 
-The NAT port forward does not carry the pairing broadcast. For a pairing test, give the VM a second network adapter: **Host-only** (laptop `192.168.56.1`), or **Bridged** to the Wi-Fi to test exactly what a client does. Keep the NAT forward for the usual runs.
+The NAT port forward does not carry the pairing broadcast, so the dashboard needs the VM on a network it shares with the laptop. Give the VM a second network adapter: **Host-only** (laptop `192.168.56.1`), or **Bridged** to the Wi-Fi to test exactly what a client does. Then pair it like any server. Keep the NAT forward only if you still use the cross-check tool.
 
 ## Use it
 
 1. Start the dashboard: `.\.venv\Scripts\python.exe -s launch.py` from the application folder, or `Start.cmd` in the client package.
-2. Open **Servers**.
-   - **A paired server:** *Add a server → With a pairing code*, as above.
-   - **The lab VM through the port forward:** *Add a server → By address*, address `127.0.0.1`, port `55985`, the Administrator account and password.
+2. Open **Servers** and pair the server: *Add a server*, as above.
 
-   The dashboard reads the hostname and machine UUID from the server itself, checks the administrator token and that it is a stand-alone Server 2022, and saves the server under **My servers**. Next time, pick it there and type the password: every connection checks that the same hostname and UUID answer.
+   The dashboard reads the hostname, machine UUID and system from the server itself, checks the administrator token and that it is a stand-alone Server 2022, and saves the server under **My servers**. Next time, pick it there and type the password: every connection checks that the same hostname and UUID answer.
 3. Once connected, the sidebar shows the server on every page, and **Disconnect** (top of the Servers and Agentic pages) ends the session without changing anything on the server.
 4. **Agentic hardening → Start agentic round**: the Orchestrator delegates the Scanner Agent, which collects over this channel. After you approve fixes, **Execute approved fixes… → Confirm and execute** uses the same channel for the Remediation Agent's precheck, the approved actions and the verification rescan.
 
@@ -86,11 +86,12 @@ The password stays in the Streamlit session's memory only. It is never written t
 
 | State | Meaning |
 | --- | --- |
-| `unreachable` | Nothing answered: the server is off, its address changed, access was reverted, or (lab VM) the port forward or `Enable-PSRemoting` is missing. For a paired server: Start pairing on it and **Re-pair** |
+| `unreachable` | Nothing answered: the server is off, its address changed, access was reverted, or (lab VM) its host-only adapter or `Enable-PSRemoting` is missing. Start pairing on it and **Re-pair** |
 | `auth_failed` | Wrong username or password |
 | `not_admin` | Connected, but without an administrator token (use built-in Administrator) |
 | `wrong_target` | The machine answering is not the saved hostname and UUID, or not the one that answered the pairing code. Nothing is collected or saved |
-| `unsupported_target` | Not a stand-alone Windows Server 2022 (another version, a workstation, or joined to a domain). Not saved |
+| *Not supported yet* (after Find server) | The server reported a system this program does not check yet: Ubuntu, another Windows Server version, a Windows desktop, or anything else. The note says which. No login is offered and nothing is saved |
+| `unsupported_target` | After login: not a stand-alone Windows Server 2022 (another version, a workstation, or joined to a domain), whatever the pairing answer said. Not saved |
 | `pairing_not_confirmed` | The server's own records do not hold this pairing for this laptop. Start pairing again and use the new code |
 | `collection_failed` | The collector threw on the server. No assessment is created |
 | *No server answered with this code* | The code expired or was mistyped, pairing was stopped on the server, or the laptop is not on the same network as the server |

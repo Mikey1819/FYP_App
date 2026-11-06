@@ -199,7 +199,7 @@ The comment is kept separate so the approved request bytes stay exactly what the
 | `username` | TEXT | The administrator account used (never the password) |
 | `note` | TEXT | The administrator's own note, at most 120 characters |
 | `added_at`, `last_connected_at` | TEXT | When it was saved and last connected |
-| `pairing_id` | TEXT or NULL | The helper's record of this laptop's pairing (32 hex). NULL for a server added by address |
+| `pairing_id` | TEXT or NULL | The helper's record of this laptop's pairing (32 hex). NULL only for a server saved by address before that was removed (5 November 2026); Re-pair fills it |
 | `laptop_address`, `paired_at` | TEXT or NULL | This laptop's address as the server saw it, and when it paired |
 
 The server keeps its own side of each pairing in `C:\ProgramData\FYP-ServerAccess\pairings.json` (Administrators and SYSTEM only), not in these files.

@@ -9,16 +9,14 @@ never handles a password. Design: docs/design/LAN_PAIRING_DESIGN.md.
   .\FYP-ServerAccess.ps1                                     window: Check status, Start pairing, Revert changes
   .\FYP-ServerAccess.ps1 -Action Pair                        pairing without a window (for example Server Core)
   .\FYP-ServerAccess.ps1 -Action Status
-  .\FYP-ServerAccess.ps1 -Action Allow -ScannerAddress 192.168.56.1   fallback when the network blocks pairing
   .\FYP-ServerAccess.ps1 -Action Revert
 The dashboard runs ListPairings, RemovePairing -PairingId <id> and CloseAccess over WinRM (JSON output).
 FunctionsOnly loads the helpers for test_server_access.ps1 (same folder).
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('Window', 'Status', 'Pair', 'Allow', 'Revert', 'ListPairings', 'RemovePairing', 'CloseAccess')]
+    [ValidateSet('Window', 'Status', 'Pair', 'Revert', 'ListPairings', 'RemovePairing', 'CloseAccess')]
     [string]$Action = 'Window',
-    [string]$ScannerAddress,
     [string]$PairingId,
     [switch]$FunctionsOnly
 )
@@ -101,12 +99,15 @@ function Read-PairFind([byte[]]$Raw, [string]$Code) {
 }
 
 function New-PairFound([string]$Code, [string]$NonceL, [string]$HostName, [string]$MachineUuid, [int]$Port,
-                       [string]$PairingId, [string]$NonceS) {
-    # The answer to one checked question: who this server is, and the proof that it knows the code too.
+                       [string]$PairingId, [string]$NonceS, [string]$Os, [string]$OsName, [string]$OsVersion) {
+    # The answer to one checked question: who this server is, which system it runs (so the administrator never has
+    # to say it), and the proof that it knows the code too.
     $uuid = ([guid]$MachineUuid).ToString()
     $message = [ordered]@{ v = $PairingVersion; type = 'found'; nonce_l = $NonceL; nonce_s = $NonceS
-        hostname = $HostName; machine_uuid = $uuid; port = $Port; pairing_id = $PairingId }
-    $message.mac = Get-PairingMac $Code @('found', $PairingVersion, $NonceL, $NonceS, $HostName, $uuid, $Port, $PairingId)
+        hostname = $HostName; machine_uuid = $uuid; port = $Port; pairing_id = $PairingId
+        os = $Os; os_name = $OsName; os_version = $OsVersion }
+    $message.mac = Get-PairingMac $Code @('found', $PairingVersion, $NonceL, $NonceS, $HostName, $uuid, $Port, $PairingId,
+                                          $Os, $OsName, $OsVersion)
     return ,[Text.Encoding]::UTF8.GetBytes(($message | ConvertTo-Json -Compress))
 }
 
@@ -188,7 +189,7 @@ function Set-TokenFilterPolicy($Value) {
 }
 
 # ---------------------------------------------------------------------------------------------------------------
-# Paired laptops. Each laptop that paired (or was allowed by address) is one record in pairings.json, and the
+# Paired laptops. Each laptop that paired is one record in pairings.json, and the
 # firewall rule lets exactly those addresses reach WinRM. The dashboard can list and remove them over WinRM.
 # ---------------------------------------------------------------------------------------------------------------
 $PairingsPath = Join-Path $StateDir 'pairings.json'
@@ -278,9 +279,21 @@ function Open-ServerAccess {
     return $done
 }
 
+function ConvertTo-OsName([string]$Caption) {
+    # The system's full name as the dashboard accepts it: plain printable ASCII, at most 100 characters.
+    $name = ($Caption -replace '[^\x20-\x7E]', '').Trim()
+    if ($name.Length -gt 100) { $name = $name.Substring(0, 100).Trim() }
+    if (-not $name) { $name = 'Windows' }
+    return $name
+}
+
 function Get-ServerIdentity {
+    # Who this server is, and which operating system it runs. The dashboard reads the system from the pairing
+    # answer and shows it as a note (hardening/system_detect.py), so nobody has to type it.
     $product = Get-CimInstance Win32_ComputerSystemProduct -OperationTimeoutSec 15
-    return [pscustomobject]@{ hostname = $env:COMPUTERNAME; machine_uuid = ([guid]$product.UUID).ToString() }
+    $os = Get-CimInstance Win32_OperatingSystem -OperationTimeoutSec 15
+    return [pscustomobject]@{ hostname = $env:COMPUTERNAME; machine_uuid = ([guid]$product.UUID).ToString()
+                              os = 'windows'; os_name = ConvertTo-OsName ([string]$os.Caption); os_version = [string]$os.Version }
 }
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -331,7 +344,8 @@ function Complete-Pairing($Session, $Find, [string]$Address) {
     $pairingId = New-Nonce
     Save-Pairings (Add-PairingEntry @(Get-Pairings) $Address $Find.laptop_name $pairingId ([DateTimeOffset]::UtcNow))
     $me = Get-ServerIdentity
-    $Session.reply = New-PairFound $Session.code $Find.nonce_l $me.hostname $me.machine_uuid $WinRmPort $pairingId (New-Nonce)
+    $Session.reply = New-PairFound $Session.code $Find.nonce_l $me.hostname $me.machine_uuid $WinRmPort $pairingId (New-Nonce) `
+        $me.os $me.os_name $me.os_version
     return "Paired with $($Find.laptop_name) ($Address). Only paired laptops can reach WinRM on this server."
 }
 
@@ -389,7 +403,7 @@ function Test-ListenerFinished($Listener) {
 }
 
 # ---------------------------------------------------------------------------------------------------------------
-# Status, Allow by address, Revert, and the actions the dashboard runs over WinRM (JSON output).
+# Status, Revert, and the actions the dashboard runs over WinRM (JSON output).
 # ---------------------------------------------------------------------------------------------------------------
 function Get-StatusLines {
     $os = Get-CimInstance Win32_OperatingSystem -OperationTimeoutSec 15
@@ -419,17 +433,6 @@ function Get-StatusLines {
         }
     }
     return $lines
-}
-
-function Invoke-Allow([string]$Address) {
-    # Fallback without pairing, for networks that block it: allow one laptop address typed by the administrator.
-    if (-not (Test-ScannerAddress $Address)) { throw "'$Address' is not a single IPv4 address of the scanning laptop." }
-    $done = @(Open-ServerAccess)
-    $Address = $Address.Trim()
-    Save-Pairings (Add-PairingEntry @(Get-Pairings) $Address ('address-' + $Address) (New-Nonce) ([DateTimeOffset]::UtcNow))
-    $done += "Firewall rule '$RuleName' now lets these laptops reach TCP ${WinRmPort}: " +
-             ((Get-Pairings | ForEach-Object { $_.laptop_address }) -join ', ') + '.'
-    return $done + 'You can now connect from the dashboard. Click Revert when scanning is finished.'
 }
 
 function Invoke-Revert {
@@ -606,7 +609,6 @@ if ($FunctionsOnly) { return }
 switch ($Action) {
     'Status' { Get-StatusLines }
     'Pair' { Invoke-ConsolePairing }
-    'Allow' { Invoke-Allow $ScannerAddress }
     'Revert' { Invoke-Revert }
     'ListPairings' { Invoke-RemoteAction 'ListPairings' '' }
     'RemovePairing' { Invoke-RemoteAction 'RemovePairing' $PairingId }
