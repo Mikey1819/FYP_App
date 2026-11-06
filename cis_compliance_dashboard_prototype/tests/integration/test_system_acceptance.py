@@ -63,8 +63,10 @@ class SameUiAcceptanceTests(unittest.TestCase):
             self.assertEqual([x.label for x in app.tabs],['Fixes','Risk ranking','Controls','Results','Agent log'])
             app.button(key='agentic_disconnect').click().run()
             self.assertNotIn(WORKFLOW_KEY,app.session_state)
-            connect('ubuntu')
-            self.assertTrue(app.button(key='agentic_assess_without_ai').disabled)
+            from unittest import mock
+            with mock.patch('backends.ubuntu.adapter.assessment_gate', return_value=('Ubuntu assessment is not enabled (test-closed gate).',)):
+                connect('ubuntu')
+                self.assertTrue(app.button(key='agentic_assess_without_ai').disabled)
             self.assertEqual([x.label for x in app.tabs],['Fixes','Risk ranking','Controls','Results','Agent log'])
             self.assertNotIn(WORKFLOW_KEY,app.session_state)
             app.button(key='agentic_disconnect').click().run()

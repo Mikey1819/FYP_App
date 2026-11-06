@@ -261,7 +261,8 @@ class BackendRemediationTests(StoreFixture):
         stored = backend._store().proposals(handle.binding, snap.current_round_reference.record_id)[0]
         request_id = json.loads(stored.approved_raw)['request_id']
         # Execution gate open but no accepted OpenSCAP engine: the fresh Live collection is refused by the target.
-        with mock.patch('backends.ubuntu.adapter.execution_gate', return_value=()):
+        with mock.patch('backends.ubuntu.adapter.execution_gate', return_value=()), \
+                mock.patch('backends.ubuntu.adapter.accepted_engine_version', return_value=None):
             result = backend.execute_approved('c', workflow, snap.current_round_reference, (request_id,), True, 'op-e')
         self.assertEqual(result.state, 'verification_pending')
         self.assertEqual(self.writes(), ['alpha'])

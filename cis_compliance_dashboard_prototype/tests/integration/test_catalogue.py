@@ -17,7 +17,11 @@ class CatalogueTests(unittest.TestCase):
         self.assertEqual(sum(c.cis_assessment_type == 'Manual' for c in catalogue.controls), 1)
         apparmor = next(c for c in catalogue.controls if c.control_id == '1.3.1.1')
         self.assertEqual(len(apparmor.scap_rule_ids), 2)
-        self.assertFalse(catalogue.activation_ready)
+        # Superseded "not activated": user approval and the observed OpenSCAP 1.2.17 evaluation are recorded.
+        self.assertTrue(catalogue.activation_ready)
+        lock = json.loads((ROOT / 'catalogues/source-lock.json').read_text(encoding='utf-8'))
+        self.assertEqual(lock['openscap_version'], '1.2.17')
+        self.assertIn('53 evaluated results', lock['openscap_validation'])
 
     def test_modified_datastream_missing_rule_and_duplicate_control_refused(self):
         from backends.ubuntu.catalogue import load_catalogue, validate_catalogue
@@ -35,8 +39,15 @@ class CatalogueTests(unittest.TestCase):
         bad['controls'][-1] = bad['controls'][0]
         with self.assertRaises(ValueError):
             validate_catalogue(bad, lock, stream)
-        with self.assertRaisesRegex(ValueError, 'activation'):
-            load_catalogue(path / 'ubuntu2204.json', path / 'source-lock.json', require_activation=True)
+        import tempfile, shutil
+        with tempfile.TemporaryDirectory() as folder:  # an inactive copy must still refuse activation
+            copy_root = Path(folder)
+            shutil.copytree(path, copy_root / 'catalogues')
+            inactive = dict(lock, activation_ready=False)
+            (copy_root / 'catalogues' / 'source-lock.json').write_text(json.dumps(inactive), encoding='utf-8')
+            with self.assertRaisesRegex(ValueError, 'activation'):
+                load_catalogue(copy_root / 'catalogues' / 'ubuntu2204.json', copy_root / 'catalogues' / 'source-lock.json',
+                               require_activation=True)
 
     def test_existing_but_unrelated_scap_rule_is_not_a_valid_mapping(self):
         from backends.ubuntu.catalogue import validate_mapping

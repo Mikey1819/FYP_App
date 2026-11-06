@@ -11,7 +11,8 @@ class UbuntuCapabilityTests(unittest.TestCase):
     def test_missing_collector_is_setup_required_and_never_fake_assessment(self):
         self.assertIsNotNone(importlib.util.find_spec('backends.ubuntu.adapter'))
         from backends.ubuntu.adapter import UbuntuBackend
-        with tempfile.TemporaryDirectory() as folder:
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as folder, mock.patch('backends.ubuntu.adapter.assessment_gate', return_value=('Ubuntu assessment is not enabled (test-closed gate).',)):
             session=VerifiedSession('c',VerifiedIdentity('ubuntu','vm','a'*32,'22.04','ssh'),'ubuntu:fixture','epoch','user','vm',22,None)
             backend=UbuntuBackend(Path(folder)/'imports.db',session=session,ledger=CoordinationLedger(Path(folder)/'ledger.db'))
             self.assertIsInstance(backend,WorkspaceBackend)

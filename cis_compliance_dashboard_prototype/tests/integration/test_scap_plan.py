@@ -17,7 +17,9 @@ class ScapPlanTests(unittest.TestCase):
         self.assertEqual(plan.argv[-1],'/usr/local/share/fyp-hardening/ssg-ubuntu2204-ds.xml')
         self.assertFalse(plan.live_eligible)
         with self.assertRaises(ValueError):prepare_scan(app/'catalogues','../../escape',engine_version='1.3.7',fixture=True)
-        with self.assertRaisesRegex(ValueError,'activation'):prepare_scan(app/'catalogues','a'*32,engine_version='1.3.7')
+        with self.assertRaisesRegex(ValueError,'accepted'):prepare_scan(app/'catalogues','a'*32,engine_version='1.3.7')
+        live=prepare_scan(app/'catalogues','a'*32,engine_version='1.2.17')  # observed and accepted on the VM
+        self.assertTrue(live.live_eligible)
 
     def test_known_unselected_results_are_discarded_but_extra_evaluated_rule_refused(self):
         from backends.ubuntu.scap import parse_results

@@ -459,3 +459,10 @@ Six risk tests that encoded the pending state were updated to the recorded appro
 - **UFW registration:** `system/config.UBUNTU_FIREWALL_REGISTRATIONS` registers UFW for machine `f1d16ae7…`, approved by the user. The collector still checks competing managers per scan.
 - **Still unaccepted:** the OpenSCAP version stays null until a tailored evaluation on the VM returns real pass/fail results.
 - Full suite **352 tests, all passed**; baseline: no protected changes; sources: activation false.
+
+## 2026-11-06 OpenSCAP accepted; sources activated; first install reported
+
+- **Tailored evaluation (user-run, read-only):** exit 2; 53 evaluated (10 pass, 28 fail, 15 notapplicable), 570 notselected. `source-lock.json`: `openscap_version` 1.2.17 with the validation evidence, `activation_ready` true. The **read-only assessment gate is open**; the **execution gate stays closed**.
+- **Fresh recovery snapshot (user-reported):** `Before_Unified_Hardening_Provisioning_2026-11-06`.
+- **First install:** the user ran `install.sh` and reported Python 3.10.12 and oscap 1.2.17. That install used the bundle copied **before** the tailoring change, so reinstalling from the rebuilt bundle (uninstall first) was requested; otherwise the tailoring file is missing and the helper digest differs.
+- **Tests:** eight tests that assumed inactive sources or no accepted engine were updated. Closed-gate behaviour is now tested with an explicitly closed gate or an inactive lock copy, and the real gate is asserted open from recorded evidence. None were deleted. Full suite **352 tests, all passed**; baseline: no protected changes.

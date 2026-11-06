@@ -181,7 +181,13 @@ class BackendLiveAssessmentTests(unittest.TestCase):
                                   'ubuntu:fixture', 'epoch', 'user', 'vm', 22, channel)
         return UbuntuBackend(self.path, session=session, ledger=self.ledger, **STOPPED_MODEL)
 
-    def test_gate_is_closed_today_and_lists_reasons(self):
+    def test_closed_gate_lists_reasons_and_scans_nothing(self):
+        from backends.ubuntu.adapter import assessment_gate
+        self.assertEqual(assessment_gate(), ())  # real sources activated from recorded evidence (2026-11-06)
+        with mock.patch('backends.ubuntu.adapter.assessment_gate', return_value=('Ubuntu assessment is not enabled (test-closed gate: catalogue activation false).',)):
+            self._closed_gate_checks()
+
+    def _closed_gate_checks(self):
         backend = self.backend(CliChannel())
         capabilities = backend.capabilities('c')
         self.assertFalse(capabilities.can_assess)

@@ -61,7 +61,9 @@ class UbuntuBackendHistoryTests(unittest.TestCase):
         manual = next(c for c in snap.controls if c.control_id == '1.2.2.1')
         self.assertEqual(manual.status.value, 'Unknown')
         self.assertTrue(manual.subchecks)
-        self.assertFalse(backend.capabilities('c').can_assess)
+        from unittest import mock
+        with mock.patch('backends.ubuntu.adapter.assessment_gate', return_value=('Ubuntu assessment is not enabled (test-closed gate).',)):
+            self.assertFalse(backend.capabilities('c').can_assess)
 
     def test_scope_epoch_identity_and_corruption(self):
         run, _ = self.store_round()
