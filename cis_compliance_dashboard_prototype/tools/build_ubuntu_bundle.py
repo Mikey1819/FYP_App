@@ -16,6 +16,9 @@ HOSTNAME = 'FYP-Ubuntu2204'
 USER = 'vboxuser'
 DATASTREAM_SHA256 = 'c8be1aa2bf93284507b8810ea829f8904ab4552865f07d106561d5fd5d06ca67'
 SUDOERS = f'{USER} ALL=(root) NOPASSWD: /usr/local/libexec/fyp-hardening/collect ""\n'
+# Separately approved runner stage: the fixed runner with no arguments (systemd unit operations need argv and an
+# INVOCATION_ID that sudo never passes, so they cannot be reached through this rule).
+RUNNER_SUDOERS = f'{USER} ALL=(root) NOPASSWD: /usr/local/libexec/fyp-hardening/runner ""\n'
 
 INSTALL = f'''#!/bin/bash
 # FYP hardening read-only collector provisioning. Run on the VM console as: sudo bash install.sh
@@ -67,12 +70,60 @@ ExecStart=/usr/local/libexec/fyp-hardening/runner boot-rollback
 WantedBy=multi-user.target
 '''
 
-UNINSTALL = '''#!/bin/bash
-# Reverse install.sh: the sudo rule first, then the installed directories.
+INSTALL_RUNNER = f'''#!/bin/bash
+# FYP hardening runner deployment: a SEPARATELY APPROVED stage after install.sh.
+# Run on the VM console as: sudo bash install-runner.sh  (take a VirtualBox recovery snapshot first)
+# Installs one sudo rule for the fixed runner and enables the boot rollback unit. Changes no system setting
+# by itself: every fix still needs its own approval in the dashboard. Reverse with: sudo bash uninstall-runner.sh
+set -euo pipefail
+cd "$(dirname "$0")"
+[ "$(id -u)" -eq 0 ] || {{ echo "Run with sudo"; exit 1; }}
+[ "$(cat /etc/machine-id)" = "{MACHINE_ID}" ] || {{ echo "Wrong machine identity; nothing changed"; exit 1; }}
+[ "$(hostname)" = "{HOSTNAME}" ] || {{ echo "Wrong hostname; nothing changed"; exit 1; }}
+sha256sum -c SHA256SUMS --quiet || {{ echo "Bundle hash mismatch; nothing changed"; exit 1; }}
+cmp -s libexec/runner /usr/local/libexec/fyp-hardening/runner || {{ echo "Run install.sh from this bundle first; nothing changed"; exit 1; }}
+for file in libexec/fyp_ubuntu/*; do
+  cmp -s "$file" "/usr/local/libexec/fyp-hardening/fyp_ubuntu/$(basename "$file")" || {{ echo "Installed helper differs from this bundle; run install.sh first; nothing changed"; exit 1; }}
+done
+command -v systemd-run >/dev/null || {{ echo "systemd-run is missing; nothing changed"; exit 1; }}
+visudo -cf sudoers/fyp-hardening-runner >/dev/null || {{ echo "Runner sudo rule invalid; nothing changed"; exit 1; }}
+[ ! -e /etc/sudoers.d/fyp-hardening-runner ] || {{ echo "Existing /etc/sudoers.d/fyp-hardening-runner; review it first"; exit 1; }}
+install -o root -g root -m 0644 systemd/fyp-hardening-boot-rollback.service /etc/systemd/system/fyp-hardening-boot-rollback.service
+systemctl daemon-reload
+systemctl enable fyp-hardening-boot-rollback.service
+install -o root -g root -m 0440 sudoers/fyp-hardening-runner /etc/sudoers.d/fyp-hardening-runner
+visudo -c >/dev/null || {{ rm -f /etc/sudoers.d/fyp-hardening-runner; echo "Sudo configuration invalid; rule removed"; exit 1; }}
+echo "Runner deployed. Report these lines back:"
+systemctl is-enabled fyp-hardening-boot-rollback.service
+ls -l /etc/sudoers.d/fyp-hardening-runner
+'''
+
+UNINSTALL_RUNNER = '''#!/bin/bash
+# Reverse install-runner.sh: the runner sudo rule first, then the boot rollback unit. Refuses while a change is open.
 set -euo pipefail
 [ "$(id -u)" -eq 0 ] || { echo "Run with sudo"; exit 1; }
-rm -f /etc/sudoers.d/fyp-hardening
+[ ! -e /var/lib/fyp-hardening/runner/active ] || { echo "A change is in progress or unresolved; settle it in the dashboard first"; exit 1; }
+rm -f /etc/sudoers.d/fyp-hardening-runner
 visudo -c >/dev/null
+systemctl disable fyp-hardening-boot-rollback.service 2>/dev/null || true
+rm -f /etc/systemd/system/fyp-hardening-boot-rollback.service
+systemctl daemon-reload
+echo "Runner deployment removed."
+'''
+
+UNINSTALL = '''#!/bin/bash
+# Reverse install.sh (and install-runner.sh): sudo rules first, then the boot unit, then the installed directories.
+# A helper reinstall therefore also removes the runner deployment: new runner code needs a new approval.
+set -euo pipefail
+[ "$(id -u)" -eq 0 ] || { echo "Run with sudo"; exit 1; }
+[ ! -e /var/lib/fyp-hardening/runner/active ] || { echo "A change is in progress or unresolved; settle it in the dashboard first"; exit 1; }
+rm -f /etc/sudoers.d/fyp-hardening-runner /etc/sudoers.d/fyp-hardening
+visudo -c >/dev/null
+if [ -e /etc/systemd/system/fyp-hardening-boot-rollback.service ]; then
+  systemctl disable fyp-hardening-boot-rollback.service 2>/dev/null || true
+  rm -f /etc/systemd/system/fyp-hardening-boot-rollback.service
+  systemctl daemon-reload
+fi
 rm -rf /usr/local/libexec/fyp-hardening /usr/local/share/fyp-hardening /var/lib/fyp-hardening
 echo "Removed."
 '''
@@ -103,11 +154,15 @@ def build(out=DEFAULT):
     (out / 'share' / 'fyp-selected-tailoring.xml').write_bytes(tailoring)
     (out / 'sudoers').mkdir()
     (out / 'sudoers' / 'fyp-hardening').write_bytes(SUDOERS.encode('ascii'))
+    (out / 'sudoers' / 'fyp-hardening-runner').write_bytes(RUNNER_SUDOERS.encode('ascii'))
     (out / 'systemd').mkdir()
     (out / 'systemd' / 'fyp-hardening-boot-rollback.service').write_bytes(BOOT_ROLLBACK_UNIT.encode('ascii'))
     (out / 'install.sh').write_bytes(INSTALL.encode('ascii'))
     (out / 'uninstall.sh').write_bytes(UNINSTALL.encode('ascii'))
-    files = sorted(p for p in out.rglob('*') if p.is_file() and p.name not in ('install.sh', 'uninstall.sh'))
+    (out / 'install-runner.sh').write_bytes(INSTALL_RUNNER.encode('ascii'))
+    (out / 'uninstall-runner.sh').write_bytes(UNINSTALL_RUNNER.encode('ascii'))
+    scripts = ('install.sh', 'uninstall.sh', 'install-runner.sh', 'uninstall-runner.sh')
+    files = sorted(p for p in out.rglob('*') if p.is_file() and p.name not in scripts)
     sums = ''.join(f'{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.relative_to(out).as_posix()}\n' for p in files)
     (out / 'SHA256SUMS').write_bytes(sums.encode('ascii'))
     return out

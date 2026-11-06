@@ -129,6 +129,11 @@ class ScenarioTests(AcceptanceCase):
             self.assertTrue(changed.deployment_status('c').ok)  # an updated helper, properly reinstalled
             self.assertTrue(execution_gate(changed))  # ...still needs its own acceptance runs
 
+    def test_an_acceptance_workflow_before_any_scan_does_not_break_the_pending_list(self):
+        backend = self.deployed()  # no assessment yet: the Ubuntu store does not exist
+        backend.start_acceptance('c', 'confirm', 'fixture-operator', 'op-a1')
+        self.assertEqual(backend.pending_supervised('c'), ())
+
     def test_only_one_acceptance_run_at_a_time(self):
         backend = self.deployed()
         backend.start_acceptance('c', 'confirm', 'fixture-operator', 'op-a1')

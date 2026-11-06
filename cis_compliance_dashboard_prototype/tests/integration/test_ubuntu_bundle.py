@@ -43,6 +43,35 @@ class BundleTests(unittest.TestCase):
         self.assertIn('systemd/fyp-hardening-boot-rollback.service', (out / 'SHA256SUMS').read_text())
         self.assertNotIn('boot-rollback', (out / 'install.sh').read_text())  # enabling it is a separate approval
 
+    def test_runner_deployment_is_a_separate_bounded_stage(self):
+        out = self.build()
+        self.assertEqual((out / 'sudoers' / 'fyp-hardening-runner').read_text(),
+                         'vboxuser ALL=(root) NOPASSWD: /usr/local/libexec/fyp-hardening/runner ""\n')
+        script = (out / 'install-runner.sh').read_text()
+        for required in ('f1d16ae7e6bc4d2488f9410fcd858e36', 'FYP-Ubuntu2204', 'sha256sum -c SHA256SUMS', 'cmp -s',
+                         'visudo -cf sudoers/fyp-hardening-runner', 'install -o root -g root -m 0440',
+                         'systemctl enable fyp-hardening-boot-rollback.service', 'command -v systemd-run'):
+            self.assertIn(required, script)
+        self.assertNotIn('--now', script)  # enabling never runs the boot rollback now
+        # The boot rollback is in place before the runner can be invoked at all.
+        self.assertLess(script.index('systemctl enable'),
+                        script.index('install -o root -g root -m 0440 sudoers/fyp-hardening-runner'))
+        for forbidden in ('apt', 'ufw ', 'sshd', 'reboot', 'curl', 'wget'):
+            self.assertNotIn(forbidden, script)
+        undo = (out / 'uninstall-runner.sh').read_text()
+        self.assertLess(undo.index('rm -f /etc/sudoers.d/fyp-hardening-runner'), undo.index('systemctl disable'))
+        full = (out / 'uninstall.sh').read_text()
+        # A helper reinstall drops the runner deployment (new code needs a new approval) and never destroys
+        # the state of a change that is still in progress.
+        self.assertIn('/etc/sudoers.d/fyp-hardening-runner', full)
+        self.assertLess(full.index('/var/lib/fyp-hardening/runner/active'), full.index('rm -rf'))
+        self.assertNotIn('install-runner.sh', (out / 'install.sh').read_text())
+        for path in (out / 'install-runner.sh', out / 'uninstall-runner.sh', out / 'uninstall.sh'):
+            self.assertNotIn(b'\r', path.read_bytes())
+            bash = shutil.which('bash')
+            if bash:
+                self.assertEqual(subprocess.run([bash, '-n', str(path)], capture_output=True).returncode, 0, path.name)
+
     def test_install_script_is_bounded_to_the_preview(self):
         out = self.build()
         script = (out / 'install.sh').read_text()

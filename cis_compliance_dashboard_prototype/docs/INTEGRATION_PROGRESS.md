@@ -827,3 +827,20 @@ The execution gate was a hard-coded "closed". It now opens only on evidence.
   - `test_ubuntu_acceptance_target.py` (6) and `test_ubuntu_acceptance_host.py` (7), written first (RED: 5 and 7 errors). The two registry tests now expect the marker in the target registry as an auxiliary.
   - **Mutation checks, all caught after strengthening:** ignoring the runner digest, one scenario being enough, confirming the rollback scenario, skipping the boot-rollback check, skipping the helper check, and parallel runs. Two tests first missed the digest binding and the parallel-run guard and were strengthened.
 - Full suite **501 tests, all passed**. Nothing is deployed; the gate stays closed until `install-runner.sh` is approved and both scenarios pass on the VM.
+
+## 2026-11-07 acceptance page and runner deployment stage
+
+- **Page (`hardening/agentic_view.py`, authorized scoped edit):** a collapsible **Execution acceptance** section.
+  - It shows the deployment-probe findings, or **Run confirm scenario** / **Run rollback scenario** (named operator required; one open run at a time).
+  - Each run has **Check status**, which settles it in the click handler so the gate reasons above are current, plus **Confirm** for the confirm scenario only.
+  - `docs/authorized-ui-changes.patch` has been regenerated against `af43fbc`.
+- **Bug found by the page test:** `pending_supervised` assumed the Ubuntu store exists whenever the VM has a workflow. An acceptance run creates a workflow before any scan, so the page crashed. It now returns nothing until a store exists (backend regression test, RED then GREEN).
+- **Bundle:**
+  - `install-runner.sh` is a separate approved stage. It checks identity, bundle hashes, a byte-identical installed helper and `systemd-run`. It installs and enables, without starting, `fyp-hardening-boot-rollback.service`, then installs `/etc/sudoers.d/fyp-hardening-runner` (`vboxuser ALL=(root) NOPASSWD: /usr/local/libexec/fyp-hardening/runner ""`) with `visudo` validation.
+  - `uninstall-runner.sh` reverses it, rule first.
+  - `uninstall.sh` now also removes the runner stage, so new runner code needs a new approval. Both uninstallers refuse while `/var/lib/fyp-hardening/runner/active` exists, so a change in progress keeps the state its rollback needs.
+- **Preview for approval:** `docs/RUNNER_DEPLOYMENT.md` (target facts, exact changes, what stays guarded, recovery and steps).
+- **Tests:**
+  - `tests/integration/test_ubuntu_acceptance_ui.py` drives both scenarios through the real page until the gate's reasons disappear. A wrong expectation about the final marker was corrected: the rollback correctly restores the marker the confirmed run left.
+  - One bundle test covers the runner stage.
+- Full suite **504 tests, all passed**; baseline: no protected changes; source check passes; bundle rebuilt. **Nothing is deployed.** The runner stage waits for the administrator's approval.

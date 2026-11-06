@@ -594,3 +594,7 @@ At the user's proposal, SSH controls whose effective `sshd -T` value complies in
 ## 7 November 2026 — execution acceptance replaces the hard-coded gate (integration)
 
 The Ubuntu execution gate now opens only on evidence. The deployed runner must match this application exactly, with systemd and boot rollback in place. The VM must also pass two live acceptance runs of a harmless marker: one confirmed over a fresh login, one restored by the rollback timer. The marker writes only inside the runner's own state folder. Full suite: **501 passed**. Not yet deployed; the gate stays closed.
+
+## 7 November 2026 — acceptance page and runner deployment preview (integration)
+
+Added the **Execution acceptance** section to the Ubuntu page, and `install-runner.sh` / `uninstall-runner.sh` as a separate, approval-gated stage (preview: `docs/RUNNER_DEPLOYMENT.md`). Fixed a page crash the new page test found: a pending-change list before any scan. Full suite: **504 passed**. Nothing is deployed; the next step needs the administrator's approval.

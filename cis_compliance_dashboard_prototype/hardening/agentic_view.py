@@ -236,6 +236,64 @@ def _ubuntu_fix_actions(backend, connection, snapshot, capabilities):
     _ubuntu_restore_actions(backend, connection, snapshot, capabilities, workflow, applied, executed, restoring)
 
 
+def _ubuntu_acceptance(backend, connection):
+    """Execution acceptance: two live runs of a harmless marker prove the confirm and rollback paths on this VM."""
+    error, notice = (st.session_state.pop('ubuntu_acceptance_error', None),
+                     st.session_state.pop('ubuntu_acceptance_notice', None))
+    with st.expander('Execution acceptance (required before any live fix)', expanded=bool(error or notice)):
+        if error:
+            st.error(md_escape(error))
+        if notice:
+            st.success(md_escape(notice))
+        deployment = backend.deployment_status(connection)
+        if not deployment.ok:
+            for reason in deployment.reasons:
+                st.warning(md_escape(reason))
+            return
+        st.caption('Writes only a marker file in the runner state directory on the VM; no system setting changes.')
+        runs = backend.acceptance_status(connection)
+        for run in runs:
+            label = md_escape(run.scenario + ' scenario (' + run.request_id[:8] + '): ' + (run.outcome or run.code))
+            if run.outcome is not None:
+                st.markdown('- ' + label)
+                continue
+            if run.scenario == 'confirm' and run.code == 'awaiting_confirmation':
+                st.warning(label + '. Disconnect, reconnect to the VM, then confirm within about a minute.')
+            elif run.scenario == 'rollback' and run.code == 'awaiting_confirmation':
+                st.info(label + '. Do not confirm: the rollback timer restores it shortly; then check status.')
+            else:
+                st.info(label)
+
+            def act(run=run, confirm=False):
+                try:
+                    # Settle in the click handler, before the page (and the gate reasons) render.
+                    if not confirm:
+                        backend.acceptance_status(connection)
+                    else:
+                        done = backend.confirm_acceptance(connection, run.request_id)
+                        st.session_state['ubuntu_acceptance_notice'] = run.scenario + ' scenario: ' + (done.outcome or done.code)
+                except (ValueError, OSError) as failure:
+                    st.session_state['ubuntu_acceptance_error'] = str(failure)[:300]
+            with st.container(horizontal=True):
+                st.button('Check status', key='ubuntu_acceptance_status_' + run.request_id, on_click=act)
+                if run.scenario == 'confirm' and run.code == 'awaiting_confirmation':
+                    st.button('Confirm', key='ubuntu_acceptance_confirm_run_' + run.request_id, type='primary',
+                              on_click=act, kwargs={'confirm': True})
+        operator = st.text_input('Your name (recorded with the acceptance approval)', key='ubuntu_acceptance_operator')
+        open_run = any(run.outcome is None for run in runs)
+
+        def start(scenario):
+            try:
+                backend.start_acceptance(connection, scenario, operator, uuid4().hex)
+                st.session_state['ubuntu_acceptance_notice'] = scenario + ' scenario started.'
+            except (ValueError, OSError) as failure:
+                st.session_state['ubuntu_acceptance_error'] = str(failure)[:300]
+        with st.container(horizontal=True):
+            for scenario, label in (('confirm', 'Run confirm scenario'), ('rollback', 'Run rollback scenario')):
+                st.button(label, key='ubuntu_acceptance_' + scenario, on_click=start, args=(scenario,),
+                          disabled=open_run or not operator.strip())
+
+
 def _ubuntu_pending_changes(backend, connection):
     """Changes still running or waiting for confirmation on this VM, from any workflow, so a fresh login finds them."""
     error, notice = st.session_state.pop('ubuntu_pending_error', None), st.session_state.pop('ubuntu_pending_notice', None)
@@ -657,6 +715,7 @@ def render_agentic(database_path: Path):
                 st.info(md_escape(reason))
             if backend.session.identity.platform == 'ubuntu':
                 _ubuntu_pending_changes(backend, connection)
+                _ubuntu_acceptance(backend, connection)
                 snapshot = backend.snapshot(connection, st.session_state.get(WORKFLOW_KEY))
                 _show_progress(dict(zip(STEPS, snapshot.step_states)), None)
                 goal = _goal_input()

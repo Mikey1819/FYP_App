@@ -716,6 +716,8 @@ class UbuntuBackend(BoundBackend):
         """Open changes on this target across its workflows, so a fresh login can find what waits for it."""
         self.check(connection_session_id)
         s, store, found = self.session, self._store(), []
+        if store is None:
+            return ()  # no assessment stored yet, so no approved change can be open
         for binding in self.ledger.bindings_for_target('ubuntu', s.target_id, s.registration_epoch):
             rounds = [r for r in store.rounds(binding) if r.kind == 'assessment']
             if not rounds:
