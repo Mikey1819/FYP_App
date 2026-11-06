@@ -61,6 +61,8 @@ class WindowsBackend(BoundBackend):
 
     def start_round(self, connection_session_id, workflow_session_id, goal, mode, operation_id):
         binding = self.check(connection_session_id, workflow_session_id)
+        if goal:  # removed by the administrator (2026-11-07): results were too inconsistent
+            raise ValueError('Round goals were removed. No scan was run.')
         if binding is None:
             s = self.session
             binding = self.ledger.assessment_binding('windows', s.target_id, s.registration_epoch, operation_id)
@@ -72,7 +74,7 @@ class WindowsBackend(BoundBackend):
             return RoundHandle(state.operation_id, binding, reference, state.state)
         try:
             if mode == AssessmentMode.AGENTIC:
-                result = self.engine.run_round(binding.backend_session_id, goal=goal)
+                result = self.engine.run_round(binding.backend_session_id)
                 round_id = result['round_id']
             else:
                 scanned = self.engine.scanner.request(self.session.identity.hostname, self.session.identity.machine_identity)

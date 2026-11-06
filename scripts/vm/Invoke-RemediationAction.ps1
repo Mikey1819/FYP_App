@@ -21,6 +21,8 @@ $ErrorActionPreference = 'Stop'
 
 $LsaKey = 'SYSTEM\CurrentControlSet\Control\Lsa'
 $TsKey = 'SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services'
+# Firewall logging only; firewall on/off and inbound-block policy are never written (they could cut WinRM).
+$FwKey = 'SOFTWARE\Policies\Microsoft\WindowsFirewall'
 $Library = [ordered]@{
     'REM-1.1.1'    = @{ control_id = '1.1.1'; value = 24; kind = 'net_accounts'; option = '/uniquepw' }
     'REM-1.1.2'    = @{ control_id = '1.1.2'; value = 365; kind = 'net_accounts'; option = '/maxpwage' }
@@ -38,6 +40,10 @@ $Library = [ordered]@{
     'REM-17.2.3'   = @{ control_id = '17.2.3'; value = 3; kind = 'audit_flags'; guid = '0cce9235-69ae-11d9-bed3-505054503030' }
     'REM-17.5.1'   = @{ control_id = '17.5.1'; value = 2; kind = 'audit_flags'; guid = '0cce9217-69ae-11d9-bed3-505054503030' }
     'REM-17.5.4'   = @{ control_id = '17.5.4'; value = 3; kind = 'audit_flags'; guid = '0cce9215-69ae-11d9-bed3-505054503030' }
+    'REM-9.2.6'    = @{ control_id = '9.2.6'; value = 1; kind = 'reg_dword'; key = "$FwKey\PrivateProfile\Logging"; name = 'LogDroppedPackets' }
+    'REM-9.2.7'    = @{ control_id = '9.2.7'; value = 1; kind = 'reg_dword'; key = "$FwKey\PrivateProfile\Logging"; name = 'LogSuccessfulConnections' }
+    'REM-9.3.6'    = @{ control_id = '9.3.6'; value = 1; kind = 'reg_dword'; key = "$FwKey\PublicProfile\Logging"; name = 'LogDroppedPackets' }
+    'REM-9.3.7'    = @{ control_id = '9.3.7'; value = 1; kind = 'reg_dword'; key = "$FwKey\PublicProfile\Logging"; name = 'LogSuccessfulConnections' }
     'REM-18.10.57.2.2'   = @{ control_id = '18.10.57.2.2'; value = 1; kind = 'reg_dword'; key = $TsKey; name = 'DisablePasswordSaving' }
     'REM-18.10.57.3.9.1' = @{ control_id = '18.10.57.3.9.1'; value = 1; kind = 'reg_dword'; key = $TsKey; name = 'fPromptForPassword' }
     'REM-18.10.57.3.9.3' = @{ control_id = '18.10.57.3.9.3'; value = 2; kind = 'reg_dword'; key = $TsKey; name = 'SecurityLayer' }
@@ -152,7 +158,12 @@ function Invoke-LibraryAction($Entry) {
 
 if ($ListActions) {
     $table = [ordered]@{}
-    foreach ($id in $Library.Keys) { $table[$id] = [ordered]@{ control_id = $Library[$id].control_id; value = $Library[$id].value } }
+    foreach ($id in $Library.Keys) {
+        $entry = $Library[$id]
+        $row = [ordered]@{ control_id = $entry.control_id; value = $entry.value; kind = $entry.kind }
+        if ($entry.ContainsKey('key')) { $row['key'] = $entry.key; $row['name'] = $entry.name }  # Where a registry action writes.
+        $table[$id] = $row
+    }
     Write-Output ($table | ConvertTo-Json -Compress)
     return
 }

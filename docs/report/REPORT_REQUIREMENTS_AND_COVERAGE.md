@@ -86,7 +86,7 @@ Updated 1 November 2026. "Real VM" means the registered lab VM `WIN-VFT30DUDRHQ`
 | Capability | Evidence level | Remaining final-scope work |
 | --- | --- | --- |
 | 32 Stand-alone v2.0.0 controls | Source-reviewed catalogue; collector v5 collected all 32 on the real VM (30 Oct), including the 5 audit values | Independent comparison on the VM (runbook Part C, `cross_check_controls.py`) and the secpol.msc check of 1.1.5, 1.1.7, 2.3.10.1 |
-| 21 library actions | Exact request binding, 1-hour expiry, one-attempt VM ledger, fresh precondition read; 3 actions verified on the real VM (1.2.2, 1.1.1, 1.1.3) | The other 18 actions are verified on the simulated VM only |
+| 25 library actions | Exact request binding, 1-hour expiry, one-attempt VM ledger, fresh precondition read; 3 actions verified on the real VM (1.2.2, 1.1.1, 1.1.3) | The other 22 actions (including the 4 firewall logging actions added 6 Nov) are verified on the simulated VM only |
 | Four LLM agents | Orchestrator, Scanner, Analysis and Remediation tool loops on real qwen3:8b; 20-run and later evaluations on the simulated VM; one real-VM session | Plan-step reliability (see AGENTIC_ASSESSMENT); a real-VM drift round |
 | Risk and drift | Rule-derived I/P/L for all 32 controls; E from collected context; D from comparable history (rescans within a round excluded since 1 Nov) | User review of the attribute assignments (RISK_DERIVATION.md) |
 | Dashboard | Overview, Agentic hardening (5 tabs), History and drift; downloadable round report | Supervisor walkthrough (E08); report screenshots |
@@ -104,7 +104,7 @@ These descriptions summarise FR01–FR17; exact source wording is retained in [S
 | FR05 | Pass non-compliant findings to Analysis Agent | N2 / UC02 | Orchestrator `delegate_analysis`; **done** | Agent traces in every round |
 | FR06 | Compute deterministic risk for non-compliant findings | N2 / UC03 | Risk engine; **done**: rule-derived I/P/L, E and D | User review of attributes pending |
 | FR07 | Classify and prioritise scored findings | N2 / UC03 | Risk engine; **done**: levels 39/40, 59/60, 79/80; ties by control ID | Boundary tests |
-| FR08 | Recommend library actions for a defined remediable subset | N3 / UC04 | Orchestrator plan from 21 actions; **done** | Firewall actions excluded for channel safety |
+| FR08 | Recommend library actions for a defined remediable subset | N3 / UC04 | Orchestrator plan from 25 actions; **done** | Firewall on/off and inbound-block actions excluded for channel safety; firewall logging actions included (6 Nov) |
 | FR09 | Require administrator approval before changes | N3 / UC05 | Approval store; **done**: exact binding, expiry, one decision, optional comment | 0 unapproved writes in every evaluation |
 | FR10 | Execute an applicable approved predefined action | N3 / UC05 | Remediation Agent and VM runner; **done**: 3 actions on the real VM | Remaining actions simulated only |
 | FR11 | Reassess affected control after remediation | N3 / UC06 | Scanner verification rescan; **done** | Real VM 30 Oct: 3/3 verified |

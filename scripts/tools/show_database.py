@@ -179,10 +179,8 @@ class Viewer:
             outcome = r.get('outcome') or {}
             detail = (f"{len(outcome.get('proposals') or [])} proposed" if r['kind'] == 'assessment'
                       else f"{len(r.get('verdicts') or [])} verdict(s)")
-            goal = (r.get('goal') or {}).get('text') or ''
-            out.append((when(r['created_at']), r['round_id'][:12], r['kind'], outcome.get('outcome', '-'), detail,
-                        goal))
-        table(('created (MYT)', 'round ID', 'kind', 'outcome', 'detail', 'goal'), out)
+            out.append((when(r['created_at']), r['round_id'][:12], r['kind'], outcome.get('outcome', '-'), detail))
+        table(('created (MYT)', 'round ID', 'kind', 'outcome', 'detail'), out)
 
     def proposal_rows(self, sql_where='', params=()):
         out = []
@@ -212,8 +210,6 @@ class Viewer:
         print(f"  created {when(r['created_at'])} MYT, session {r['session_id']}")
         run = r.get('framework_run_id') or r.get('remediated_run_id')
         print(f"  scan run {run or '-'}" + (' (remediated)' if r['kind'] != 'assessment' else ''))
-        if r.get('goal'):
-            print(f"  goal: {r['goal']['text']!r}, read as: {r['goal']['read_as']}")
         print(f"  outcome: {outcome.get('outcome', '-')}")
         print(f"  {outcome.get('reason', '')}")
         if r['kind'] == 'assessment':

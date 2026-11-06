@@ -94,7 +94,9 @@ Any such attempt must be reported **separately** from this one, with its own exp
 
 ## Administrator goals (added 30 October)
 
-Recommendation 1 was revisited with a narrower design ([docs/ADMIN_GOALS_DESIGN.md](../design/ADMIN_GOALS_DESIGN.md)):
+> **Removed on 6 November 2026** as too inconsistent (see the results below). The section is kept as the record of what was tested.
+
+Recommendation 1 was revisited with a narrower design ([ADMIN_GOALS_DESIGN.md](../archive/ADMIN_GOALS_DESIGN.md)):
 
 - The model only translates the free-text goal into closed constraints. Code enforces them and can only narrow or reorder a plan.
 - 7 goals × 6 wordings were judged by their effect on the lab VM's 12 fixable findings.
