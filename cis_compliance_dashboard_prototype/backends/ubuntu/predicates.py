@@ -103,7 +103,7 @@ def _rules_cover(rules, *, paths=(), syscalls=(), arch=None, privileged=None, ui
     return set(syscalls) <= covered
 
 
-def evaluate(control_id, observations, *, reviewed_avahi_retention=False):
+def evaluate(control_id, observations, *, reviewed_avahi_retention=False, ssh_effective_authority=True):
     """Validated observations only; errors never interpolate raw evidence into diagnostics."""
     from .evidence import validate_observations
     observations = validate_observations(control_id, observations)
@@ -244,15 +244,20 @@ def evaluate(control_id, observations, *, reviewed_avahi_retention=False):
                     f.checks.append(Check('ssh.'+context['context_id']+'.'+option,'pass' if good else 'fail'))
     else:
         raise ValueError('Unregistered Ubuntu control')
-    _scap(f, control_id, reviewed_avahi_retention)
+    _scap(f, control_id, reviewed_avahi_retention, ssh_effective_authority)
     return combine(control_id, f.checks)
 
 
-def _scap(f, control_id, reviewed_avahi_retention):
+def _scap(f, control_id, reviewed_avahi_retention, ssh_effective_authority=True):
     """Selected SCAP rule results are corroborating subchecks; direct effective-state probes stay authoritative.
 
     A SCAP pass never cancels a direct failure. A SCAP failure without a direct failure is a conflict
     (Unknown), not a confirmed finding. Unresolved results never pass; not-applicable is neutral.
+    SSH (decided 2026-11-07): CIS 5.1.x audits the effective `sshd -T` value, with `-C` only for Match blocks.
+    When context resolution is complete (no Match blocks) and every audited context complies, a SCAP failure,
+    which for these rules demands an explicit configuration line CIS does not require, is an advisory
+    subcheck instead of a conflict. `ssh_effective_authority=False` is the earlier rule, kept so evidence
+    stored under it still verifies.
     """
     observation = f.observations.get('scap_rules')
     if observation is None:
@@ -261,6 +266,10 @@ def _scap(f, control_id, reviewed_avahi_retention):
         f.checks.append(Check('scap', observation['state'], 'Selected SCAP evaluation is unresolved'))
         return
     direct_failed = any(c.state == 'fail' for c in f.checks)
+    ssh_direct = [c for c in f.checks if c.name.startswith('ssh.')]
+    ssh_decided = (ssh_effective_authority and control_id in SSH and bool(ssh_direct)
+                   and all(c.state == 'pass' for c in ssh_direct)
+                   and any(c.name == 'ssh_context_resolution' and c.state == 'pass' for c in f.checks))
     for rule in SCAP_RULES[control_id]:
         name, result = 'scap.' + rule[len(SCAP_RULE_PREFIX):], observation['value'][rule]
         if result == 'pass':
@@ -268,6 +277,9 @@ def _scap(f, control_id, reviewed_avahi_retention):
         elif result == 'fail':
             if direct_failed:
                 f.checks.append(Check(name, 'fail', 'Agrees with a direct failure'))
+            elif ssh_decided:
+                f.checks.append(Check(name, 'advisory', 'CIS audits the effective sshd -T value, which complies in every '
+                                      'audited context; this SCAP rule also requires an explicit configuration line'))
             elif reviewed_avahi_retention and control_id == '2.1.2' and rule.endswith('_package_avahi_removed'):
                 f.checks.append(Check(name, 'inapplicable', 'Reviewed retention exception supersedes the removal rule'))
             else:

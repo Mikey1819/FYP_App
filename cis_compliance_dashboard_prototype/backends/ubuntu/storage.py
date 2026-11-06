@@ -267,9 +267,16 @@ class UbuntuStore:
              expected.evidence_mode) != (row['target_id'], row['registration_epoch'], row['request_id'],
                                          row['hostname'], row['evidence_mode'])):
             raise ValueError('Stored evidence ownership columns disagree')
-        bundle = parse_bundle(raw, expected, now=datetime.fromisoformat(row['imported_at']))
-        if bundle.completed_at != row['collected_at'] or _snapshot(bundle.assessments) != row['snapshot']:
+        imported = datetime.fromisoformat(row['imported_at'])
+        bundle = parse_bundle(raw, expected, now=imported)
+        if bundle.completed_at != row['collected_at']:
             raise ValueError('Stored assessment differs from current predicate evaluation; reassessment required')
+        if _snapshot(bundle.assessments) != row['snapshot']:
+            # Only a documented interpretation change may explain a difference: the stored snapshot must match
+            # the earlier SSH rule exactly; the evidence is then shown under the current rule.
+            earlier = parse_bundle(raw, expected, now=imported, ssh_effective_authority=False)
+            if _snapshot(earlier.assessments) != row['snapshot']:
+                raise ValueError('Stored assessment differs from current predicate evaluation; reassessment required')
         return StoredEvidence(raw, digest, expected, bundle.started_at, bundle.completed_at,
                               row['imported_at'], bundle.assessments)
 

@@ -586,3 +586,7 @@ The collector now resolves UFW's ordered rules for the loopback traffic classes,
 ## 7 November 2026 — patch job (1.2.2.1); every Ubuntu control has a fix family (integration)
 
 The collector now reports pending updates, holds, reboot-required and metadata freshness, all read-only. Added the 1.2.2.1 patch job (`apt-get update` + `upgrade`, supervised). It has no automatic restore, so the recovery is the VM snapshot, and the control stays a Manual review. **All 30 controls now have a registered fix family** (fixture-tested, not yet live-validated). Full suite: **484 passed**. The execution gate is still closed. Reinstall the helper before the next scan.
+
+## 7 November 2026 — SSH SCAP conflicts resolved by the CIS effective-value audit (integration)
+
+At the user's proposal, SSH controls whose effective `sshd -T` value complies in every audited context (no Match blocks) are no longer Unknown when an explicit-line SCAP rule fails; that rule is shown as advisory. Direct failures still win, and other controls are unchanged. Stored scans still verify against the rule they were saved under. The latest live scan reads 22 Non-Compliant and 8 Compliant: all 30 decided. Full suite: **488 passed**. Host-side only: restart the app; no VM change.

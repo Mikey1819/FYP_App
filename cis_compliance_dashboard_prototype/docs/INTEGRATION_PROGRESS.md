@@ -789,3 +789,20 @@ CIS 1.2.2.1 is Manual. Its remediation is `apt update && apt upgrade`, and "site
 - **Tests:** 6 new tests in `tests/integration/test_ubuntu_patch_family.py` (RED: 5 errors, 1 failure).
   - **Mutation checks, all caught:** a no-op restore, allowing broken dpkg, skipping `apt-get update`, treating a missing reboot flag as true, and a locking simulation.
 - Full suite **484 tests, all passed**; baseline: no protected changes; source check passes.
+
+## 2026-11-07 decision: SSH SCAP conflicts follow the CIS effective-value audit (closes the open SSH interpretation question)
+
+- **Live finding (scan 2026-11-06 17:06 UTC):** 5.1.10, 5.1.19 and 5.1.21 were Unknown.
+  - `sshd -T` reported `no` for HostbasedAuthentication, PermitEmptyPasswords and PermitUserEnvironment, with context resolution `complete` (no Match blocks).
+  - The selected SCAP rules (`disable_host_auth`, `sshd_disable_empty_passwords`, `sshd_do_not_permit_user_env`) failed; they require an explicit configuration line.
+- **CIS basis:** for all three, CIS's audit is `sshd -T | grep <option>`, with `sshd -T -C …` only when Match blocks are used (pp.529, 549, 553). CIS does not require an explicit line.
+- **Decision:** user-proposed on 2026-11-07 ("Resolve the disagreement between effective SSH settings and SCAP checks, verify applicable contexts, then reassess").
+  - **Rule:** for SSH controls only, when context resolution is complete and every audited `sshd -T` context complies, a failing SCAP rule becomes an `advisory` subcheck instead of a `conflict`. The new `advisory` state is neutral in `combine`; its reason names the explicit-line requirement.
+  - **Unchanged:** a direct failure still wins, and non-SSH conflicts stay Unknown. Without complete, audited contexts the SCAP result stays a conflict.
+- **Stored evidence:** the store verifies each envelope against its import-time snapshot.
+  - A difference is accepted only when the snapshot matches the earlier rule (`ssh_effective_authority=False`) exactly. The evidence is then shown under the current rule; any other difference is still rejected.
+  - All five stored live scans verify this way. The newest now reads **22 Non-Compliant, 8 Compliant, 0 Unknown, 0 Error**, so all 30 controls are decided. The earlier scans keep 2 Unknown (1.2.2.1 and 4.1.4, from before their collectors existed).
+- **Note on 1.2.2.1:** it is decided only because updates are pending (Non-Compliant). It is a CIS Manual control: with no pending updates it returns to Unknown (manual review) and is never machine-Compliant.
+- **Tests:** 4 new tests in `tests/integration/test_ubuntu_ssh_interpretation.py`, mirroring the live facts (RED: 3 failures, 1 error).
+  - **Mutation checks:** removing the resolution guard, the audited-context guard, the earlier-rule fallback, or accepting any snapshot is caught. The guard that every direct check passed is redundant defence in depth: a direct failure is handled first, and SSH direct checks only pass or fail.
+- Full suite **488 tests, all passed**; baseline: no protected changes. Restart the app to load the new rule; no helper reinstall is needed (host-side change only).
