@@ -546,3 +546,7 @@ Added fix families for password expiry (5.4.1.1, 365 days), expiry warning (5.4.
 ## 6 November 2026 — systemd supervision and rollback watchdog (integration, in progress)
 
 Added the target-side mechanisms that long and risky fixes need. Long jobs run in a bounded systemd unit that survives an SSH disconnect. Commit-confirm changes arm a rollback timer before the job starts. Unless the host confirms over a fresh SSH login, the timer restores the before-state, and a boot unit does the same after a reboot. The host executor understands `running` and `rolled_back`. No fix family uses these yet, and nothing was deployed. Full suite: **413 passed**. Fixture-only: the execution gate is closed.
+
+## 6 November 2026 — fix: Ubuntu assessment refused after a Streamlit reload (integration)
+
+A live **Assess without AI** failed with "Ubuntu workflow binding required". Streamlit's file watcher had re-imported the app modules mid-session, so the ledger kept in the session and the newly imported Ubuntu store disagreed about the binding class. Hot reload is now off (`fileWatcherType = "none"`); restart the app after code changes. Regression test added; 414 tests pass. No VM change.

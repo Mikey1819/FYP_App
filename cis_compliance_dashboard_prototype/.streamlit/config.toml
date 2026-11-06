@@ -31,3 +31,10 @@ borderColor = "#FFC72C"
 [client]
 # Hides the "Deploy" button: this workspace runs locally only.
 toolbarMode = "minimal"
+
+[server]
+# No hot reload. Streamlit's watcher evicts every app module on a source file event (OneDrive and indexers
+# can raise them), while the ledger and the live SSH session in session_state keep the old classes; the
+# Ubuntu store then rejected a valid workflow binding. Restart the app to load code changes.
+fileWatcherType = "none"
+runOnSave = false
