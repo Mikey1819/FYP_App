@@ -9,7 +9,8 @@ import tempfile
 import unittest
 
 from hardening.import_storage import ImportedEvidenceStore
-from test_evidence_import import export_fixture, MACHINE_UUID
+from hardening.server2022_catalogue import CATALOGUE
+from evidence_fixture import MACHINE_UUID, evidence_fixture, observation, result
 
 
 class ImportStorageTests(unittest.TestCase):
@@ -18,7 +19,7 @@ class ImportStorageTests(unittest.TestCase):
         self.addCleanup(folder.cleanup)
         self.path = Path(folder.name) / 'imports.sqlite3'
         self.store = ImportedEvidenceStore(self.path)
-        self.raw = json.dumps(export_fixture()).encode()
+        self.raw = json.dumps(evidence_fixture()).encode()
 
     def save(self):
         return self.store.save(self.raw, expected_hostname='FIXTURE-SERVER', expected_machine_uuid=MACHINE_UUID)
@@ -38,9 +39,9 @@ print(json.dumps({'raw':r.raw.decode(), 'values':[x.evidence.value for x in r.as
                                  capture_output=True, text=True, timeout=15,
                                  cwd=Path(__file__).resolve().parents[1])
         self.assertEqual(process.returncode, 0, process.stderr)
-        result = json.loads(process.stdout)
-        self.assertEqual(result['raw'].encode(), self.raw)
-        self.assertEqual(result['rules'], [14, [1, 5], False, 1, 1])
+        output = json.loads(process.stdout)
+        self.assertEqual(output['raw'].encode(), self.raw)
+        self.assertEqual(output['rules'], [json.loads(json.dumps(c.rule.expected)) for c in CATALOGUE])
 
     def test_duplicate_and_concurrent_uploads_preserve_first_snapshot(self):
         with ThreadPoolExecutor(max_workers=2) as pool:
@@ -60,14 +61,14 @@ print(json.dumps({'raw':r.raw.decode(), 'values':[x.evidence.value for x in r.as
         self.assertEqual(self.store.recent(), ())
 
     def test_error_and_unknown_survive_restart(self):
-        data = export_fixture()
-        data['observations'][0].update(state='error', value=None, error='timeout')
-        data['observations'][2].update(state='missing', value=None)  # Guest: non-policy, stays Unknown.
+        data = evidence_fixture()
+        observation(data, '1.1.4').update(state='error', value=None, error='timeout')
+        observation(data, '2.3.1.1').update(state='missing', value=None)  # Guest: non-policy, stays Unknown.
         self.raw = json.dumps(data).encode()
         saved, _ = self.save()
         reopened = ImportedEvidenceStore(self.path).get(saved.assessment.source_sha256)
-        self.assertEqual(reopened.assessment.results[0].status.value, 'Error')
-        self.assertEqual(reopened.assessment.results[2].status.value, 'Unknown')
+        self.assertEqual(result(reopened.assessment, '1.1.4').status.value, 'Error')
+        self.assertEqual(result(reopened.assessment, '2.3.1.1').status.value, 'Unknown')
 
     def test_snapshots_reject_sql_overwrites_deletes_and_replacement(self):
         self.save()

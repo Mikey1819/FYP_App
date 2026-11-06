@@ -1,133 +1,114 @@
-from copy import deepcopy
+"""Evidence format validation with fixture exports; no VM."""
 from datetime import datetime, timezone
 import json
 import unittest
 
 from hardening.domain import Status, summarise
 from hardening.evidence_import import load_evidence
-from hardening.server2022_catalogue import BENCHMARK_SHA256, CATALOGUE_ID, COLLECTOR_ID, PROFILE, SOURCES
-
-
-NOW = datetime(2026, 10, 19, 2, tzinfo=timezone.utc)
-MACHINE_UUID = '2ca18359-73dc-49ef-9dd3-18602c0d9b55'
-
-
-def export_fixture():
-    return {
-        'schema_version': 1, 'collector_id': COLLECTOR_ID, 'catalogue_id': CATALOGUE_ID,
-        'benchmark_sha256': BENCHMARK_SHA256, 'profile': PROFILE, 'evidence_mode': 'Imported',
-        'started_at': '2026-10-19T01:00:00+00:00', 'completed_at': '2026-10-19T01:00:30+00:00',
-        'target': {'hostname': 'FIXTURE-SERVER', 'machine_uuid': MACHINE_UUID,
-                   'os_caption': 'Microsoft Windows Server 2022 Standard Evaluation',
-                   'os_version': '10.0.20348', 'build_number': '20348', 'os_architecture': '64-bit',
-                   'product_type': 3, 'part_of_domain': False, 'domain_role': 2},
-        'observations': [dict(control_id=key, source=source, state='ok', value=value, error=None,
-                              collected_at='2026-10-19T01:00:15+00:00')
-                         for (key, source), value in zip(SOURCES.items(), [14, 5, False, 1, 1])],
-    }
-
-
-def load(payload, **kwargs):
-    return load_evidence(json.dumps(payload).encode(), expected_hostname='FIXTURE-SERVER',
-                         expected_machine_uuid=MACHINE_UUID, now=NOW, **kwargs)
+from hardening.server2022_catalogue import CATALOGUE
+from evidence_fixture import MACHINE_UUID, NOW, evidence_fixture, load, observation, result
 
 
 class EvidenceImportTests(unittest.TestCase):
-    def test_valid_import_uses_reviewed_rules_not_demo_and_is_repeatable(self):
-        payload = export_fixture()
+    def test_valid_export_uses_reviewed_rules_and_is_repeatable(self):
+        payload = evidence_fixture()
         a, b = load(payload), load(payload)
         self.assertEqual(a, b)
-        self.assertEqual(summarise(a.results).compliant, 5)
+        self.assertEqual(summarise(a.results).compliant, 32)
         self.assertTrue(all(r.control.source_verified for r in a.results))
         self.assertTrue(all(r.evidence.mode.value == 'Imported' for r in a.results))
         self.assertEqual(a.target_id, 'windows:' + MACHINE_UUID)
 
     def test_real_lockout_and_password_boundaries(self):
-        for index, cases in ((0, [(13, False), (14, True), (15, True)]),
-                             (1, [(0, False), (1, True), (5, True), (6, False), (10, False)])):
+        for control, cases in (('1.1.4', [(13, False), (14, True), (15, True)]),
+                               ('1.2.2', [(0, False), (1, True), (5, True), (6, False), (10, False)])):
             for value, passes in cases:
-                with self.subTest(index=index, value=value):
-                    data = export_fixture()
-                    data['observations'][index]['value'] = value
-                    self.assertEqual(load(data).results[index].status,
+                with self.subTest(control=control, value=value):
+                    data = evidence_fixture()
+                    observation(data, control)['value'] = value
+                    self.assertEqual(result(load(data), control).status,
                                      Status.COMPLIANT if passes else Status.NON_COMPLIANT)
 
     def test_guest_and_policy_dword_comparisons(self):
-        for index, value in [(2, True), (3, 0), (3, 2), (4, 0), (4, 2)]:
-            data = export_fixture()
-            data['observations'][index]['value'] = value
-            self.assertEqual(load(data).results[index].status, Status.NON_COMPLIANT)
+        for control, value in [('2.3.1.1', True), ('9.3.1', 0), ('9.3.1', 2),
+                               ('18.10.57.3.9.4', 0), ('18.10.57.3.9.4', 2)]:
+            data = evidence_fixture()
+            observation(data, control)['value'] = value
+            self.assertEqual(result(load(data), control).status, Status.NON_COMPLIANT)
 
     def test_missing_policy_and_failed_export_are_not_passes(self):
-        data = export_fixture()
-        for index in (0, 1):
-            data['observations'][index].update(state='error', value=None, error='timeout')
-        for index in (2, 3, 4):  # Guest (non-policy), Public firewall and NLA (Group Policy).
-            data['observations'][index].update(state='missing', value=None)
+        data = evidence_fixture()
+        for control in ('1.1.4', '1.2.2'):
+            observation(data, control).update(state='error', value=None, error='timeout')
+        for control in ('2.3.1.1', '9.3.1', '18.10.57.3.9.4'):  # Guest (non-policy), Public firewall and NLA (Group Policy).
+            observation(data, control).update(state='missing', value=None)
         summary = summarise(load(data).results)
         # D5: absent policies fail as Non-Compliant; an absent non-policy value stays Unknown. Neither passes.
         self.assertEqual((summary.selected, summary.compliant, summary.non_compliant, summary.errors, summary.unknown),
-                         (5, 0, 2, 2, 1))
+                         (32, 27, 2, 2, 1))
 
     def test_rejects_other_platforms_roles_and_boolean_identity_fields(self):
         for key, value in [('os_caption', 'Windows 11'), ('os_version', '10.0.26100'),
                            ('build_number', '26100'), ('os_architecture', '32-bit'),
                            ('product_type', 1), ('product_type', True), ('domain_role', 3),
                            ('domain_role', True), ('part_of_domain', True), ('part_of_domain', 0)]:
-            data = export_fixture()
+            data = evidence_fixture()
             data['target'][key] = value
             with self.subTest(key=key, value=value), self.assertRaises(ValueError): load(data)
 
     def test_rejects_wrong_host_or_uuid(self):
         for key, value in [('hostname', 'OTHER'), ('machine_uuid', 'cb095a4c-5a1c-48fe-b199-fda775b130a8'),
                            ('machine_uuid', '00000000-0000-0000-0000-000000000000')]:
-            data = export_fixture()
+            data = evidence_fixture()
             data['target'][key] = value
             with self.assertRaises(ValueError): load(data)
 
-    def test_catalogue_provenance_and_extra_fields_cannot_be_overridden(self):
-        for key, value in [('schema_version', True), ('collector_id', 'shell'), ('catalogue_id', 'demo-v1'),
-                           ('benchmark_sha256', 'anything'), ('profile', 'L2'), ('evidence_mode', 'Live'),
-                           ('command', 'Set-Something')]:
-            data = export_fixture()
+    def test_format_and_catalogue_identity_cannot_be_overridden(self):
+        for key, value in [('schema_version', True), ('schema_version', 4), ('schema_version', 6),
+                           ('collector_id', 'shell'), ('collector_id', 'server2022-readonly-v4'),
+                           ('catalogue_id', 'demo-v1'), ('benchmark_sha256', 'anything'), ('profile', 'L2'),
+                           ('evidence_mode', 'Live'), ('command', 'Set-Something')]:
+            data = evidence_fixture()
             data[key] = value
-            with self.subTest(key=key), self.assertRaises(ValueError): load(data)
+            with self.subTest(key=key, value=value), self.assertRaises(ValueError): load(data)
+        data = evidence_fixture(); del data['effective_context']
+        with self.assertRaises(ValueError): load(data)
 
-    def test_all_five_unique_controls_required_and_sources_fixed(self):
+    def test_every_control_required_once_with_its_fixed_source(self):
         variants = []
-        data = export_fixture(); data['observations'].pop(); variants.append(data)
-        data = export_fixture(); data['observations'][1] = deepcopy(data['observations'][0]); variants.append(data)
-        data = export_fixture(); data['observations'][1]['control_id'] = 'unknown'; variants.append(data)
-        data = export_fixture(); data['observations'][1]['source'] = 'model guessed'; variants.append(data)
-        data = export_fixture(); data['observations'][1]['approved'] = True; variants.append(data)
+        data = evidence_fixture(); data['observations'].pop(); variants.append(data)
+        data = evidence_fixture(); data['observations'][1] = dict(data['observations'][0]); variants.append(data)
+        data = evidence_fixture(); data['observations'][1]['control_id'] = 'unknown'; variants.append(data)
+        data = evidence_fixture(); data['observations'][1]['source'] = 'model guessed'; variants.append(data)
+        data = evidence_fixture(); data['observations'][1]['approved'] = True; variants.append(data)
         for data in variants:
             with self.assertRaises(ValueError): load(data)
 
     def test_no_string_bool_float_or_negative_coercion(self):
-        for index, values in [(0, [True, '14', 14.0, -1, None, {}]),
-                              (2, [0, 'false', None, []]), (4, [True, '1', 1.0, 2**32])]:
+        for control, values in [('1.1.4', [True, '14', 14.0, -1, None, {}]),
+                                ('2.3.1.1', [0, 'false', None, []]), ('18.10.57.3.9.4', [True, '1', 1.0, 2**32])]:
             for value in values:
-                data = export_fixture(); data['observations'][index]['value'] = value
-                with self.subTest(index=index, value=value), self.assertRaises(ValueError): load(data)
+                data = evidence_fixture(); observation(data, control)['value'] = value
+                with self.subTest(control=control, value=value), self.assertRaises(ValueError): load(data)
 
     def test_invalid_observation_states_and_errors(self):
         for state, value, error in [('ok', 14, 'timeout'), ('missing', 0, None),
                                     ('missing', None, 'timeout'), ('error', 14, 'timeout'),
                                     ('error', None, 'secret raw exception'), ('error', None, []),
                                     ('unknown', None, None)]:
-            data = export_fixture(); data['observations'][0].update(state=state, value=value, error=error)
+            data = evidence_fixture(); observation(data, '1.1.4').update(state=state, value=value, error=error)
             with self.subTest(state=state, error=error), self.assertRaises(ValueError): load(data)
 
     def test_timestamp_order_timezone_and_future_bounds(self):
         for key, value in [('started_at', '2026-10-19T01:01:00Z'),
                            ('started_at', '2026-10-19T00:00:00Z'),
                            ('completed_at', '2026-10-19T01:00:30'), ('completed_at', 'invalid')]:
-            data = export_fixture(); data[key] = value
+            data = evidence_fixture(); data[key] = value
             with self.assertRaises(ValueError): load(data)
-        data = export_fixture(); data['observations'][0]['collected_at'] = '2026-10-19T01:00:31Z'
+        data = evidence_fixture(); observation(data, '1.1.4')['collected_at'] = '2026-10-19T01:00:31Z'
         with self.assertRaises(ValueError): load(data)
         with self.assertRaises(ValueError):
-            load_evidence(json.dumps(export_fixture()).encode(), expected_hostname='FIXTURE-SERVER',
+            load_evidence(json.dumps(evidence_fixture()).encode(), expected_hostname='FIXTURE-SERVER',
                           expected_machine_uuid=MACHINE_UUID, now=datetime(2020, 1, 1, tzinfo=timezone.utc))
 
     def test_malformed_oversized_duplicate_and_nonfinite_json(self):
@@ -136,15 +117,15 @@ class EvidenceImportTests(unittest.TestCase):
                 load_evidence(raw, expected_hostname='FIXTURE-SERVER', expected_machine_uuid=MACHINE_UUID, now=NOW)
 
     def test_nested_malformed_identity_and_metadata_raise_validation_errors(self):
-        for key in export_fixture()['target']:
-            data = export_fixture(); data['target'][key] = {'untrusted': True}
+        for key in evidence_fixture()['target']:
+            data = evidence_fixture(); data['target'][key] = {'untrusted': True}
             with self.subTest(key=key), self.assertRaises(ValueError): load(data)
 
     def test_bom_and_different_observation_order_supported(self):
-        data = export_fixture(); data['observations'].reverse()
-        result = load_evidence(b'\xef\xbb\xbf' + json.dumps(data).encode(), expected_hostname='fixture-server',
+        data = evidence_fixture(); data['observations'].reverse()
+        loaded = load_evidence(b'\xef\xbb\xbf' + json.dumps(data).encode(), expected_hostname='fixture-server',
                                expected_machine_uuid=MACHINE_UUID.upper(), now=NOW)
-        self.assertEqual([r.control.control_id for r in result.results], list(SOURCES))
+        self.assertEqual([r.control.control_id for r in loaded.results], [c.control_id for c in CATALOGUE])
 
 
 if __name__ == '__main__':

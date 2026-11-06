@@ -75,7 +75,7 @@ class InvestigationLog:
                                       (assessment_id,)).fetchall()
         return tuple(self.get(row[0]) for row in rows)
 
-
+# Run the cycle where the model ask for a tool and get the result back
 class Coordinator:
     def __init__(self, client, tools, *, limits=Limits(), clock=time.monotonic):
         self.client, self.tools, self.limits, self.clock = client, tools, limits, clock
