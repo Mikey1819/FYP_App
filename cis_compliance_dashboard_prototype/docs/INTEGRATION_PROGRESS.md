@@ -806,3 +806,24 @@ CIS 1.2.2.1 is Manual. Its remediation is `apt update && apt upgrade`, and "site
 - **Tests:** 4 new tests in `tests/integration/test_ubuntu_ssh_interpretation.py`, mirroring the live facts (RED: 3 failures, 1 error).
   - **Mutation checks:** removing the resolution guard, the audited-context guard, the earlier-rule fallback, or accepting any snapshot is caught. The guard that every direct check passed is redundant defence in depth: a direct failure is handled first, and SSH direct checks only pass or fail.
 - Full suite **488 tests, all passed**; baseline: no protected changes. Restart the app to load the new rule; no helper reinstall is needed (host-side change only).
+
+## 2026-11-07 execution acceptance: runner probe, marker scenarios and an evidence-based execution gate
+
+The execution gate was a hard-coded "closed". It now opens only on evidence.
+
+- **Target:**
+  - `runner {"op":"probe"}` is read-only. It reports the installed helper's collector digest, every registered family's version and implementation hash, whether `systemd-run` exists, and whether `fyp-hardening-boot-rollback.service` is enabled.
+  - `vm/ubuntu/family_acceptance.py` (`acceptance.marker.v1`) is a commit-confirm family (30 s job, 60 s window). Its only write is `/var/lib/fyp-hardening/acceptance/marker` in the runner's root-only state directory, and it never touches system configuration.
+  - The request schema accepts the control binding `acceptance` (predicate `ubuntu.acceptance.predicate.v1`) and action IDs `acceptance.*`.
+  - On the host the marker is an auxiliary action (with `recovery.restore.v1`), never a CIS family.
+- **Ledger:** append-only `acceptance_runs` (scenario, runner digest, exact approved request bytes) and `acceptance_outcomes`. The first settled outcome is the only one recorded.
+- **Backend:**
+  - `deployment_status` is the cached probe check. It needs the helper digest equal to this application's, identical family versions and hashes for the host registry plus auxiliaries, the launcher present, and boot rollback enabled. A runner that refuses the probe counts as "not deployed".
+  - `start_acceptance` previews, plans, approves with the named operator and dispatches through the normal executor and ledger. Only one run can be open at a time.
+  - `acceptance_status` only checks status and settles a run as `confirmed`, `rolled_back` or `failed:<code>`.
+  - `confirm_acceptance` uses the same fresh-login rule as fixes, and refuses the rollback scenario, which must be left to its timer.
+- **Gate (`execution_gate(backend)`):** open only when the deployment checks pass **and** this target has a `confirm` run settled `confirmed` **and** a `rollback` run settled `rolled_back`, both recorded against the currently deployed runner digest. A reinstalled or updated helper needs new acceptance runs.
+- **Tests:**
+  - `test_ubuntu_acceptance_target.py` (6) and `test_ubuntu_acceptance_host.py` (7), written first (RED: 5 and 7 errors). The two registry tests now expect the marker in the target registry as an auxiliary.
+  - **Mutation checks, all caught after strengthening:** ignoring the runner digest, one scenario being enough, confirming the rollback scenario, skipping the boot-rollback check, skipping the helper check, and parallel runs. Two tests first missed the digest binding and the parallel-run guard and were strengthened.
+- Full suite **501 tests, all passed**. Nothing is deployed; the gate stays closed until `install-runner.sh` is approved and both scenarios pass on the VM.

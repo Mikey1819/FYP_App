@@ -55,5 +55,14 @@ class SystemdLauncher:
     def stop_job(self, request_id):
         self._call(['/usr/bin/systemctl', 'stop', 'fyp-hardening-job-' + _rid(request_id) + '.service'])
 
+    def available(self):
+        from pathlib import Path
+        return Path('/usr/bin/systemd-run').exists() and Path('/usr/bin/systemctl').exists()
+
+    def boot_rollback_state(self):
+        """'enabled' when the boot rollback unit is enabled; the unit ships uninstalled until runner deployment."""
+        return 'enabled' if self.run(['/usr/bin/systemctl', 'is-enabled', '--quiet',
+                                      'fyp-hardening-boot-rollback.service']) == 0 else 'not-enabled'
+
     def disarm_rollback(self, request_id):
         self._call(['/usr/bin/systemctl', 'stop', 'fyp-hardening-rollback-' + _rid(request_id) + '.timer'])

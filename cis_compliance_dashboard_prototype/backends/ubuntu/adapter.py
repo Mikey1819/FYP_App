@@ -46,10 +46,34 @@ def assessment_gate():
     return ()
 
 
-def execution_gate():
-    """Reasons Ubuntu writes must not be dispatched. Closed until the task 10 acceptance gates are met."""
-    return ('Ubuntu execution is not enabled: the root-owned runner deployment, systemd supervision and SSH/UFW '
-            'recovery-watchdog acceptance gates are pending; no write was dispatched.',)
+def execution_gate(backend=None):
+    """Reasons Ubuntu writes must not be dispatched; empty only on evidence.
+
+    Open only when the deployed runner matches this application (helper digest, every family version and hash,
+    systemd launcher, enabled boot rollback) and this target passed both live acceptance scenarios against that
+    same deployment: a commit-confirm change confirmed over a fresh login, and one restored by the rollback timer.
+    """
+    prefix = 'Ubuntu execution is not enabled: '
+    if backend is None:
+        return (prefix + 'the runner deployment and live acceptance are unverified; no write was dispatched.',)
+    return tuple(prefix + reason for reason in backend._execution_reasons())
+
+
+@dataclass(frozen=True)
+class DeploymentStatus:
+    ok: bool
+    reasons: tuple
+    runner_digest: str | None
+
+
+@dataclass(frozen=True)
+class AcceptanceRun:
+    request_id: str
+    scenario: str
+    nonce: str
+    state: str
+    code: str
+    outcome: str | None
 
 
 @dataclass(frozen=True)
@@ -96,6 +120,7 @@ class UbuntuBackend(BoundBackend):
         if families is None:
             from .actions import FAMILIES as families  # empty until reviewed families are implemented
         self.families = families
+        self._deployment = None  # read-only runner probe, cached for this verified connection
 
     def capabilities(self, connection_session_id):
         self.check(connection_session_id)
@@ -105,10 +130,10 @@ class UbuntuBackend(BoundBackend):
                           ('The local model (qwen3:8b) is unavailable; Assess without AI remains usable.',))
         if not self.families:
             reasons += ('No Ubuntu remediation family is implemented yet: rounds defer every finding and propose no fix.',)
-        reasons += execution_gate()
+        reasons += execution_gate(self)
         if not _risk_policy().activated:
             reasons += ('Ubuntu risk ranking is withheld: the risk-attribute manifest is pending human review.',)
-        return Capabilities(not gate, bool(self.families) and not execution_gate(), bool(model), bool(gate), reasons)
+        return Capabilities(not gate, bool(self.families) and not execution_gate(self), bool(model), bool(gate), reasons)
 
     def _findings(self, store, row, evidence):
         """Deterministic ranking only under a reviewed policy; prior rounds of this target/epoch give D."""
@@ -471,7 +496,7 @@ class UbuntuBackend(BoundBackend):
         from .approvals import ApprovedRequest
         from .executor import execute
         binding = self.check(connection_session_id, workflow_session_id, round_ref)
-        gate = execution_gate()
+        gate = execution_gate(self)
         if gate:
             raise ValueError(gate[0])
         store = self._store()
@@ -506,6 +531,168 @@ class UbuntuBackend(BoundBackend):
         if result.receipt_raw is not None:
             store.record_receipt(binding, proposal.proposal_id, result.receipt_raw)
         return result
+
+    # ---- execution acceptance: deployment probe and the two live scenarios ----------------------------
+    def deployment_status(self, connection_session_id):
+        """Read-only probe of the root-owned runner, cached per verified connection."""
+        self.check(connection_session_id)
+        if self._deployment is None:
+            self._deployment = self._probe_deployment()
+        return self._deployment
+
+    def _probe_deployment(self):
+        from vm.ubuntu.provenance import collector_digest
+        from .actions import AUXILIARY
+        try:
+            probe = json.loads(self.session.channel.invoke_runner(b'{"op":"probe"}\n'))
+            if type(probe) is not dict or set(probe) != {'collector_digest', 'families', 'launcher', 'boot_rollback'}:
+                raise ValueError('Unexpected probe')
+        except Exception:
+            return DeploymentStatus(False, ('The root-owned runner is not deployed or refused the probe; install-runner.sh '
+                                            'needs its separate approval.',), None)
+        reasons = []
+        if probe['collector_digest'] != collector_digest(APP / 'vm' / 'ubuntu'):
+            reasons.append('The deployed helper differs from this application; reinstall the bundle first.')
+        expected = {aid: [spec.version, spec.implementation_sha256] for aid, spec in dict(self.families, **AUXILIARY).items()}
+        if any(probe['families'].get(aid) != value for aid, value in expected.items()):
+            reasons.append('The deployed runner registers different fix families or versions.')
+        if probe['launcher'] is not True:
+            reasons.append('systemd-run is unavailable on the VM, so supervised jobs cannot run.')
+        if probe['boot_rollback'] != 'enabled':
+            reasons.append('The boot rollback unit is not enabled (install-runner.sh).')
+        return DeploymentStatus(not reasons, tuple(reasons), probe['collector_digest'])
+
+    def _acceptance_runs(self):
+        s = self.session
+        return self.ledger.acceptance_runs(s.target_id, s.registration_epoch)
+
+    def _execution_reasons(self):
+        deployment = self.deployment_status(self.session.connection_session_id)
+        if not deployment.ok:
+            return deployment.reasons
+        passed = {(r['scenario'], r['outcome']) for r in self._acceptance_runs()
+                  if r['runner_digest'] == deployment.runner_digest}
+        reasons = []
+        if ('confirm', 'confirmed') not in passed:
+            reasons.append('Execution acceptance pending: run the confirm scenario (apply, reconnect, confirm).')
+        if ('rollback', 'rolled_back') not in passed:
+            reasons.append('Execution acceptance pending: run the rollback scenario (apply, do not confirm; '
+                           'the timer restores it).')
+        return tuple(reasons)
+
+    def _acceptance_view(self, run, receipt=None):
+        params = json.loads(run['raw'])['parameters']
+        code = receipt['code'] if receipt is not None else (run['outcome'] or 'job_started')
+        state = receipt['outcome'] if receipt is not None else ('settled' if run['outcome'] else 'running')
+        return AcceptanceRun(run['request_id'], run['scenario'], params['nonce'], state, code, run['outcome'])
+
+    def _settle_acceptance(self, run, receipt):
+        if receipt['outcome'] == 'applied' and receipt['code'] == 'confirmed':
+            outcome = 'confirmed'
+        elif receipt['outcome'] == 'rolled_back':
+            outcome = 'rolled_back'
+        elif receipt['outcome'] in ('running', 'unresolved'):
+            return None
+        else:
+            outcome = 'failed:' + receipt['code']
+        self.ledger.settle_acceptance(run['request_id'], outcome)
+        return outcome
+
+    def start_acceptance(self, connection_session_id, scenario, operator, operation_id):
+        """Apply the harmless marker through the real approval, runner and systemd path."""
+        from datetime import datetime, timezone
+        from vm.ubuntu.remediation_schema import canonical
+        from .actions import AUXILIARY, plan_action
+        from .approvals import approve
+        from .executor import execute
+        self.check(connection_session_id)
+        if scenario not in ('confirm', 'rollback') or type(operator) is not str or not operator.strip():
+            raise ValueError('Choose the confirm or rollback scenario and name the operator')
+        deployment = self.deployment_status(connection_session_id)
+        if not deployment.ok:
+            raise ValueError(deployment.reasons[0])
+        if any(r['outcome'] is None for r in self._acceptance_runs()):
+            raise ValueError('An acceptance run is still open; check its status first')
+        s, spec, nonce = self.session, AUXILIARY['acceptance.marker.v1'], uuid4().hex
+        params = {'scenario': scenario, 'nonce': nonce}
+        preview = json.loads(self.session.channel.invoke_runner(
+            canonical({'op': 'preview', 'action_id': spec.action_id, 'parameters': params}) + b'\n'))
+        binding = self.ledger.assessment_binding('ubuntu', s.target_id, s.registration_epoch, 'acceptance:' + operation_id)
+        plan = plan_action(spec, families=AUXILIARY, parameters=params, target_id=s.target_id,
+                           registration_epoch=s.registration_epoch, hostname=s.identity.hostname,
+                           machine_id=s.identity.machine_identity, workflow_session_id=binding.workflow_session_id,
+                           round_id=nonce, evidence_sha256=hashlib.sha256(deployment.runner_digest.encode()).hexdigest(),
+                           control_id='acceptance', predicate_id='ubuntu.acceptance.predicate.v1',
+                           before_state_sha256=preview['before_state_sha256'],
+                           expected_after_sha256=preview['expected_after_sha256'],
+                           before_state_collected_at=preview['collected_at'], recovery=spec.recovery,
+                           job_deadline_seconds=spec.max_seconds)
+        approved = approve(plan, operator, datetime.now(timezone.utc))
+        request_id = approved.request['request_id']
+        self.ledger.add_acceptance(request_id, s.target_id, s.registration_epoch, scenario, deployment.runner_digest,
+                                   approved.raw)
+        result = execute(approved, ledger=self.ledger, binding=binding, operation_id=_execution_operation(request_id),
+                         dispatch=lambda data: self.session.channel.invoke_runner(b'{"op":"execute"}\n' + data),
+                         now=datetime.now(timezone.utc))
+        run = next(r for r in self._acceptance_runs() if r['request_id'] == request_id)
+        if result.receipt is not None:
+            self._settle_acceptance(run, result.receipt)
+            run = next(r for r in self._acceptance_runs() if r['request_id'] == request_id)
+        return self._acceptance_view(run, result.receipt)
+
+    def acceptance_status(self, connection_session_id):
+        """Target status of open acceptance runs (never a write); settled runs are read from the ledger."""
+        from vm.ubuntu.remediation_schema import canonical, parse_request
+        from .approvals import ApprovedRequest
+        from .executor import reconcile
+        self.check(connection_session_id)
+        views = []
+        for run in self._acceptance_runs():
+            receipt = None
+            if run['outcome'] is None:
+                raw = run['raw']
+                approved = ApprovedRequest(raw, hashlib.sha256(raw).hexdigest(), parse_request(raw))
+                header = canonical({'op': 'reconcile', 'request_id': run['request_id']})
+                result = reconcile(approved, ledger=self.ledger, operation_id=_execution_operation(run['request_id']),
+                                   status=lambda rid: self.session.channel.invoke_runner(header + b'\n'))
+                receipt = result.receipt
+                if receipt is not None:
+                    operation = _execution_operation(run['request_id'])
+                    if (receipt['code'] == 'awaiting_confirmation'
+                            and self.ledger.first_event(operation, 'awaiting_confirmation') is None):
+                        self.ledger.note(operation, 'awaiting_confirmation')
+                    if self._settle_acceptance(run, receipt):
+                        run = next(r for r in self._acceptance_runs() if r['request_id'] == run['request_id'])
+            views.append(self._acceptance_view(run, receipt))
+        return tuple(views)
+
+    def confirm_acceptance(self, connection_session_id, request_id):
+        """The confirm scenario only, over a login begun after the host saw it waiting."""
+        from datetime import datetime
+        from vm.ubuntu.remediation_schema import canonical, parse_request
+        from .approvals import ApprovedRequest
+        from .executor import confirm
+        self.check(connection_session_id)
+        run = next((r for r in self._acceptance_runs() if r['request_id'] == request_id and r['outcome'] is None), None)
+        if run is None:
+            raise ValueError('No open acceptance run with this request')
+        if run['scenario'] != 'confirm':
+            raise ValueError('The rollback scenario must be left to its timer; do not confirm it')
+        operation = _execution_operation(request_id)
+        observed = self.ledger.first_event(operation, 'awaiting_confirmation')
+        login = self.session.connected_at
+        if observed is None or not login or datetime.fromisoformat(login) <= datetime.fromisoformat(observed):
+            raise ValueError('Confirmation needs a fresh login: disconnect, reconnect to the VM, then confirm. '
+                             'That new login is the proof the change kept SSH working.')
+        raw = run['raw']
+        approved = ApprovedRequest(raw, hashlib.sha256(raw).hexdigest(), parse_request(raw))
+        header = canonical({'op': 'confirm', 'request_id': request_id})
+        result = confirm(approved, ledger=self.ledger, operation_id=operation,
+                         send=lambda rid: self.session.channel.invoke_runner(header + b'\n'))
+        if result.receipt is not None:
+            self._settle_acceptance(run, result.receipt)
+        run = next(r for r in self._acceptance_runs() if r['request_id'] == request_id)
+        return self._acceptance_view(run, result.receipt)
 
     # ---- supervised jobs: status and reconnect-to-confirm ---------------------------------------
     def _open_requests(self, store, binding, latest):
@@ -652,7 +839,7 @@ class UbuntuBackend(BoundBackend):
     def dispatch_auxiliary(self, connection_session_id, workflow_session_id, proposal_ref, operation_id):
         """Run one approved recovery proposal once, behind the same gates, then verify with a fresh scan."""
         binding = self.check(connection_session_id, workflow_session_id, proposal_ref)
-        gate = execution_gate()
+        gate = execution_gate(self)
         if gate:
             raise ValueError(gate[0])
         store = self._store()

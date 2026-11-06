@@ -179,6 +179,16 @@ class Runner:
             return 'invalid_parameters'
         return None
 
+    # ---- read-only deployment probe --------------------------------------------------------
+    def probe(self):
+        """What is deployed: helper digest, registered families, systemd launcher and boot rollback. Reads only."""
+        from .provenance import collector_digest
+        launcher = self.launcher
+        return {'collector_digest': collector_digest(),
+                'families': {aid: [f.version, f.implementation_sha256] for aid, f in sorted(self.families.items())},
+                'launcher': bool(launcher is not None and getattr(launcher, 'available', lambda: True)()),
+                'boot_rollback': getattr(launcher, 'boot_rollback_state', lambda: 'unknown')() if launcher else 'unknown'}
+
     # ---- read-only preview ----------------------------------------------------------------
     def preview(self, action_id, params):
         """The digests a plan must carry and a sanitized change summary. Reads only; takes no fence."""

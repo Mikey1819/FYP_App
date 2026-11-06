@@ -16,7 +16,7 @@ LIMIT = REQUEST_LIMIT + 4096
 STATE = '/var/lib/fyp-hardening/runner'
 REFUSED = b'fyp-hardening: runner refused\n'
 HEADERS = {'preview': {'op', 'action_id', 'parameters'}, 'execute': {'op'}, 'reconcile': {'op', 'request_id'},
-           'confirm': {'op', 'request_id'}}
+           'confirm': {'op', 'request_id'}, 'probe': {'op'}}
 UNIT_OPS = ('job', 'rollback')  # argv-only, from systemd units; the sudo rule allows the runner no arguments
 
 
@@ -86,6 +86,10 @@ def main(stdin=None, stdout=None, stderr=None, *, runner_factory=None, argv=None
             if payload:
                 raise ValueError('Preview takes no payload')
             result = canonical(runner.preview(header['action_id'], header['parameters']))
+        elif header['op'] == 'probe':
+            if payload:
+                raise ValueError('Probe takes no payload')
+            result = canonical(runner.probe())
         elif header['op'] == 'execute':
             result = runner.execute(payload)
         else:

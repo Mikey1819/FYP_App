@@ -590,3 +590,7 @@ The collector now reports pending updates, holds, reboot-required and metadata f
 ## 7 November 2026 — SSH SCAP conflicts resolved by the CIS effective-value audit (integration)
 
 At the user's proposal, SSH controls whose effective `sshd -T` value complies in every audited context (no Match blocks) are no longer Unknown when an explicit-line SCAP rule fails; that rule is shown as advisory. Direct failures still win, and other controls are unchanged. Stored scans still verify against the rule they were saved under. The latest live scan reads 22 Non-Compliant and 8 Compliant: all 30 decided. Full suite: **488 passed**. Host-side only: restart the app; no VM change.
+
+## 7 November 2026 — execution acceptance replaces the hard-coded gate (integration)
+
+The Ubuntu execution gate now opens only on evidence. The deployed runner must match this application exactly, with systemd and boot rollback in place. The VM must also pass two live acceptance runs of a harmless marker: one confirmed over a fresh login, one restored by the rollback timer. The marker writes only inside the runner's own state folder. Full suite: **501 passed**. Not yet deployed; the gate stays closed.

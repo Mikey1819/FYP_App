@@ -424,8 +424,19 @@ def _restore_spec():
                       recovery={'kind': 'manual_console', 'scope': ['VM console and recovery snapshot']})
 
 
+def _acceptance_spec():
+    from vm.ubuntu.family_acceptance import IMPLEMENTATION_SHA256, MARKER
+
+    def validate(params):
+        from vm.ubuntu.family_acceptance import AcceptanceMarkerFamily
+        AcceptanceMarkerFamily(None).validate(params)
+    return ActionSpec('acceptance.marker.v1', 1, IMPLEMENTATION_SHA256, ('acceptance',), validate, 30,
+                      title='Execution acceptance: harmless commit-confirm marker in the runner state directory',
+                      recovery={'kind': 'restore_backup', 'scope': [MARKER]})
+
+
 # Auxiliary operations: same approval/runner protocol, never counted as CIS control families.
-AUXILIARY = {'recovery.restore.v1': _restore_spec()}
+AUXILIARY = {'recovery.restore.v1': _restore_spec(), 'acceptance.marker.v1': _acceptance_spec()}
 
 
 @dataclass(frozen=True)

@@ -46,6 +46,12 @@ class CoordinationLedger:
                     operation_id TEXT NOT NULL, workflow_session_id TEXT NOT NULL,
                     generation TEXT NOT NULL, state TEXT NOT NULL,
                     PRIMARY KEY(target_id, registration_epoch));
+                CREATE TABLE IF NOT EXISTS acceptance_runs (
+                    request_id TEXT PRIMARY KEY, target_id TEXT NOT NULL, registration_epoch TEXT NOT NULL,
+                    scenario TEXT NOT NULL, runner_digest TEXT NOT NULL, approved_raw BLOB NOT NULL,
+                    created_at TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS acceptance_outcomes (
+                    request_id TEXT PRIMARY KEY, outcome TEXT NOT NULL, settled_at TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS target_registrations (
                     target_id TEXT PRIMARY KEY, platform TEXT NOT NULL,
                     machine_identity TEXT NOT NULL, hostname TEXT NOT NULL,
@@ -53,7 +59,8 @@ class CoordinationLedger:
                     UNIQUE(platform, machine_identity));
             ''')
             for table, key in (('workflow_bindings', 'workflow_session_id'), ('operation_events', 'sequence'),
-                               ('target_registrations', 'target_id')):
+                               ('target_registrations', 'target_id'), ('acceptance_runs', 'request_id'),
+                               ('acceptance_outcomes', 'request_id')):
                 for operation in ('UPDATE', 'DELETE'):
                     db.execute(f'''CREATE TRIGGER IF NOT EXISTS {table}_no_{operation}
                         BEFORE {operation} ON {table}
@@ -228,6 +235,31 @@ class CoordinationLedger:
         with self._db() as db:
             rows = db.execute('SELECT target_id, registration_epoch FROM target_owners').fetchall()
         return tuple((t, e) for t, e in rows if (t, e) != (target_id, epoch))
+
+    # ---- execution acceptance evidence (append-only) ---------------------------------------------
+    def add_acceptance(self, request_id, target_id, epoch, scenario, runner_digest, approved_raw):
+        if scenario not in ('confirm', 'rollback') or type(approved_raw) is not bytes:
+            raise ValueError('Invalid acceptance record')
+        with self._db() as db:
+            db.execute('INSERT INTO acceptance_runs VALUES(?,?,?,?,?,?,?)',
+                       (request_id, target_id, epoch, scenario, runner_digest, approved_raw, now()))
+
+    def settle_acceptance(self, request_id, outcome):
+        """Record the first settled outcome of an acceptance run; later calls change nothing."""
+        with self._db() as db:
+            db.execute('BEGIN IMMEDIATE')
+            if not db.execute('SELECT 1 FROM acceptance_runs WHERE request_id=?', (request_id,)).fetchone():
+                raise ValueError('Unknown acceptance run')
+            if not db.execute('SELECT 1 FROM acceptance_outcomes WHERE request_id=?', (request_id,)).fetchone():
+                db.execute('INSERT INTO acceptance_outcomes VALUES(?,?,?)', (request_id, outcome, now()))
+
+    def acceptance_runs(self, target_id, epoch):
+        with self._db() as db:
+            rows = db.execute('''SELECT r.request_id, r.scenario, r.runner_digest, r.approved_raw, r.created_at, o.outcome
+                FROM acceptance_runs r LEFT JOIN acceptance_outcomes o ON o.request_id = r.request_id
+                WHERE r.target_id=? AND r.registration_epoch=? ORDER BY r.created_at''', (target_id, epoch)).fetchall()
+        return [dict(request_id=r[0], scenario=r[1], runner_digest=r[2], raw=bytes(r[3]), created_at=r[4], outcome=r[5])
+                for r in rows]
 
     def note(self, operation_id, kind):
         """Append a host-clock audit event to an existing operation (no state change); returns its time."""

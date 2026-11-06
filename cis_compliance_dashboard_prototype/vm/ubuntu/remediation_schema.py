@@ -9,11 +9,13 @@ import json
 import re
 from .collection import IDS
 
+CONTROL_IDS = tuple(IDS) + ('acceptance',)  # 'acceptance': the execution-acceptance marker only
+
 REQUEST_NAMESPACE, RECEIPT_NAMESPACE = 'ubuntu-remediation', 'ubuntu-remediation-receipt'
 MAX_APPROVAL_SECONDS, MAX_BEFORE_STATE_AGE, MAX_JOB_SECONDS = 3600, 300, 1800
 REQUEST_LIMIT = 256 * 1024
 ACTION_ID = (r'(ubuntu\.[0-9]+(\.[0-9]+)*\.v[0-9]+|maintenance\.[a-z_]+\.v[0-9]+|recovery\.[a-z_]+\.v[0-9]+'
-             r'|fixture\.[a-z_]+\.v[0-9]+)')
+             r'|fixture\.[a-z_]+\.v[0-9]+|acceptance\.[a-z_]+\.v[0-9]+)')
 RECOVERY_KINDS = ('restore_backup', 'manual_console', 'snapshot_restore')
 OUTCOMES = ('applied', 'refused', 'unresolved', 'reconciled_applied', 'reconciled_not_applied', 'running',
             'rolled_back')
@@ -83,7 +85,7 @@ def parse_request(raw):
     _check(doc['platform'] == 'ubuntu' and _match(r'ubuntu:[A-Za-z0-9-]{1,64}', doc['target_id'])
            and _match(r'[A-Za-z0-9_-]{1,64}', doc['registration_epoch'])
            and _match(r'[A-Za-z0-9][A-Za-z0-9.-]{0,252}', doc['hostname']), 'Invalid target binding')
-    _check(_match(r'[A-Za-z0-9._-]{1,64}', doc['catalogue_version']) and doc['control_id'] in IDS
+    _check(_match(r'[A-Za-z0-9._-]{1,64}', doc['catalogue_version']) and doc['control_id'] in CONTROL_IDS
            and _match(re.escape('ubuntu.' + str(doc['control_id']) + '.predicate.v') + r'[0-9]+', doc['predicate_id']),
            'Invalid control binding')
     action = doc['action']

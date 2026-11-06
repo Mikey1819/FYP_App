@@ -92,7 +92,7 @@ class ApprovalTests(Fixture):
                        'ubuntu.6.3.3.8.v1', 'ubuntu.6.3.1.3.v1', 'ubuntu.4.1.3.v1', 'ubuntu.4.1.4.v1',
                        'ubuntu.1.2.2.1.v1'}
         self.assertEqual(set(FAMILIES), implemented)
-        self.assertEqual(set(build(FakeSystem())), implemented)
+        self.assertEqual(set(build(FakeSystem())), implemented | {'acceptance.marker.v1'})  # auxiliary, not CIS
         self.assertEqual(len({'ubuntu.' + c + '.v1' for c in EXPECTED_IDS} - implemented), 0)
         self.assertNotIn(self.family.action_id, FAMILIES)  # test-only fixture is never registered
 

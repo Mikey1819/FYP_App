@@ -152,13 +152,14 @@ class SysctlFamilyTests(unittest.TestCase):
         return cases()
 
     def test_target_and_host_registries_agree_on_versions_and_hashes(self):
-        from backends.ubuntu.actions import FAMILIES
+        from backends.ubuntu.actions import AUXILIARY, FAMILIES
         from vm.ubuntu.families import build
         target = build(FakeSystem())
-        self.assertEqual(set(target), set(FAMILIES))
+        host = dict(FAMILIES, **{a: s for a, s in AUXILIARY.items() if a in target})
+        self.assertEqual(set(target), set(FAMILIES) | {'acceptance.marker.v1'})
         for action_id, family in target.items():
             self.assertEqual((family.version, family.implementation_sha256),
-                             (FAMILIES[action_id].version, FAMILIES[action_id].implementation_sha256))
+                             (host[action_id].version, host[action_id].implementation_sha256))
 
     def test_conf_parser_handles_slashes_dashes_comments_and_last_value(self):
         from vm.ubuntu.family_sysctl import parse_conf
