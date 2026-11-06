@@ -119,6 +119,44 @@ class PasswordMinlenTests(unittest.TestCase):
         self.assertEqual(family.read_state(self.PARAMS), before)
 
 
+class SudoUsePtyTests(unittest.TestCase):
+    """CIS 5.2.2 (p.559): `Defaults use_pty`, sharing the managed sudoers file with 5.2.3, one line per control."""
+    PARAMS = {'use_pty': True}
+    LOG = {'logfile': '/var/log/sudo.log'}
+
+    def families(self, system):
+        from vm.ubuntu.family_auth import SudoLogfileFamily, SudoUsePtyFamily
+        return SudoUsePtyFamily(system), SudoLogfileFamily(system)
+
+    def test_both_controls_share_the_file_and_each_restores_only_its_own_line(self):
+        import shlex
+        system = FakeAuthSystem(sudoers=b'Defaults env_reset\nroot ALL=(ALL:ALL) ALL\n@includedir /etc/sudoers.d\n')
+        pty, log = self.families(system)
+        pty.validate(self.PARAMS)
+        for bad in ({'use_pty': False}, {}, {'use_pty': 1}):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):pty.validate(bad)
+        log_before = log.read_state(self.LOG)
+        log.apply(self.LOG)
+        pty.check_eligible(self.PARAMS)
+        pty_before = pty.read_state(self.PARAMS)
+        expected = pty.expected_after(self.PARAMS, pty_before)
+        pty.apply(self.PARAMS)
+        self.assertEqual(pty.read_state(self.PARAMS), expected)
+        lines = [shlex.split(l, comments=True) for l in system.sudo_d['60-fyp-hardening-cis'].decode().splitlines()]
+        self.assertIn(['Defaults', 'use_pty'], lines)
+        self.assertIn(['Defaults', 'logfile=/var/log/sudo.log'], lines)
+        self.assertEqual(log.read_state(self.LOG), log.expected_after(self.LOG, log_before))  # 5.2.3 unaffected
+        pty.restore(self.PARAMS, pty_before)
+        self.assertEqual(pty.read_state(self.PARAMS), pty_before)
+        self.assertEqual(log.read_state(self.LOG), log.expected_after(self.LOG, log_before))  # its line stays
+        log.restore(self.LOG, log_before)
+        self.assertNotIn('60-fyp-hardening-cis', system.sudo_d)  # empty: the file is removed
+
+    def test_a_negated_use_pty_anywhere_is_refused(self):
+        pty, _ = self.families(FakeAuthSystem(sudo_d={'90-local': b'Defaults !use_pty\n'}))
+        with self.assertRaises(ValueError):pty.check_eligible(self.PARAMS)
+
+
 class AuthRegistryTests(unittest.TestCase):
     def test_host_and_target_registries_agree_and_planners_need_resolved_evidence(self):
         from backends.ubuntu.actions import FAMILIES
@@ -134,6 +172,11 @@ class AuthRegistryTests(unittest.TestCase):
         obs = cases(); ev.raw = json.dumps({'observations': obs}).encode()
         self.assertEqual(FAMILIES['ubuntu.5.2.3.v1'].propose('5.2.3', ev), {'logfile': '/var/log/sudo.log'})
         self.assertEqual(FAMILIES['ubuntu.5.3.3.2.2.v1'].propose('5.3.3.2.2', ev), {'minlen': 14})
+        self.assertEqual((FAMILIES['ubuntu.5.2.2.v1'].version, FAMILIES['ubuntu.5.2.2.v1'].implementation_sha256),
+                         (target['ubuntu.5.2.2.v1'].version, target['ubuntu.5.2.2.v1'].implementation_sha256))
+        ev2 = evidence(['5.2.2'])
+        ev2.raw = json.dumps({'observations': obs}).encode()
+        self.assertEqual(FAMILIES['ubuntu.5.2.2.v1'].propose('5.2.2', ev2), {'use_pty': True})
         obs['5.3.3.2.2']['pam_resolution'] = {'state': 'ok', 'value': 'unsupported'}
         ev.raw = json.dumps({'observations': obs}).encode()
         self.assertIsNone(FAMILIES['ubuntu.5.3.3.2.2.v1'].propose('5.3.3.2.2', ev))

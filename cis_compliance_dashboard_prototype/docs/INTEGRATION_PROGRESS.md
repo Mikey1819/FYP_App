@@ -683,3 +683,20 @@ I read CIS 4.1.4–4.1.7 (pp.433–441) first. For 4.1.7 the remediation is `ufw
   - **Mutation checks, all caught:** changing the defaults before adding the allowances, no lockout check, no active check, restore deleting pre-existing rules, and changing directions that already comply.
   - Registry tests list exactly 21 implemented families; 9 reserved IDs remain.
 - Full suite **448 tests, all passed**; baseline: no protected changes; source check passes; bundle rebuilt (reinstall before the next live scan). Execution gate still closed.
+
+## 2026-11-07 sudo use_pty (CIS 5.2.2) and auditd service (CIS 6.3.1.2)
+
+- **Shared sudo file:** `vm/ubuntu/family_auth.py` now has `SudoDefaultsFamily`, with one `Defaults` line per control in `/etc/sudoers.d/60-fyp-hardening-cis`: 5.2.2 `Defaults use_pty` and 5.2.3 `Defaults logfile="/var/log/sudo.log"`.
+  - Each control's state is the other sudo sources plus whether its own line is present, so the two never invalidate each other. Restore removes or adds only its own line, and an empty file is removed.
+  - Validation compares canonical JSON, so `{"use_pty": 1}` is not accepted as `true`.
+  - A `!use_pty` (5.2.2) or `!logfile` (5.2.3) anywhere is refused.
+  - `SudoLogfileFamily` keeps its name. Its implementation hash changed; it has not been deployed.
+- **`vm/ubuntu/family_service.py`, `ubuntu.6.3.1.2.v1`:** CIS `systemctl unmask`/`enable`/`start auditd`, running only the missing steps.
+  - **Refused when:** the unit is not installed (6.3.1.1 comes first, so the host does not propose it while `auditd.enabled` is `not-found`), or its enablement state is not modelled (static, indirect, ...).
+  - **Restore:** returns the exact recorded enablement and activity. auditd's unit refuses manual stops, so stopping uses `systemctl kill --signal=SIGTERM` and waits for the unit to become inactive.
+  - On the live VM, installing auditd (6.3.1.1) normally enables and starts it as well; 6.3.1.2 covers a disabled or masked unit.
+- **Coverage:** 5.2.2 and 6.3.1.2 are `fixture_tested`.
+- **Tests:** 2 new 5.2.2 tests and 4 new 6.3.1.2 tests, written first (RED: 10 errors).
+  - **Mutation checks, all caught:** ignoring the negation, restore dropping the other control's line, accepting `1` for `true`, running every service step, and skipping the installed check.
+  - 23 implemented families; 7 reserved IDs remain.
+- Full suite **454 tests, all passed**.

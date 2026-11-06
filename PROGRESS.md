@@ -566,3 +566,7 @@ Added SSH fixes for 5.1.7, 5.1.10, 5.1.16, 5.1.19, 5.1.20 and 5.1.21 through one
 ## 7 November 2026 — Ubuntu UFW default deny with confirm-or-undo (integration, in progress)
 
 Added the 4.1.7 fix. It first allows the outbound traffic CIS lists (DNS, http, https, ntp and DNS over TLS), recorded as a site-policy decision, then sets any `allow` default to `deny`. It is refused without an SSH allow rule, and must be confirmed over a fresh login or it is rolled back. Twenty-one fix families now exist. Full suite: **448 passed**. Fixture-only; the execution gate is closed.
+
+## 7 November 2026 — sudo use_pty and auditd service fixes (integration, in progress)
+
+Added 5.2.2 (`Defaults use_pty`, sharing the managed sudoers file with 5.2.3, one line per control) and 6.3.1.2 (unmask, enable and start auditd, with an exact restore). Twenty-three fix families now exist. Full suite: **454 passed**. Fixture-only; the execution gate is closed.

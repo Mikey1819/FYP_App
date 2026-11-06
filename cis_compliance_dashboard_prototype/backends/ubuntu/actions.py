@@ -106,6 +106,17 @@ def _auth_specs():
             return None
         return {'logfile': SUDO_LOGFILE}
 
+    def propose_pty(control_id, evidence):
+        facts = failing(control_id, evidence)
+        if (facts is None or facts.get('sudoers_resolution', {}).get('value') != 'complete'
+                or facts.get('sudoers_syntax_valid', {}).get('value') is not True):
+            return None
+        return {'use_pty': True}
+
+    def validate_pty(params):
+        if type(params) is not dict or json.dumps(params, sort_keys=True) != '{"use_pty": true}':
+            raise ValueError('Only Defaults use_pty is managed')
+
     def propose_minlen(control_id, evidence):
         facts = failing(control_id, evidence)
         if facts is None or facts.get('pam_resolution', {}).get('value') != 'complete':
@@ -122,6 +133,9 @@ def _auth_specs():
     return {
         'ubuntu.5.2.3.v1': ActionSpec('ubuntu.5.2.3.v1', 1, IMPLEMENTATION_SHA256, ('5.2.3',), validate_sudo, 60,
                                       propose=propose_sudo, title='Add a dedicated sudo log file (visudo-validated)',
+                                      recovery={'kind': 'restore_backup', 'scope': [SUDO_MANAGED]}),
+        'ubuntu.5.2.2.v1': ActionSpec('ubuntu.5.2.2.v1', 1, IMPLEMENTATION_SHA256, ('5.2.2',), validate_pty, 60,
+                                      propose=propose_pty, title='Run sudo commands in a pseudo-terminal (visudo-validated)',
                                       recovery={'kind': 'restore_backup', 'scope': [SUDO_MANAGED]}),
         'ubuntu.5.3.3.2.2.v1': ActionSpec('ubuntu.5.3.3.2.2.v1', 1, IMPLEMENTATION_SHA256, ('5.3.3.2.2',), validate_minlen,
                                           60, propose=propose_minlen,
@@ -252,8 +266,37 @@ def _ufw_spec():
         recovery={'kind': 'restore_backup', 'scope': ['/etc/default/ufw', '/etc/ufw/user.rules', '/etc/ufw/user6.rules']})}
 
 
+def _service_specs():
+    """Host spec for enabling and starting auditd (6.3.1.2); fixture-tested, not validated on the VM."""
+    import json
+    from system.contracts import ComplianceStatus
+    from vm.ubuntu.family_service import IMPLEMENTATION_SHA256, SPECS
+    specs = {}
+    for control_id, unit in SPECS.items():
+        params, prefix = {'unit': unit, 'enabled': True, 'active': True}, unit.split('.')[0]
+
+        def propose(cid, evidence, params=params, prefix=prefix):
+            result = next((a for a in evidence.assessments if a.control_id == cid), None)
+            if result is None or result.status is not ComplianceStatus.NON_COMPLIANT:
+                return None
+            facts = json.loads(evidence.raw)['observations'][cid]
+            enabled, active = facts.get(prefix + '.enabled', {}), facts.get(prefix + '.active', {})
+            if enabled.get('state') != 'ok' or active.get('state') != 'ok' or enabled.get('value') == 'not-found':
+                return None  # not installed: the package control comes first
+            return dict(params)
+
+        def validate(candidate, params=params):
+            if type(candidate) is not dict or json.dumps(candidate, sort_keys=True) != json.dumps(params, sort_keys=True):
+                raise ValueError('Only enabling and starting the registered unit is managed')
+        action_id = 'ubuntu.%s.v1' % control_id
+        specs[action_id] = ActionSpec(action_id, 1, IMPLEMENTATION_SHA256, (control_id,), validate, 60, propose=propose,
+                                      title='Unmask, enable and start ' + unit,
+                                      recovery={'kind': 'restore_backup', 'scope': ['systemd:' + unit]})
+    return specs
+
+
 FAMILIES = dict(_sysctl_specs(), **_core_spec(), **_auth_specs(), **_aging_specs(), **_package_specs(),
-                **_ssh_specs(), **_ufw_spec())
+                **_ssh_specs(), **_ufw_spec(), **_service_specs())
 
 
 def _restore_spec():

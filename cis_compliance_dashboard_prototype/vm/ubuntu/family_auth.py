@@ -1,8 +1,10 @@
-"""Sudo logfile (CIS 5.2.3) and password minimum length (CIS 5.3.3.2.2) families. Python 3.10, stdlib only.
+"""Sudo defaults (CIS 5.2.2 use_pty, 5.2.3 logfile) and password minimum length (CIS 5.3.3.2.2) families. Python 3.10, stdlib only.
 
-5.2.3: `Defaults logfile="/var/log/sudo.log"` (approved site path) in /etc/sudoers.d/60-fyp-hardening-cis.
-The file is staged under a dotted name that sudo ignores, checked with `visudo -cf`, installed, and the whole
-configuration is checked with `visudo -c`; a failure removes it at once. Nothing else is edited.
+5.2.2 `Defaults use_pty` and 5.2.3 `Defaults logfile="/var/log/sudo.log"` (approved site path) share
+/etc/sudoers.d/60-fyp-hardening-cis, one line per control; each control's state and restore cover only its line,
+and an empty file is removed. The file is staged under a dotted name that sudo ignores, checked with
+`visudo -cf`, installed, and the whole configuration is checked with `visudo -c`; a failure removes it at once.
+Nothing else is edited.
 5.3.3.2.2: `minlen = 14` in /etc/security/pwquality.conf.d/60-fyp-hardening-cis.conf. Eligibility runs the
 collector's own resolver on the simulated after-state, so a PAM argument, pwquality.conf or a later drop-in
 that would still win makes it refuse. Existing passwords are never changed.
@@ -20,7 +22,9 @@ SUDO_MANAGED = '/etc/sudoers.d/60-fyp-hardening-cis'
 SUDO_STAGED = '/etc/sudoers.d/.60-fyp-hardening-cis.tmp'  # contains '.', so sudo never reads it
 PWQ_MANAGED = '/etc/security/pwquality.conf.d/60-fyp-hardening-cis.conf'
 SUDO_LOGFILE = '/var/log/sudo.log'  # approved site policy (blanket approval 2026-11-06)
-SUDO_CONTENT = HEADER + ('Defaults logfile="%s"\n' % SUDO_LOGFILE).encode('ascii')
+SUDO_LINES = {'5.2.2': 'Defaults use_pty', '5.2.3': 'Defaults logfile="%s"' % SUDO_LOGFILE}
+SUDO_PARAMS = {'5.2.2': {'use_pty': True}, '5.2.3': {'logfile': SUDO_LOGFILE}}
+SUDO_NEGATION = {'5.2.2': '!use_pty', '5.2.3': '!logfile'}
 PWQ_CONTENT = HEADER + b'minlen = 14\n'
 _HERE = Path(__file__).resolve().parent
 IMPLEMENTATION_SHA256 = hashlib.sha256((_HERE / 'family_auth.py').read_bytes()
@@ -35,39 +39,60 @@ def _dump(state):
     return json.dumps(state, sort_keys=True, separators=(',', ':')).encode('utf-8')
 
 
-class SudoLogfileFamily:
-    action_id = 'ubuntu.5.2.3.v1'
+def sudo_lines(data):
+    """Control IDs whose line is in the managed sudoers file; content this family did not write is refused."""
+    if data is None:
+        return set()
+    if not data.startswith(HEADER):
+        raise ValueError('The managed sudoers file holds content this family did not write')
+    owners = {line: cid for cid, line in SUDO_LINES.items()}
+    found = set()
+    for line in data[len(HEADER):].decode('utf-8').splitlines():
+        if not line.strip():
+            continue
+        if line not in owners or owners[line] in found:
+            raise ValueError('The managed sudoers file holds content this family did not write')
+        found.add(owners[line])
+    return found
+
+
+def sudo_render(controls):
+    if not controls:
+        return None
+    return HEADER + ''.join(SUDO_LINES[c] + '\n' for c in sorted(SUDO_LINES) if c in controls).encode('ascii')
+
+
+class SudoDefaultsFamily:
+    """One `Defaults` line per control in /etc/sudoers.d/60-fyp-hardening-cis (5.2.2 use_pty, 5.2.3 logfile)."""
     version = 1
     implementation_sha256 = IMPLEMENTATION_SHA256
     max_seconds = 60
 
-    def __init__(self, system):
-        self.system = system
+    def __init__(self, control_id, system):
+        self.control_id, self.system = control_id, system
+        self.action_id = 'ubuntu.%s.v1' % control_id
 
     def validate(self, params):
-        if params != {'logfile': SUDO_LOGFILE}:
-            raise ValueError('Only the approved sudo log path is managed')
+        if type(params) is not dict or _dump(params) != _dump(SUDO_PARAMS[self.control_id]):
+            raise ValueError('Only the approved sudo default for this control is managed')
 
     def _sources(self):
         sources = self.system.sudo_sources()
-        managed = dict(sources).get(SUDO_MANAGED)
-        if managed is not None and managed != SUDO_CONTENT:
-            raise ValueError('The managed sudoers file holds content this family did not write')
-        return sources, managed
+        return sources, sudo_lines(dict(sources).get(SUDO_MANAGED))
 
     def read_state(self, params):
-        sources, managed = self._sources()
-        return _dump({'sources': {path: _sha(data) for path, data in sources},
-                      'managed': managed.decode('utf-8') if managed is not None else None})
+        sources, controls = self._sources()
+        return _dump({'sources': {path: _sha(data) for path, data in sources if path != SUDO_MANAGED},
+                      'line': self.control_id in controls})
 
     def expected_after(self, params, before):
         state = json.loads(before)
-        state['sources'][SUDO_MANAGED] = _sha(SUDO_CONTENT)
-        state['managed'] = SUDO_CONTENT.decode('utf-8')
+        state['line'] = True
         return _dump(state)
 
     def check_eligible(self, params):
         sources, _ = self._sources()
+        negation = SUDO_NEGATION[self.control_id]
         for path, data in sources:
             for line in data.decode('utf-8').splitlines():
                 stripped = line.strip()
@@ -75,21 +100,38 @@ class SudoLogfileFamily:
                     if path == '/etc/sudoers' and stripped in ('@includedir /etc/sudoers.d', '#includedir /etc/sudoers.d'):
                         continue
                     raise ValueError('Unsupported sudo include')
-                if stripped.startswith('Defaults') and '!logfile' in ''.join(shlex.split(stripped, comments=True)):
-                    raise ValueError('A sudo source disables the log file')
+                if stripped.startswith('Defaults') and negation in ''.join(shlex.split(stripped, comments=True)):
+                    raise ValueError('A sudo source negates this default')
 
     def summary(self, params, before):
-        return {'managed_file': SUDO_MANAGED, 'logfile': SUDO_LOGFILE, 'validation': 'visudo -cf, then visudo -c'}
+        return {'managed_file': SUDO_MANAGED, 'line': SUDO_LINES[self.control_id],
+                'validation': 'visudo -cf, then visudo -c'}
 
-    def apply(self, params):
-        self.system.write_sudo_managed(SUDO_CONTENT)
-
-    def restore(self, params, before):
-        state = json.loads(before)
-        if state['managed'] is None:
+    def _write(self, controls):
+        content = sudo_render(controls)
+        if content is None:
             self.system.remove_sudo_managed()
         else:
-            self.system.write_sudo_managed(state['managed'].encode('utf-8'))
+            self.system.write_sudo_managed(content)
+
+    def apply(self, params):
+        _, controls = self._sources()
+        self._write(controls | {self.control_id})
+
+    def restore(self, params, before):
+        _, controls = self._sources()
+        wanted = (controls | {self.control_id}) if json.loads(before)['line'] else (controls - {self.control_id})
+        self._write(wanted)
+
+
+class SudoLogfileFamily(SudoDefaultsFamily):
+    def __init__(self, system):
+        super().__init__('5.2.3', system)
+
+
+class SudoUsePtyFamily(SudoDefaultsFamily):
+    def __init__(self, system):
+        super().__init__('5.2.2', system)
 
 
 class PasswordMinlenFamily:
