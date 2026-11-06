@@ -83,10 +83,10 @@ class ApprovalTests(Fixture):
         from backends.ubuntu.catalogue import EXPECTED_IDS
         from vm.ubuntu.families import build
         from tests.integration.test_ubuntu_sysctl_family import FakeSystem
-        implemented = {'ubuntu.1.5.1.v1', 'ubuntu.3.3.1.v1', 'ubuntu.3.3.2.v1', 'ubuntu.3.3.8.v1'}
+        implemented = {'ubuntu.1.5.1.v1', 'ubuntu.1.5.3.v1', 'ubuntu.3.3.1.v1', 'ubuntu.3.3.2.v1', 'ubuntu.3.3.8.v1'}
         self.assertEqual(set(FAMILIES), implemented)
         self.assertEqual(set(build(FakeSystem())), implemented)
-        self.assertEqual(len({'ubuntu.' + c + '.v1' for c in EXPECTED_IDS} - implemented), 26)
+        self.assertEqual(len({'ubuntu.' + c + '.v1' for c in EXPECTED_IDS} - implemented), 25)
         self.assertNotIn(self.family.action_id, FAMILIES)  # test-only fixture is never registered
 
 

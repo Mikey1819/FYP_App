@@ -16,7 +16,8 @@ from .spec import SYSCTL
 MANAGED = '/etc/sysctl.d/60-fyp-hardening-cis.conf'
 HEADER = b'# Managed by FYP hardening (CIS Ubuntu 22.04). Exact keys only; changes are detected.\n'
 REQUIRED = dict(SYSCTL)
-ALL_KEYS = frozenset(k for keys in REQUIRED.values() for k in keys)
+SUBPART = {'1.5.3': {'fs.suid_dumpable': 0}}  # used inside the core-dump family only
+ALL_KEYS = frozenset(k for keys in list(REQUIRED.values()) + list(SUBPART.values()) for k in keys)
 IMPLEMENTATION_SHA256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
 SYSCTL_DIRS = ('/etc/sysctl.d/', '/run/sysctl.d/', '/usr/local/lib/sysctl.d/', '/usr/lib/sysctl.d/', '/lib/sysctl.d/')
 
@@ -60,7 +61,7 @@ def _conflicts(data, wanted):
 
 def validate_params(control_id, params):
     """Exactly {'keys': {key: required value}}; a planner may omit only IPv6 keys (when IPv6 is disabled)."""
-    required = REQUIRED.get(control_id)
+    required = REQUIRED.get(control_id) or SUBPART.get(control_id)
     if required is None or type(params) is not dict or set(params) != {'keys'} or type(params['keys']) is not dict:
         raise ValueError('Invalid sysctl family parameters')
     keys = params['keys']
@@ -80,7 +81,7 @@ class SysctlFamily:
     max_seconds = 60
 
     def __init__(self, control_id, system):
-        if control_id not in REQUIRED:
+        if control_id not in REQUIRED and control_id not in SUBPART:
             raise ValueError('Not a sysctl control')
         self.control_id, self.system = control_id, system
         self.action_id = 'ubuntu.' + control_id + '.v1'

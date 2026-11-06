@@ -29,11 +29,11 @@ def _identity():
 def _default_runner():
     """Root-owned runner over preflighted fixed target I/O (identity, root, Ubuntu 22.04 checked first)."""
     from .collector import FixedProbeIO, preflight
-    from .family_sysctl import LinuxSysctlSystem
+    from .families import LinuxTargetSystem
     machine, hostname = _identity()
     io = FixedProbeIO(deadline_seconds=300)
     preflight(io, {'machine_id': machine, 'hostname': hostname})
-    return Runner(STATE, build(LinuxSysctlSystem(io)), _identity)
+    return Runner(STATE, build(LinuxTargetSystem(io)), _identity)
 
 
 def _pairs(pairs):

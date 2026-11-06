@@ -58,7 +58,36 @@ def _sysctl_specs():
     return specs
 
 
-FAMILIES = _sysctl_specs()
+def _core_spec():
+    """Host spec for the core-dump family (1.5.3); fixture-tested, not validated on the VM."""
+    import json
+    from system.contracts import ComplianceStatus
+    from vm.ubuntu.family_core import ACTION_ID, COREDUMP_MANAGED, IMPLEMENTATION_SHA256, LIMITS_MANAGED, SYSCTL_PARAMS
+    from vm.ubuntu.family_sysctl import MANAGED, validate_params
+
+    def validate(params):
+        if (type(params) is not dict or set(params) != {'sysctl', 'limits', 'coredump'} or params['limits'] is not True
+                or type(params['coredump']) is not bool or params['sysctl'] != SYSCTL_PARAMS):
+            raise ValueError('Invalid core-dump family parameters')
+        validate_params('1.5.3', params['sysctl'])
+
+    def propose(control_id, evidence):
+        result = next((a for a in evidence.assessments if a.control_id == control_id), None)
+        if result is None or result.status is not ComplianceStatus.NON_COMPLIANT:
+            return None
+        facts = json.loads(evidence.raw)['observations'][control_id]
+        installed = facts.get('systemd_coredump_installed', {})
+        if (facts.get('sysctl_resolution', {}).get('value') != 'complete' or installed.get('state') != 'ok'
+                or facts.get('hard_core_limits', {}).get('state') != 'ok'):
+            return None  # unresolved sources: no deterministic plan
+        return {'sysctl': dict(SYSCTL_PARAMS), 'limits': True, 'coredump': installed['value']}
+    return {ACTION_ID: ActionSpec(ACTION_ID, 1, IMPLEMENTATION_SHA256, ('1.5.3',), validate, 60, propose=propose,
+                                  title='Restrict core dumps: hard core 0, fs.suid_dumpable 0, coredump storage off',
+                                  recovery={'kind': 'restore_backup',
+                                            'scope': [LIMITS_MANAGED, MANAGED, COREDUMP_MANAGED, 'runtime:fs.suid_dumpable']})}
+
+
+FAMILIES = dict(_sysctl_specs(), **_core_spec())
 
 
 def _restore_spec():

@@ -134,7 +134,8 @@ class SysctlFamilyTests(unittest.TestCase):
         spec = FAMILIES['ubuntu.1.5.1.v1']
         self.assertEqual(spec.propose('1.5.1', ev), ASLR)
         self.assertIsNone(FAMILIES['ubuntu.3.3.1.v1'].propose('3.3.1', ev))  # compliant: nothing to propose
-        self.assertEqual(set(FAMILIES), {'ubuntu.1.5.1.v1', 'ubuntu.3.3.1.v1', 'ubuntu.3.3.2.v1', 'ubuntu.3.3.8.v1'})
+        self.assertEqual(set(FAMILIES), {'ubuntu.1.5.1.v1', 'ubuntu.1.5.3.v1', 'ubuntu.3.3.1.v1', 'ubuntu.3.3.2.v1',
+                                         'ubuntu.3.3.8.v1'})
         incomplete = self._observations(ev); incomplete['1.5.1']['sysctl_resolution'] = {'state': 'ok', 'value': 'incomplete'}
         ev.raw = json.dumps({'observations': incomplete}).encode()
         self.assertIsNone(spec.propose('1.5.1', ev))

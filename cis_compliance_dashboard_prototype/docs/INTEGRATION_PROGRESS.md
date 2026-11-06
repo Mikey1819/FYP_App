@@ -521,3 +521,20 @@ Test-first: `tests/integration/test_ubuntu_restore.py`, two backend tests in `te
 - **Mutation:** disabling the newer-change guard failed the overwrite test; reverted.
 - Full suite **369 tests, all passed**; baseline: no protected changes; UI patch refreshed; bundle rebuilt.
 - **Note:** the helper bundle changed, so the VM needs a reinstall before the next live scan. Otherwise the collector digest no longer matches and the evidence is rejected.
+
+## 2026-11-06 core-dump family (CIS 1.5.3) — task 11 partial
+
+I read CIS 1.5.3 (printed pp.159–161) in full first, along with 1.5.4 and 2.1.2.
+
+- **`vm/ubuntu/family_core.py`** (`ubuntu.1.5.3.v1`) has three managed parts and edits no other file:
+  - `* hard core 0` in `/etc/security/limits.d/60-fyp-hardening-cis.conf`;
+  - `fs.suid_dumpable = 0`, persisted in the shared managed sysctl drop-in (the sysctl machinery gained an internal `SUBPART`, not a separate action) and at runtime;
+  - only when `systemd-coredump` is installed, `Storage=none` and `ProcessSizeMax=0` in the drop-in `/etc/systemd/coredump.conf.d/60-fyp-hardening-cis.conf`, which overrides `coredump.conf` without editing it.
+- **Not eligible** when a non-zero hard core limit exists for another domain, a later `*` limit exists, a later coredump drop-in overrides, or a later sysctl source conflicts. Foreign content in a managed file is refused.
+- **Restore:** returns each managed file, or its absence, and the runtime value exactly.
+- **Implementation hash** covers the family and the sysctl module it uses. Host spec (`backends/ubuntu/actions.FAMILIES`) and target registry agree. `LinuxTargetSystem` composes the bounded sysctl and limits/coredump I/O for the runner.
+- **Deliberately omitted:** `systemctl daemon-reload` from the CIS remediation text. `systemd-coredump` reads its configuration on each invocation, so the family avoids a service-manager action. Recorded for review.
+- **Coverage:** 1.5.3 remediation, refusal, verification and recovery are `fixture_tested`; live validation is pending.
+- **Tests:** 7 new tests in `tests/integration/test_ubuntu_core_family.py`, written first. A mutation that disabled the limits guard failed two subtests. Two registry tests were updated to the exact five implemented families (25 reserved IDs remain absent).
+- **2.1.2 Avahi:** not implemented yet. The CIS remediation is package purge, which needs the package family and supervision. The mask-and-retain branch needs a dependency fact and a site-policy exception; without them the predicate correctly stays Unknown.
+- Full suite **376 tests, all passed**; baseline: no protected changes; bundle rebuilt (reinstall before the next live scan).
