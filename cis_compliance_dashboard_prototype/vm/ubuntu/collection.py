@@ -5,7 +5,7 @@ and no installation, metadata refresh, service change or repair is attempted.
 """
 import re
 import shlex
-from .probes import account_aging, audit_rules, password_minlen, resolve_sysctl, ssh_context
+from .probes import account_aging, audit_rules, password_minlen, resolve_sysctl, ssh_context, ufw_loopback, ufw_tuples
 from .evidence_schema import validate_observations
 from .scap_results import result_path
 from .spec import SCAP_RULES
@@ -210,10 +210,19 @@ def collect_observations(io, *, registered_firewall_manager=None, scap_request=N
         defaults=re.search(r'^Default: (deny|reject|allow) \(incoming\), (deny|reject|allow) \(outgoing\), (deny|reject|allow|disabled) \(routed\)',ufw,re.M)
         if defaults:
             for direction,value in zip(('incoming','outgoing','routed'),defaults.groups()):result['4.1.7']['ufw.default.'+direction]=_ok(value)
-        result['4.1.4']['ufw_rule_resolution']=_ok('unsupported')
         set_fact('4.1.4','ipv6_enabled',ipv6)
     except (OSError,ValueError,KeyError,TimeoutError):
         for cid in ('4.1.3','4.1.4','4.1.7'):result[cid]['ufw.active']=_error()
+    try:
+        # CIS 4.1.4 audits the user rules in order; resolve each traffic class over ufw's own records.
+        resolved=ufw_loopback(ufw_tuples(io.read_file('/etc/ufw/user.rules')),ufw_tuples(io.read_file('/etc/ufw/user6.rules')))
+        for family,classes in resolved.items():
+            for traffic,action in classes.items():result['4.1.4']['ufw.'+family+'.'+traffic]=_ok(action)
+        result['4.1.4']['ufw_rule_resolution']=_ok('complete')
+    except ValueError:
+        result['4.1.4']['ufw_rule_resolution']=_ok('unsupported')
+    except (OSError,KeyError,TimeoutError):
+        result['4.1.4']['ufw_rule_resolution']=_error()
     def boot_entries():
         entries=[]
         for line in io.read_file('/boot/grub/grub.cfg').splitlines():

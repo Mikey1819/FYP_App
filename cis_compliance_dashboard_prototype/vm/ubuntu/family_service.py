@@ -12,6 +12,7 @@ from pathlib import Path
 import time
 
 SPECS = {'6.3.1.2': 'auditd.service'}
+UNITS = frozenset(SPECS.values()) | {'ufw.service'}  # ufw.service is driven by the 4.1.3 family (family_ufw.py)
 _HERE = Path(__file__).resolve().parent
 IMPLEMENTATION_SHA256 = hashlib.sha256((_HERE / 'family_service.py').read_bytes()).hexdigest()
 
@@ -79,7 +80,7 @@ class LinuxServiceIO:
     _VERBS = ('unmask', 'enable', 'start', 'stop', 'disable', 'mask')
 
     def unit_state(self, unit):
-        if unit not in SPECS.values():
+        if unit not in UNITS:
             raise ValueError('Unregistered unit')
         result = self.io._run(('/usr/bin/systemctl', 'show', '--property=LoadState,UnitFileState,ActiveState', unit), 20)
         if result.returncode != 0:
@@ -89,9 +90,9 @@ class LinuxServiceIO:
                 'active': values.get('ActiveState', '')}
 
     def systemctl(self, verb, unit):
-        if verb not in self._VERBS or unit not in SPECS.values():
+        if verb not in self._VERBS or unit not in UNITS:
             raise ValueError('Unregistered systemctl command')
-        if verb == 'stop':
+        if verb == 'stop' and unit == 'auditd.service':
             # auditd refuses manual stops; SIGTERM through systemd is its documented shutdown path.
             if self.io._run(('/usr/bin/systemctl', 'kill', '--signal=SIGTERM', unit), 30).returncode != 0:
                 raise OSError('systemctl kill failed')

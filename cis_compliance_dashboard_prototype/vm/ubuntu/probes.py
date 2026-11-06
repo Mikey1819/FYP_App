@@ -4,6 +4,7 @@ Unsupported syntax raises a safe error, never a guessed compliant value. Raw acc
 configuration and tool text is retained only within the target helper process.
 """
 import fnmatch
+import ipaddress
 import re
 import shlex
 
@@ -176,3 +177,59 @@ def audit_rules(text):
             row['unrestricted'] = False
         rows.append(row)
     return rows
+
+
+def ufw_tuples(text):
+    """ufw's own ordered rule records (`### tuple ###` lines of user.rules / user6.rules)."""
+    return [line[len('### tuple ### '):].strip() for line in _bounded(text).splitlines() if line.startswith('### tuple ### ')]
+
+
+def _ufw_rule(text):
+    fields = [f for f in text.split() if not f.startswith('comment=')]
+    if fields and fields[0].startswith('route:'):
+        return None  # routed (FORWARD) rules never see input/output loopback traffic
+    if len(fields) != 7:
+        raise ValueError('Unsupported ufw rule record')
+    action, proto, dport, dst, sport, src, direction = fields
+    if action not in ('allow', 'deny', 'reject', 'limit') or not re.fullmatch(r'(in|out)(_[A-Za-z0-9.:@-]{1,15})?', direction):
+        raise ValueError('Unsupported ufw rule record')
+    way, _, iface = direction.partition('_')
+    return dict(action=action, proto=proto, dport=dport, sport=sport, direction=way, iface=iface or None,
+                src=ipaddress.ip_network(src, strict=False), dst=ipaddress.ip_network(dst, strict=False))
+
+
+def _first_match(rules, direction, iface, src, dst):
+    """The action of the first user rule covering the whole traffic class; 'mixed' when an earlier rule that
+    covers only part of the class acts differently; 'none' when no explicit user rule covers it."""
+    src, dst, partial = ipaddress.ip_network(src), ipaddress.ip_network(dst), set()
+    for rule in rules:
+        if rule is None or rule['direction'] != direction or rule['src'].version != src.version:
+            continue
+        if iface == 'lo':
+            if rule['iface'] not in (None, 'lo'):
+                continue
+            iface_covered = True
+        else:
+            if rule['iface'] == 'lo':
+                continue
+            iface_covered = rule['iface'] is None
+        if not (rule['src'].overlaps(src) and rule['dst'].overlaps(dst)):
+            continue
+        covered = (iface_covered and src.subnet_of(rule['src']) and dst.subnet_of(rule['dst'])
+                   and (rule['proto'], rule['dport'], rule['sport']) == ('any', 'any', 'any'))
+        if covered:
+            action = 'mixed' if rule['action'] == 'limit' else rule['action']
+            return 'mixed' if partial - {action} else action
+        partial.add(rule['action'])
+    return 'mixed' if partial else 'none'
+
+
+def ufw_loopback(rules4, rules6):
+    """CIS 4.1.4 traffic classes resolved over ufw's ordered user rules, per address family."""
+    result = {}
+    for family, rules, loop, anywhere in (('ipv4', rules4, '127.0.0.0/8', '0.0.0.0/0'), ('ipv6', rules6, '::1/128', '::/0')):
+        parsed = [_ufw_rule(rule) for rule in rules]
+        result[family] = {'loopback_in': _first_match(parsed, 'in', 'lo', loop, loop),
+                          'loopback_out': _first_match(parsed, 'out', 'lo', loop, loop),
+                          'spoofed_in': _first_match(parsed, 'in', '!lo', loop, anywhere)}
+    return result

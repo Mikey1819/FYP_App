@@ -578,3 +578,7 @@ Added 6.3.3.4 (time change), 6.3.3.6 (privileged commands, from the scan's inven
 ## 7 November 2026 — GRUB audit=1 fix (integration, in progress)
 
 Added 6.3.1.3: `audit=1` through a `/etc/default/grub.d` drop-in and `update-grub`, as a supervised job. Conflicting `audit=0` or overriding drop-ins are refused. The VM is never rebooted; early-process auditing starts at the next reboot. Twenty-seven fix families now exist. Full suite: **465 passed**. Fixture-only; the execution gate is closed.
+
+## 7 November 2026 — UFW loopback resolver and the 4.1.3 / 4.1.4 fixes (integration, in progress)
+
+The collector now resolves UFW's ordered rules for the loopback traffic classes, so 4.1.4 is no longer always Unknown (the helper changed: reinstall before the next scan). Added the 4.1.4 loopback rules, refused when existing rules would still decide differently, and the 4.1.3 UFW enable, never without an SSH allow rule. Both are confirm-or-undo. Twenty-nine fix families now exist. Full suite: **478 passed**. Fixture-only; the execution gate is closed.

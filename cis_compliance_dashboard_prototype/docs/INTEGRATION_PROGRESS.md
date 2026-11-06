@@ -742,3 +742,27 @@ I read CIS 6.3.1.3 (p.757) first: add `audit=1` to `GRUB_CMDLINE_LINUX` in `/etc
   - **Mutation checks, all caught:** allowing `audit=0`, a later replacing drop-in, already-compliant entries, and a missing GRUB.
   - 27 implemented families; 3 reserved IDs remain.
 - Full suite **465 tests, all passed**.
+
+## 2026-11-07 UFW loopback resolver, loopback rules (CIS 4.1.4) and UFW enable (CIS 4.1.3)
+
+I read CIS 4.1.3 (p.429) and 4.1.4 (p.433) first. The 4.1.4 audit checks that `ufw status verbose` lists the loopback rules in order; its remediation is `ufw allow in on lo`, `allow out on lo`, `deny in from 127.0.0.0/8` and `deny in from ::1`.
+
+- **Collector resolver (closes the pending "4.1.4 loopback resolver" item):**
+  - `probes.ufw_loopback` reads ufw's ordered user-rule records from `/etc/ufw/user.rules` and `/etc/ufw/user6.rules`, which are now on the collector's read allowlist.
+  - For each traffic class (loopback in, loopback out, spoofed 127.0.0.0/8 or ::1 inbound on other interfaces) it reports the action of the first rule covering the whole class. It reports `mixed` when an earlier rule covering only part of the class acts differently, and `none` when no explicit user rule covers it, which CIS's audit treats as failing.
+  - Addresses are compared with `ipaddress`; routed rules are ignored; any unparseable record makes the resolution `unsupported`, never a guess.
+  - The evidence schema gained the values `none` and `mixed`. 4.1.4 is now decidable instead of always Unknown.
+  - **The helper bundle changed**, so the VM needs a reinstall before the next scan.
+- **`UfwLoopbackFamily` (`ubuntu.4.1.4.v1`):** appends the missing CIS rules in CIS order; ufw appends, so earlier rules keep precedence.
+  - Eligibility runs the same resolver on the predicted rule list and refuses when appending cannot comply. That covers an earlier deny, an earlier partial rule with another action, ufw IPv6 off while the kernel has IPv6, or nothing to do.
+  - **Bug found by the tests:** a rule present for only one address family is refused. Adding the missing twin is possible, but `ufw delete` on restore would also remove the existing rule.
+  - Restore deletes only the rules this change added.
+- **`UfwEnableFamily` (`ubuntu.4.1.3.v1`):** `systemctl unmask`/`enable`/`start ufw.service`, then `ufw --force enable`, running only the missing steps.
+  - **Never runs without an SSH (port 22) allow rule**, and is refused when ufw is not installed or nothing needs doing.
+  - Restore disables the firewall again if it was inactive and returns the unit's state. `LinuxServiceIO` now also allows `ufw.service`; only auditd uses the SIGTERM stop path.
+- Both are commit-confirm, 600 s.
+- **Coverage:** 4.1.3 and 4.1.4 are `fixture_tested`.
+- **Tests:** 6 resolver/collector tests (`test_ubuntu_ufw_loopback.py`) and 7 family tests (`test_ubuntu_ufw_enable_loopback.py`), written first (RED: 8 and 14 errors).
+  - **Mutation checks, all caught:** allowing a half-present rule, skipping the resolver check, ignoring the IPv6 mismatch, enabling without an SSH rule, restore deleting pre-existing rules, and a resolver that ignores partial rules.
+  - 29 implemented families; only 1.2.2.1 remains.
+- Full suite **478 tests, all passed**.

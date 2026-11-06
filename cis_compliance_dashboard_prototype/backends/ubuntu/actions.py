@@ -260,7 +260,42 @@ def _ufw_spec():
     def validate(candidate):
         if type(candidate) is not dict or candidate != PARAMS:
             raise ValueError('Only the approved default-deny site profile is managed')
-    return {'ubuntu.4.1.7.v1': ActionSpec(
+    def facts(cid, evidence):
+        result = next((a for a in evidence.assessments if a.control_id == cid), None)
+        if result is None or result.status is not ComplianceStatus.NON_COMPLIANT:
+            return None
+        return json.loads(evidence.raw)['observations'][cid]
+
+    def propose_loopback(cid, evidence):
+        found = facts(cid, evidence)
+        if (found is None or found.get('firewall_manager', {}).get('value') != 'ufw'
+                or found.get('ufw.active', {}).get('value') is not True
+                or found.get('ufw_rule_resolution', {}).get('value') != 'complete'):
+            return None
+        return {'rules': 'cis-loopback'}
+
+    def propose_enable(cid, evidence):
+        found = facts(cid, evidence)
+        if found is None or found.get('package.ufw', {}).get('value') != 'installed':
+            return None
+        return {'enable': True}
+
+    def validate_loopback(candidate):
+        if type(candidate) is not dict or candidate != {'rules': 'cis-loopback'}:
+            raise ValueError('Only the CIS loopback rule set is managed')
+
+    def validate_enable(candidate):
+        if type(candidate) is not dict or json.dumps(candidate, sort_keys=True) != '{"enable": true}':
+            raise ValueError('Only enabling ufw is managed')
+    scope = ['/etc/default/ufw', '/etc/ufw/user.rules', '/etc/ufw/user6.rules']
+    return {'ubuntu.4.1.4.v1': ActionSpec(
+        'ubuntu.4.1.4.v1', 1, IMPLEMENTATION_SHA256, ('4.1.4',), validate_loopback, 120, propose=propose_loopback,
+        title='Add the CIS UFW loopback rules (confirm after reconnect)', recovery={'kind': 'restore_backup', 'scope': scope}),
+            'ubuntu.4.1.3.v1': ActionSpec(
+        'ubuntu.4.1.3.v1', 1, IMPLEMENTATION_SHA256, ('4.1.3',), validate_enable, 120, propose=propose_enable,
+        title='Enable the ufw service and firewall, only with an SSH allow rule (confirm after reconnect)',
+        recovery={'kind': 'restore_backup', 'scope': scope + ['systemd:ufw.service']}),
+            'ubuntu.4.1.7.v1': ActionSpec(
         'ubuntu.4.1.7.v1', 1, IMPLEMENTATION_SHA256, ('4.1.7',), validate, 120, propose=propose,
         title='UFW default deny, after allowing outbound DNS, http, https, ntp and DNS over TLS (confirm after reconnect)',
         recovery={'kind': 'restore_backup', 'scope': ['/etc/default/ufw', '/etc/ufw/user.rules', '/etc/ufw/user6.rules']})}

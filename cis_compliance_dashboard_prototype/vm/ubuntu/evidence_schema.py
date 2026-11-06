@@ -91,7 +91,7 @@ def schemas():
     result['5.4.1.1']['default.minimum'] = integer
     for family in ('ipv4','ipv6'):
         for traffic in ('loopback_in','loopback_out','spoofed_in'):
-            result['4.1.4']['ufw.'+family+'.'+traffic] = enum('allow','deny','reject','unresolved')
+            result['4.1.4']['ufw.'+family+'.'+traffic] = enum('allow','deny','reject','unresolved','none','mixed')
     for direction in ('incoming','outgoing','routed'):
         result['4.1.7']['ufw.default.'+direction] = enum('allow','deny','reject','disabled')
     for cid in ('6.3.3.4','6.3.3.8','6.3.3.6'):

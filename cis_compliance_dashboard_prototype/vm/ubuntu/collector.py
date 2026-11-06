@@ -44,7 +44,7 @@ COMMANDS.update({'sysctl.'+key:('/usr/sbin/sysctl','-n',key) for key in SYSCTL_K
 COMMANDS.update({'unit.'+unit:('/usr/bin/systemctl','show',unit,'--property=LoadState,ActiveState,UnitFileState','--no-pager') for unit in UNITS})
 IDENTITY_FILES = frozenset(('/etc/os-release','/etc/machine-id','/proc/sys/kernel/hostname'))
 FILES = IDENTITY_FILES | frozenset(('/etc/passwd','/etc/shadow','/etc/login.defs','/etc/default/useradd',
-    '/etc/default/ufw','/etc/ufw/sysctl.conf','/sys/module/ipv6/parameters/disable','/etc/security/limits.conf',
+    '/etc/default/ufw','/etc/ufw/sysctl.conf','/etc/ufw/user.rules','/etc/ufw/user6.rules','/sys/module/ipv6/parameters/disable','/etc/security/limits.conf',
     '/etc/systemd/coredump.conf','/etc/security/pwquality.conf','/etc/pam.d/common-password',
     '/etc/ssh/sshd_config','/etc/sudoers','/etc/default/grub','/boot/grub/grub.cfg','/proc/cmdline','/proc/filesystems'))
 GROUPS = {
