@@ -1,7 +1,7 @@
-"""Server access helper offered for download on the connection form (scripts/server_access/).
+"""Server access helper offered for download on the Servers page (scripts/server_access/).
 
-Optional: only for scanning by network address. The lab VM through the port forward needs nothing extra.
-The helper runs on the server, not here: it lets one laptop address reach WinRM and reverts that afterwards.
+Every server is added by pairing, so every server needs the helper. It runs on the server, not here: it shows the
+pairing code, lets only paired laptops reach WinRM, and reverts that afterwards.
 The bundle is built byte-for-byte the same every time, so its published SHA-256 stays checkable.
 """
 from io import BytesIO

@@ -1,4 +1,4 @@
-"""Saved servers: the registry, the identity probe used to add a server, and the Servers page.
+"""Saved servers: the registry, the identity probe used at login, and the Servers page.
 Fake remoting sessions only; no server is contacted."""
 from contextlib import closing
 from pathlib import Path
@@ -145,60 +145,56 @@ class ServersPageTests(unittest.TestCase):
         self.assertEqual(len(app.exception), 0, [e.value for e in app.exception])
         return app
 
-    def add(self, app, host='192.168.1.50', note=''):
-        app.text_input(key='servers_add_host').input(host)
-        app.text_input(key='servers_add_password').input('secret')
-        if note:
-            app.text_input(key='servers_add_note').input(note)
-        app.run()  # As in a browser: the button turns on only after the page re-renders with the typed values.
-        return self.ok(app.button(key='servers_add').click().run())
+    def saved(self, note=''):
+        """A server paired on an earlier day (pairing itself is tested in test_pairing_flow.py)."""
+        registry = ServerRegistry(self.folder / 'preview_imports_servers.sqlite3')
+        registry.add(IDENTITY, '192.168.1.50', 5985, 'Administrator', note)
+        registry.paired(MACHINE_UUID, 'a' * 32, '192.168.1.23')
 
-    def test_empty_list_then_add_and_connect(self):
+    def connect(self, app=None):
+        app = app or self.ok(self.page())
+        app.text_input(key='servers_password').input('secret').run()  # The button turns on after a re-render.
+        return self.ok(app.button(key='servers_connect').click().run())
+
+    def test_servers_are_added_only_by_pairing_code(self):
         app = self.ok(self.page())
         self.assertTrue(any('No saved servers yet' in i.value for i in app.info))
-        self.assertTrue(app.button(key='servers_add').disabled, 'Needs an address and password first')
-        app = self.add(app, note='Finance server')
+        keys = [t.key for t in app.text_input]
+        self.assertEqual(keys, ['servers_code'], 'No address, port or password box: only the pairing code')
+        self.assertEqual(len(app.tabs), 0)
+        self.assertTrue(app.button(key='servers_find').disabled, 'Needs a code first')
+
+    def test_connect_to_a_saved_server(self):
+        self.saved(note='Finance server')
+        app = self.connect()
         target = app.session_state[LIVE_TARGET]
         self.assertEqual((target.hostname, target.machine_uuid, target.host), ('FIXTURE-SERVER', MACHINE_UUID, '192.168.1.50'))
-        self.assertTrue(any('Added and connected to FIXTURE' in s.value for s in app.success))
+        self.assertTrue(any('Connected to FIXTURE' in s.value for s in app.success))
         rows = app.dataframe[0].value.to_dict('records')
         self.assertEqual([(r['Server'], r['Address'], r['Note'], r['Connected now']) for r in rows],
                          [('FIXTURE-SERVER', '192.168.1.50:5985', 'Finance server', True)])
         self.assertNotIn(b'secret', (self.folder / 'preview_imports_servers.sqlite3').read_bytes())
 
-    def test_unsupported_server_is_not_saved(self):
-        self.session.identity = {**IDENTITY, 'os_caption': 'Microsoft Windows Server 2019 Standard', 'build_number': '17763'}
-        app = self.add(self.page())
-        self.assertTrue(any('unsupported_target' in e.value for e in app.error))
-        self.assertNotIn(LIVE_TARGET, app.session_state)
-        self.assertTrue(any('No saved servers yet' in i.value for i in app.info))
-
     def test_reconnect_to_a_saved_server_checks_its_identity(self):
-        self.add(self.page())
-        app = self.ok(self.page())  # A new browser session: saved, but not connected.
+        self.saved()
+        app = self.ok(self.page())  # Saved, but not connected.
         self.assertNotIn(LIVE_TARGET, app.session_state)
-        app.text_input(key='servers_password').input('secret').run()
-        app = self.ok(app.button(key='servers_connect').click().run())
-        self.assertEqual(app.session_state[LIVE_TARGET].machine_uuid, MACHINE_UUID)
         # Another machine at the saved address is refused, with what to do about it.
         self.session.identity = {**IDENTITY, 'hostname': 'OTHER', 'machine_uuid': OTHER_UUID}
-        app = self.ok(self.page())
-        app.text_input(key='servers_password').input('secret').run()
-        app = self.ok(app.button(key='servers_connect').click().run())
+        app = self.connect(app)
         self.assertNotIn(LIVE_TARGET, app.session_state)
-        self.assertTrue(any('(wrong_target)' in e.value and 'Another machine now uses this address' in e.value
-                            for e in app.error), [e.value for e in app.error])
+        self.assertTrue(any('(wrong_target)' in e.value and 'Re-pair the server with a new code' in e.value.replace('\\', '')
+                            for e in app.error), [e.value for e in app.error])  # The hint is shown escaped.
 
     def test_unreachable_saved_server_says_what_probably_happened(self):
-        self.add(self.page())
+        self.saved()
         self.session.fail = ConnectionError('Connection refused')
-        app = self.ok(self.page())
-        app.text_input(key='servers_password').input('secret').run()
-        app = self.ok(app.button(key='servers_connect').click().run())
+        app = self.connect()
         self.assertTrue(any('address may have changed' in e.value for e in app.error))
 
     def test_remove_needs_confirmation_and_disconnects_that_server(self):
-        app = self.add(self.page())
+        self.saved()
+        app = self.connect()
         app = self.ok(app.button(key='servers_remove').click().run())
         self.assertIn(LIVE_TARGET, app.session_state)  # Not yet: a second click confirms.
         app = self.ok(app.button(key='servers_remove_confirm').click().run())
@@ -206,13 +202,13 @@ class ServersPageTests(unittest.TestCase):
         self.assertTrue(any('No saved servers yet' in i.value for i in app.info))
 
     def test_disconnect_only_ends_the_session(self):
-        app = self.add(self.page())
+        self.saved()
+        app = self.connect()
         calls = len(self.session.calls)
         app = self.ok(app.button(key='servers_disconnect').click().run())
         self.assertNotIn(LIVE_TARGET, app.session_state)
         self.assertEqual(len(self.session.calls), calls, 'Disconnect sends nothing to the server')
         self.assertEqual(len(app.dataframe[0].value), 1, 'The server stays saved')
-
 
 if __name__ == '__main__':
     unittest.main()

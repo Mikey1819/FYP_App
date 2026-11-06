@@ -25,6 +25,10 @@ from test_winrm_channel import IDENTITY, MACHINE_UUID, target
 
 OWN = (local_addresses() or [None])[0]
 OTHER_UUID = '11111111-2222-3333-4444-555555555555'
+# What a Windows Server 2022 helper reports about its system, and what a future Ubuntu helper would report.
+WS2022 = ('windows', 'Microsoft Windows Server 2022 Standard Evaluation', '10.0.20348')
+UBUNTU = ('ubuntu', 'Ubuntu 22.04.4 LTS', '22.04')
+SYSTEM = dict(zip(('os', 'os_name', 'os_version'), WS2022))
 HELPER_TEXT = HELPER.read_text(encoding='utf-8-sig')
 SERVER_DIR = HELPER.parent
 
@@ -32,9 +36,9 @@ SERVER_DIR = HELPER.parent
 class FakeServer(threading.Thread):
     """A pairing server in Python (pairing.py's server half) on this computer's own address."""
 
-    def __init__(self, code, junk_first=False):
+    def __init__(self, code, junk_first=False, system=SYSTEM):
         super().__init__(daemon=True)
-        self.code, self.junk_first, self.questions = code, junk_first, 0
+        self.code, self.junk_first, self.questions, self.system = code, junk_first, 0, system
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.bind((OWN, 0))
         self.sock.settimeout(5)
@@ -52,9 +56,9 @@ class FakeServer(threading.Thread):
                 if self.junk_first:  # Noise and a forged answer arrive before the real one.
                     self.sock.sendto(b'hello', sender)
                     self.sock.sendto(pairing.make_found('000000001', question['nonce_l'], 'IMPOSTOR', OTHER_UUID,
-                                                        5985, 'e' * 32), sender)
+                                                        5985, 'e' * 32, **SYSTEM), sender)
                 self.sock.sendto(pairing.make_found(self.code, question['nonce_l'], 'FIXTURE-SERVER', MACHINE_UUID,
-                                                    5985, 'a' * 32), sender)
+                                                    5985, 'a' * 32, **self.system), sender)
         except OSError:
             pass
 
@@ -72,7 +76,13 @@ class FindServerTests(unittest.TestCase):
     def test_the_server_with_the_code_is_found(self):
         server = self.serve()
         found = find_server(server.code, name='DESKTOP-KHOO', sources=[OWN], targets=[(OWN, server.port)], timeout=3)
-        self.assertEqual(found, FoundServer(OWN, 'FIXTURE-SERVER', MACHINE_UUID, 5985, 'a' * 32, OWN))
+        self.assertEqual(found, FoundServer(OWN, 'FIXTURE-SERVER', MACHINE_UUID, 5985, 'a' * 32, OWN, *WS2022))
+        self.assertEqual((found.system.kind, found.system.supported), ('windows_server_2022', True))
+
+    def test_the_system_the_server_reports_is_detected(self):
+        server = self.serve(system=dict(zip(('os', 'os_name', 'os_version'), UBUNTU)))
+        found = find_server(server.code, sources=[OWN], targets=[(OWN, server.port)], timeout=3)
+        self.assertEqual((found.system.kind, found.system.label, found.system.supported), ('ubuntu', 'Ubuntu 22.04', False))
 
     def test_noise_and_forged_answers_are_ignored(self):
         server = self.serve(junk_first=True)
@@ -107,7 +117,11 @@ class PowerShellListenerTests(unittest.TestCase):
 $script:Saved = @()
 function Save-Pairings([object[]]$Pairings) {{ $script:Saved = @($Pairings | Where-Object {{ $null -ne $_ }}) }}
 function Get-Pairings {{ $script:Saved }}
-function Get-ServerIdentity {{ [pscustomobject]@{{ hostname = 'WIN-TEST'; machine_uuid = '{MACHINE_UUID}' }} }}
+# A fixed name and UUID, but this computer's real system (read only), so a real Windows name crosses the check.
+function Get-ServerIdentity {{
+    $os = Get-CimInstance Win32_OperatingSystem -OperationTimeoutSec 15
+    [pscustomobject]@{{ hostname = 'WIN-TEST'; machine_uuid = '{MACHINE_UUID}'; os = 'windows'
+                       os_name = ConvertTo-OsName ([string]$os.Caption); os_version = [string]$os.Version }} }}
 $udp = New-Object Net.Sockets.UdpClient (New-Object Net.IPEndPoint([Net.IPAddress]::Parse('{OWN}'), 0))
 $listener = [pscustomobject]@{{ udp = $udp; session = New-PairingSession ([DateTimeOffset]::UtcNow); done = @() }}
 [Console]::Out.WriteLine("$($udp.Client.LocalEndPoint.Port) $($listener.session.code)"); [Console]::Out.Flush()
@@ -130,6 +144,8 @@ try {{
         found = find_server(code, name='DESKTOP-KHOO', sources=[OWN], targets=[(OWN, int(port))], timeout=8)
         out, err = process.communicate(timeout=60)
         self.assertEqual((found.hostname, found.machine_uuid, found.laptop_address), ('WIN-TEST', MACHINE_UUID, OWN))
+        # This development laptop runs desktop Windows, which is detected (and never offered a login).
+        self.assertEqual((found.os, found.system.kind, found.system.supported), ('windows', 'windows_desktop', False))
         self.assertIn(f'Paired with DESKTOP-KHOO ({OWN})', out, err)
         record = json.loads(out.split('RECORD ', 1)[1])
         self.assertEqual((record['pairing_id'], record['laptop_address']), (found.pairing_id, OWN))
@@ -206,7 +222,7 @@ def servers_page():
     render_servers(servers_database())
 
 
-FOUND = FoundServer('192.168.1.50', 'FIXTURE-SERVER', MACHINE_UUID, 5985, 'a' * 32, '192.168.1.23')
+FOUND = FoundServer('192.168.1.50', 'FIXTURE-SERVER', MACHINE_UUID, 5985, 'a' * 32, '192.168.1.23', *WS2022)
 
 
 class PairingPageTests(unittest.TestCase):
@@ -269,9 +285,47 @@ class PairingPageTests(unittest.TestCase):
         self.assertTrue(any('pairing_not_confirmed' in e.value for e in app.error))
 
     def test_a_different_machine_behind_the_login_is_not_saved(self):
-        self.found = FoundServer('192.168.1.50', 'OTHER', OTHER_UUID, 5985, 'a' * 32, '192.168.1.23')
+        self.found = FoundServer('192.168.1.50', 'OTHER', OTHER_UUID, 5985, 'a' * 32, '192.168.1.23', *WS2022)
         app = self.pair()
         self.assertTrue(any('wrong_target' in e.value for e in app.error))
+        self.assertEqual(self.registry().all(), [])
+
+    def test_the_detected_system_is_shown_before_login(self):
+        app = self.page()
+        app.text_input(key='servers_code').input('482-913-075').run()
+        app = self.ok(app.button(key='servers_find').click().run())
+        text = ' '.join(m.value for m in app.markdown)
+        self.assertIn('System: **Windows Server 2022**', text)
+        self.assertIn('Supported', text)
+        self.assertIn('servers_pair_password', [t.key for t in app.text_input])
+
+    def test_ubuntu_is_detected_and_noted_but_not_linked_yet(self):
+        self.found = FoundServer('192.168.1.60', 'ubuntu-box', OTHER_UUID, 5985, 'a' * 32, '192.168.1.23', *UBUNTU)
+        app = self.pair()
+        text = ' '.join(m.value for m in app.markdown).replace('\\', '')  # Server text is shown escaped.
+        self.assertIn('System: **Ubuntu 22.04**', text)
+        self.assertIn('not linked to this program yet', text)
+        self.assertNotIn('servers_pair_password', [t.key for t in app.text_input], 'No login for an unlinked system')
+        self.assertEqual(self.session.calls, [], 'Nothing is sent to an unsupported server')
+        self.assertEqual(self.registry().all(), [])
+        app = self.ok(app.button(key='servers_pair_cancel').click().run())
+        self.assertNotIn('servers_pending', app.session_state)
+
+    def test_another_windows_version_is_noted_and_not_linked(self):
+        self.found = FoundServer('192.168.1.61', 'WIN2019', OTHER_UUID, 5985, 'a' * 32, '192.168.1.23', 'windows',
+                                 'Microsoft Windows Server 2019 Standard', '10.0.17763')
+        app = self.pair()
+        self.assertTrue(any('Only Windows Server 2022 checks are built' in m.value for m in app.markdown))
+        self.assertNotIn('servers_pair_password', [t.key for t in app.text_input])
+        self.assertEqual(self.registry().all(), [])
+
+    def test_a_server_that_says_2022_but_is_not_after_login_is_not_saved(self):
+        # The pairing answer only chooses the note; the identity probe after login decides.
+        self.session.identity = {**self.session.identity, 'os_caption': 'Microsoft Windows Server 2019 Standard',
+                                 'build_number': '17763'}
+        app = self.pair()
+        self.assertTrue(any('unsupported_target' in e.value for e in app.error))
+        self.assertNotIn(LIVE_TARGET, app.session_state)
         self.assertEqual(self.registry().all(), [])
 
     def test_a_mistyped_code_is_explained_without_searching(self):
@@ -284,10 +338,10 @@ class PairingPageTests(unittest.TestCase):
     def test_repairing_keeps_the_same_machine_and_refuses_another(self):
         self.pair()
         app = self.page()
-        self.found = FoundServer('192.168.1.77', 'OTHER', OTHER_UUID, 5985, 'c' * 32, '192.168.1.23')
+        self.found = FoundServer('192.168.1.77', 'OTHER', OTHER_UUID, 5985, 'c' * 32, '192.168.1.23', *WS2022)
         app = self.pair(app, field='servers_repair_code', button='servers_repair')
         self.assertTrue(any('A different machine answered' in e.value for e in app.error))
-        self.found = FoundServer('192.168.1.77', 'FIXTURE-SERVER', MACHINE_UUID, 5985, 'c' * 32, '192.168.0.105')
+        self.found = FoundServer('192.168.1.77', 'FIXTURE-SERVER', MACHINE_UUID, 5985, 'c' * 32, '192.168.0.105', *WS2022)
         self.session.pairings = [laptop('c' * 32, '192.168.0.105')]
         app = self.pair(app, field='servers_repair_code', button='servers_repair')
         self.assertTrue(any('Re-paired FIXTURE' in s.value.replace('\\', '') for s in app.success))  # Shown escaped.

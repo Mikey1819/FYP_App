@@ -15,7 +15,10 @@
     "machine_uuid": "e5d10741-f200-4292-a099-e6be76032f4e",
     "port": 5985,
     "pairing_id": "fedcba9876543210fedcba9876543210",
-    "raw": "{\"v\":1,\"type\":\"found\",\"nonce_l\":\"0123456789abcdef0123456789abcdef\",\"nonce_s\":\"00112233445566778899aabbccddeeff\",\"hostname\":\"WIN-VFT30DUDRHQ\",\"machine_uuid\":\"e5d10741-f200-4292-a099-e6be76032f4e\",\"port\":5985,\"pairing_id\":\"fedcba9876543210fedcba9876543210\",\"mac\":\"a6e971668ae4f295d00d5051e706390cfbdf0163869ce170d817a24e008de309\"}",
-    "mac": "a6e971668ae4f295d00d5051e706390cfbdf0163869ce170d817a24e008de309"
+    "os": "windows",
+    "os_name": "Microsoft Windows Server 2022 Standard Evaluation",
+    "os_version": "10.0.20348",
+    "raw": "{\"v\":1,\"type\":\"found\",\"nonce_l\":\"0123456789abcdef0123456789abcdef\",\"nonce_s\":\"00112233445566778899aabbccddeeff\",\"hostname\":\"WIN-VFT30DUDRHQ\",\"machine_uuid\":\"e5d10741-f200-4292-a099-e6be76032f4e\",\"port\":5985,\"pairing_id\":\"fedcba9876543210fedcba9876543210\",\"os\":\"windows\",\"os_name\":\"Microsoft Windows Server 2022 Standard Evaluation\",\"os_version\":\"10.0.20348\",\"mac\":\"4fbbadda8691c0a229d47cf48683f6e67a7f272f4f3a394679d1056e3897c846\"}",
+    "mac": "4fbbadda8691c0a229d47cf48683f6e67a7f272f4f3a394679d1056e3897c846"
   }
 }

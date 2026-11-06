@@ -13,6 +13,7 @@ import socket
 import time
 
 from .pairing import PAIRING_PORT, MAX_MESSAGE, PairingError, make_find, read_found
+from .system_detect import detect
 
 
 @dataclass(frozen=True)
@@ -23,6 +24,14 @@ class FoundServer:
     port: int             # The server's WinRM port.
     pairing_id: str       # The server's record of this pairing; checked again over WinRM after login.
     laptop_address: str   # This laptop's address on that network, as the server saw it.
+    os: str               # The server's operating system, as it reported it (see pairing.py and system_detect.py).
+    os_name: str
+    os_version: str
+
+    @property
+    def system(self):
+        """Which kind of system this is, with a note for the page (system_detect.DetectedSystem)."""
+        return detect(self.os, self.os_name, self.os_version)
 
 
 def _usable(address):
@@ -98,7 +107,8 @@ def find_server(code, *, name=None, port=PAIRING_PORT, timeout=6.0, attempts=3, 
                     except PairingError:
                         continue  # Not ours, not for this question, or not proving the code: ignore it.
                     return FoundServer(address, answer['hostname'], answer['machine_uuid'], answer['port'],
-                                       answer['pairing_id'], s.getsockname()[0])
+                                       answer['pairing_id'], s.getsockname()[0], answer['os'], answer['os_name'],
+                                       answer['os_version'])
         raise PairingError('No server answered with this code. Check that the code is still shown on the server, '
                            'that you typed it correctly, and that this laptop is on the same network as the server.')
     finally:

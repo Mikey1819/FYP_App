@@ -1,7 +1,10 @@
 """Servers page: the saved servers ("My servers"), pairing a new one by code, and who has access to a server.
 
-Pairing (docs/design/LAN_PAIRING_DESIGN.md), in the order the checks run:
+A server is added only by its pairing code: the administrator never types an address. Pairing
+(docs/design/LAN_PAIRING_DESIGN.md), in the order the checks run:
   1. The administrator types the code shown on the server; find_server() accepts only an answer that proves it.
+     The answer also says which operating system the server runs (system_detect.py). The page shows it as a note,
+     and only a system this program can check (today Windows Server 2022) goes on to the login.
   2. Logging in with the Administrator password works.
   3. The machine that logged in is the one that answered (same hostname and UUID), a stand-alone Server 2022.
   4. The server's own pairing records, read over WinRM, hold this pairing for this laptop's address.
@@ -22,7 +25,7 @@ from .server_access import helper_bundle, helper_sha256
 from .server_control import close_access, disconnect_laptop, paired_laptops
 from .servers import MAX_NOTE, ServerRegistry
 from .ui import md_escape, myt
-from .winrm_channel import DEFAULT_PORT, ChannelError, LiveScanner, WinRmLogin, WinRmTarget, probe_identity
+from .winrm_channel import ChannelError, LiveScanner, WinRmLogin, WinRmTarget, probe_identity
 
 PICK = 'servers_pick'
 # Plain session keys (not widget keys): set by an action, read on a later run.
@@ -37,7 +40,7 @@ CONFIRM_ACCESS = 'servers_confirm_access'
 HINTS = {
     'unreachable': 'Its address may have changed, or access was reverted on the server. Start pairing on the server '
                    'and use Re-pair below.',
-    'wrong_target': 'Another machine now uses this address. Check the address, or re-pair the server.',
+    'wrong_target': 'Another machine now uses this address. Re-pair the server with a new code.',
     'auth_failed': 'Check the account and password.',
     'not_admin': 'Use the built-in Administrator account.',
 }
@@ -81,7 +84,7 @@ def _connect(registry, server, password):
 
 def _show_saved(registry, saved, connected):
     rows = [{'Server': s.hostname, 'Address': f'{s.host}:{s.port}', 'System': s.os_caption, 'Account': s.username,
-             'Note': s.note, 'Paired': 'by code' if s.pairing_id else 'by address',
+             'Note': s.note,
              'Last connected': myt(s.last_connected_at) if s.last_connected_at else 'Never',
              'Connected now': connected is not None and connected.machine_uuid == s.machine_uuid} for s in saved]
     st.dataframe(rows, hide_index=True)
@@ -119,7 +122,7 @@ def _show_saved(registry, saved, connected):
                 st.session_state[REMOVING] = chosen.machine_uuid
         if st.session_state.get(REMOVING) == chosen.machine_uuid:
             st.warning(f'Remove **{md_escape(chosen.hostname)}** from this list? Its assessment history stays, and '
-                       'nothing changes on the server. To add it again you need a new pairing code or its address.')
+                       'nothing changes on the server. To add it again you need a new pairing code.')
             with st.container(horizontal=True):
                 if st.button('Remove', key='servers_remove_confirm', type='primary'):
                     registry.remove(chosen.machine_uuid)
@@ -153,6 +156,9 @@ def _find(code, *, expected_uuid=None, username='Administrator'):
 def _finish_pairing(registry, pending, username, password, note):
     """Steps 2 to 5: log in, check the identity and the server's pairing record, then save and connect."""
     found = FoundServer(**pending['found'])
+    if not found.system.supported:  # The button is not offered then; this keeps the rule in one more place.
+        st.error('Not paired: ' + md_escape(found.system.note))
+        return
     try:
         login = WinRmLogin(username.strip(), password, found.address, found.port)
         identity = probe_identity(login)
@@ -189,9 +195,21 @@ def _finish_pairing(registry, pending, username, password, note):
 def _show_pending(registry):
     pending = st.session_state[PENDING]
     found = FoundServer(**pending['found'])
+    system = found.system
     with st.container(border=True):
         st.markdown(f':green-badge[:material/wifi_find: Found] **{md_escape(found.hostname)}** at '
                     f'{md_escape(found.address)}, answering with the right code.')
+        # The system the server reported about itself: the administrator never has to say it.
+        badge = ':green-badge[:material/check: Supported]' if system.supported else ':orange-badge[Not supported yet]'
+        st.markdown(f'System: **{md_escape(system.label)}** {badge}  \n'
+                    f'{md_escape(system.note)} *(Reported by the server: {md_escape(system.reported or "nothing")}.)*')
+        if not system.supported:
+            st.caption('Nothing was saved on this laptop. The helper on the server may have recorded this pairing: '
+                       'click **Revert changes** there to remove it.')
+            if st.button('Cancel', key='servers_pair_cancel'):
+                st.session_state.pop(PENDING, None)
+                st.rerun()
+            return
         st.caption('Log in to finish. The program then checks that the machine you log in to is this one, and that '
                    'the server recorded this pairing for this laptop. The password is never saved.')
         left, right = st.columns(2)
@@ -211,55 +229,13 @@ def _show_pending(registry):
 
 def _show_add_by_code():
     st.caption('On the server, run the server access helper (download it below) and click **Start pairing**. It '
-               'shows a one-time code. This laptop and the server must be on the same network.')
+               'shows a one-time code. This laptop and the server must be on the same network. You do not need its '
+               'address, and the program finds out by itself which system the server runs.')
     with st.container(horizontal=True, vertical_alignment='bottom'):
         code = st.text_input('Pairing code shown on the server', key='servers_code', placeholder='482-913-075')
         if st.button('Find server', key='servers_find', type='primary', disabled=not code.strip(),
                      icon=':material/wifi_find:'):
             _find(code)
-
-
-# ------------------------------------------------------------------ adding by address (fallback, lab port forward)
-def _add(registry, host, port, username, password, note):
-    try:
-        login = WinRmLogin(username.strip(), password, host.strip(), int(port))
-        found = probe_identity(login)
-        server, is_new = registry.add(found, login.host, login.port, login.username, note)
-    except ChannelError as exc:
-        st.error(f'Not added ({exc.state}): {md_escape(exc.detail)}')
-        return
-    except ValueError as exc:
-        st.error('Not added: ' + md_escape(exc))
-        return
-    # The identity was just read from this address with this login, so the session can start without a second probe.
-    registry.connected(server.machine_uuid)
-    st.session_state[LIVE_TARGET] = server.target(password)
-    st.session_state.pop(REPORT, None)
-    st.session_state[SELECT_NEXT] = server.machine_uuid
-    st.session_state[NOTICE] = (f'Added and connected to {server.hostname}.' if is_new else
-                                f'{server.hostname} was already saved: its address is now {server.host}:{server.port}. '
-                                'Connected.')
-    st.rerun()
-
-
-def _show_add_by_address(registry):
-    st.caption('For the lab VM through its VirtualBox port forward (address 127.0.0.1, port 55985), or a network '
-               'that blocks pairing. On the server, allow this laptop first: '
-               '`FYP-ServerAccess.ps1 -Action Allow -ScannerAddress <this laptop\'s address>`.')
-    left, middle = st.columns([3, 1])
-    host = left.text_input('Server address (IP address or name)', key='servers_add_host')
-    port = middle.number_input('Port', value=DEFAULT_PORT, min_value=1, max_value=65535, key='servers_add_port')
-    left, right = st.columns(2)
-    username = left.text_input('Administrator account', value='Administrator', key='servers_add_user')
-    password = right.text_input('Password', type='password', key='servers_add_password')
-    note = st.text_input('Note (optional, only on this laptop)', max_chars=MAX_NOTE, key='servers_add_note',
-                         placeholder='For example: finance server, room 3')
-    st.caption('The program reads the server\'s name and machine UUID from the server itself and saves them. Every '
-               'later connection checks them, so the agents only ever act on this machine. The password is never '
-               'saved, logged or sent to the model.')
-    ready = all(value.strip() for value in (host, username, password))
-    if st.button('Add and connect', key='servers_add', type='primary', disabled=not ready, icon=':material/add_link:'):
-        _add(registry, host, port, username, password, note)
 
 
 # ------------------------------------------------------------------ who has access to the connected server
@@ -279,8 +255,7 @@ def _show_access(registry, connected):
             return
         pairings = report['pairings']
         if not pairings:
-            st.info('No laptop is paired through the helper on this server. A server reached through a port '
-                    'forward, or allowed some other way, has no paired laptops.')
+            st.info('No laptop is paired through the helper on this server at the moment.')
             return
         st.dataframe([{'Laptop': p['laptop_name'], 'Address': p['laptop_address'], 'Paired': _when(p['paired_at']),
                        'This laptop': p['pairing_id'] == own} for p in pairings], hide_index=True)
@@ -356,11 +331,7 @@ def render_servers(database_path: Path):
             st.subheader(f'Who can reach {md_escape(connected.hostname)}')
             _show_access(registry, connected)
         st.subheader('Add a server')
-        by_code, by_address = st.tabs(['With a pairing code', 'By address'])
-        with by_code:
-            _show_add_by_code()
-        with by_address:
-            _show_add_by_address(registry)
+        _show_add_by_code()
     except (ValueError, OSError, sqlite3.Error) as exc:
         st.error('Servers: ' + md_escape(exc))
     _show_helper()
