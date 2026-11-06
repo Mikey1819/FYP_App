@@ -194,8 +194,12 @@ def _ubuntu_fix_actions(backend, connection, snapshot, capabilities):
     """Ubuntu decisions and execution through the backend's typed commands only."""
     workflow = st.session_state.get(WORKFLOW_KEY)
     undecided = [p for p in snapshot.proposals if p.eligible_commands]
-    approved = [p for p in snapshot.proposals if p.decision == 'approved' and p.approved_request_id]
+    # The CIS fix set only; approved restores run separately through dispatch_auxiliary.
+    approved = [p for p in snapshot.proposals if p.decision == 'approved' and p.approved_request_id
+                and p.kind == 'control_remediation']
     executed = {r.proposal_reference for r in snapshot.results}
+    applied = {r.proposal_reference for r in snapshot.results if r.execution_state in ('applied', 'reconciled_applied')}
+    restoring = {p.title.split('(undo ')[0] for p in snapshot.proposals if p.kind == 'recovery'}
     if undecided:
         operator = st.text_input('Your name (recorded with each decision)', key='agentic_operator')
         comment = st.text_input('Comment (optional)', key='agentic_comment')
@@ -229,6 +233,36 @@ def _ubuntu_fix_actions(backend, connection, snapshot, capabilities):
                 st.session_state['ubuntu_execute_error'] = str(failure)[:300]
         st.button('Execute approved fixes', key='ubuntu_execute', on_click=execute,
                   disabled=not (capabilities.can_remediate and confirmed and pending))
+    _ubuntu_restore_actions(backend, connection, snapshot, capabilities, workflow, applied, executed, restoring)
+
+
+def _ubuntu_restore_actions(backend, connection, snapshot, capabilities, workflow, applied, executed, restoring):
+    """Approved recovery: prepare a restore of an applied fix, approve it above, then confirm and run it once."""
+    from system.contracts import AuxiliaryKind, RecoveryInput
+    for p in snapshot.proposals:
+        if (p.kind == 'control_remediation' and p.reference in applied
+                and 'Restore before-state of ' + p.control_id + ' ' not in restoring):
+            if st.button('Prepare restore of ' + p.control_id, key='ubuntu_prepare_restore_' + p.reference.record_id,
+                         disabled=not capabilities.can_remediate):
+                backend.request_auxiliary(connection, workflow, AuxiliaryKind.RECOVERY, p.reference,
+                                          RecoveryInput(p.approved_request_id, p.before_state_sha256,
+                                                        'restore_before_state'), uuid4().hex)
+                st.rerun()
+    for p in snapshot.proposals:
+        if p.kind != 'recovery' or p.decision != 'approved' or p.reference in executed:
+            continue
+        key = p.reference.record_id
+        confirmed = st.checkbox('I confirm restoring the recorded before-state of ' + p.control_id + ' on the VM',
+                                key='ubuntu_confirm_restore_' + key)
+
+        def run(reference=p.reference, key=key):
+            st.session_state['ubuntu_confirm_restore_' + key] = False
+            try:
+                backend.dispatch_auxiliary(connection, workflow, reference, uuid4().hex)
+            except ValueError as failure:
+                st.session_state['ubuntu_execute_error'] = str(failure)[:300]
+        st.button('Run approved restore of ' + p.control_id, key='ubuntu_run_restore_' + key, on_click=run,
+                  disabled=not (capabilities.can_remediate and confirmed))
 
 
 def _show_start(hardening, store, runtime, target):

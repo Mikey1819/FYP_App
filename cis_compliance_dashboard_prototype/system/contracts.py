@@ -213,6 +213,8 @@ class ProposalRow:
     eligible_commands: tuple[str, ...]
     # Exact approved request ID shown for execution confirmation (Ubuntu); None when undecided or unused.
     approved_request_id: str | None = None
+    # Digest of the approved before-state: the backup a recovery request must name (Ubuntu).
+    before_state_sha256: str | None = None
 
 
 @dataclass(frozen=True)

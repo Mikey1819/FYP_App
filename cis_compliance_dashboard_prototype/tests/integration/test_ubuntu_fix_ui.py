@@ -105,7 +105,24 @@ class FixUiTests(StoreFixture):
                 app.button(key='ubuntu_execute').click().run()
                 self.assertFalse(list(app.error), [e.value for e in app.error])
                 app.run()
-        self.assertEqual(self.writes(), ['alpha'])
-        self.assertEqual(len([c for c in channel.runner_calls if c.startswith(b'{"op":"execute"}')]), 1)
+                self.assertEqual(self.writes(), ['alpha'])
+                self.assertEqual((self.work / 'alpha').read_bytes(), b'new')
+                # Restore: prepare -> approve -> confirm -> run, through the same page and gates.
+                [prepare] = [b for b in app.button if b.key and b.key.startswith('ubuntu_prepare_restore_')]
+                prepare.click().run()
+                self.assertFalse(list(app.error), [e.value for e in app.error])
+                app.text_input(key='agentic_operator').input('fixture-operator').run()  # a new decision names its operator
+                [approve] = [b for b in app.button if b.key and b.key.startswith('ubuntu_approve_')]
+                approve.click().run()
+                self.assertFalse(list(app.error), [e.value for e in app.error])
+                [run] = [b for b in app.button if b.key and b.key.startswith('ubuntu_run_restore_')]
+                self.assertTrue(run.disabled)  # confirmation required
+                [confirm] = [c for c in app.checkbox if c.key and c.key.startswith('ubuntu_confirm_restore_')]
+                confirm.check().run()
+                [b for b in app.button if b.key and b.key.startswith('ubuntu_run_restore_')][0].click().run()
+                self.assertFalse(list(app.error), [e.value for e in app.error])
+                app.run()
+        self.assertEqual((self.work / 'alpha').read_bytes(), b'old')
+        self.assertEqual(len([c for c in channel.runner_calls if c.startswith(b'{"op":"execute"}')]), 2)
         for database in self.root.rglob('*.sqlite3'):
             self.assertNotIn(b'FIXTURE-SECRET-SENTINEL', database.read_bytes())

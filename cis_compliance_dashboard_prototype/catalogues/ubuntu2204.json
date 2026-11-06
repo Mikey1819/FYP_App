@@ -108,7 +108,7 @@
         "remediation": "fixture_tested",
         "refusal": "fixture_tested",
         "verification": "fixture_tested",
-        "recovery": "not_implemented"
+        "recovery": "fixture_tested"
       },
       "live_validation": "not_run"
     },
@@ -503,7 +503,7 @@
         "remediation": "fixture_tested",
         "refusal": "fixture_tested",
         "verification": "fixture_tested",
-        "recovery": "not_implemented"
+        "recovery": "fixture_tested"
       },
       "live_validation": "not_run"
     },
@@ -541,7 +541,7 @@
         "remediation": "fixture_tested",
         "refusal": "fixture_tested",
         "verification": "fixture_tested",
-        "recovery": "not_implemented"
+        "recovery": "fixture_tested"
       },
       "live_validation": "not_run"
     },
@@ -581,7 +581,7 @@
         "remediation": "fixture_tested",
         "refusal": "fixture_tested",
         "verification": "fixture_tested",
-        "recovery": "not_implemented"
+        "recovery": "fixture_tested"
       },
       "live_validation": "not_run"
     },

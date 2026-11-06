@@ -230,13 +230,14 @@ class UbuntuBackend(BoundBackend):
         for p in store.proposals(binding, row.round_id):
             approved = json.loads(p.approved_raw) if p.approved_raw else None
             recovery = p.payload['fields']['recovery']
-            proposals.append(ProposalRow(self._ref(p.proposal_id), 'control_remediation', p.payload['fields']['control_id'],
+            kind = 'recovery' if p.payload['action']['action_id'].startswith('recovery.') else 'control_remediation'
+            proposals.append(ProposalRow(self._ref(p.proposal_id), kind, p.payload['fields']['control_id'],
                 p.payload['action']['action_id'], p.payload['title'], 'v%d' % p.payload['action']['version'],
                 json.dumps(p.payload['preview'], sort_keys=True), (), recovery['kind'] + ': ' + ', '.join(recovery['scope']),
                 (), p.decision, approved['expires_at'] if approved else None,
                 'Deterministic plan from the registered family; the target preview supplied the before/after digests.',
                 ('approve', 'reject') if latest and p.decision is None else (),
-                approved['request_id'] if approved else None))
+                approved['request_id'] if approved else None, approved['before_state_sha256'] if approved else None))
             if p.receipts:
                 last = p.receipts[-1]
                 applied = last['outcome'] in ('applied', 'reconciled_applied')
@@ -418,7 +419,8 @@ class UbuntuBackend(BoundBackend):
         now = datetime.now(timezone.utc)
         try:
             if approved:
-                spec = self.families.get(payload['action']['action_id'])
+                from .actions import AUXILIARY
+                spec = dict(self.families, **AUXILIARY).get(payload['action']['action_id'])
                 if spec is None or (spec.version, spec.implementation_sha256) != (
                         payload['action']['version'], payload['action']['implementation_sha256']):
                     raise ValueError('The proposal\'s action family is no longer registered at this version')
@@ -448,7 +450,8 @@ class UbuntuBackend(BoundBackend):
             raise ValueError(gate[0])
         store = self._store()
         latest = self._latest(store, binding, round_ref)
-        approved = [p for p in store.proposals(binding, latest.round_id) if p.decision == 'approved']
+        approved = [p for p in store.proposals(binding, latest.round_id)
+                    if p.decision == 'approved' and not p.payload['action']['action_id'].startswith('recovery.')]
         requests = {json.loads(p.approved_raw)['request_id']: p for p in approved}
         if not requests or set(expected_approved_request_ids) != set(requests):
             raise ValueError('The approved set changed or is empty; review the current approvals. No write was dispatched.')
@@ -456,17 +459,29 @@ class UbuntuBackend(BoundBackend):
         for request_id, proposal in requests.items():
             if proposal.receipts:
                 continue  # already dispatched once; never again
-            raw = proposal.approved_raw
-            result = execute(ApprovedRequest(raw, hashlib.sha256(raw).hexdigest(), parse_request(raw)), ledger=self.ledger,
-                             binding=binding, operation_id=(operation_id + ':' + request_id)[:128],
-                             dispatch=lambda data: self.session.channel.invoke_runner(b'{"op":"execute"}\n' + data),
-                             now=datetime.now(timezone.utc))
-            if result.receipt_raw is not None:
-                store.record_receipt(binding, proposal.proposal_id, result.receipt_raw)
+            result = self._dispatch_one(store, binding, proposal, operation_id)
             if result.state != 'completed':
                 state = result.state
                 break
             applied.append(request_id)
+        return RoundHandle(operation_id, binding, round_ref, self._verify(store, binding, latest, applied, state))
+
+    def _dispatch_one(self, store, binding, proposal, operation_id):
+        from datetime import datetime, timezone
+        from vm.ubuntu.remediation_schema import parse_request
+        from .approvals import ApprovedRequest
+        from .executor import execute
+        raw = proposal.approved_raw
+        request_id = json.loads(raw)['request_id']
+        result = execute(ApprovedRequest(raw, hashlib.sha256(raw).hexdigest(), parse_request(raw)), ledger=self.ledger,
+                         binding=binding, operation_id=(operation_id + ':' + request_id)[:128],
+                         dispatch=lambda data: self.session.channel.invoke_runner(b'{"op":"execute"}\n' + data),
+                         now=datetime.now(timezone.utc))
+        if result.receipt_raw is not None:
+            store.record_receipt(binding, proposal.proposal_id, result.receipt_raw)
+        return result
+
+    def _verify(self, store, binding, latest, applied, state):
         if applied:
             # Fresh read-only verification with the same predicates; failure leaves Verify pending, never a retry.
             try:
@@ -475,4 +490,63 @@ class UbuntuBackend(BoundBackend):
                                    details={'verifies_round': latest.round_id, 'request_ids': sorted(applied)})
             except Exception:
                 state = 'verification_pending'  # applied, but no fresh evidence yet; never a retry
-        return RoundHandle(operation_id, binding, round_ref, state)
+        return state
+
+    # ---- auxiliary: approved restore of an applied fix ------------------------------------------
+    def request_auxiliary(self, connection_session_id, workflow_session_id, kind, basis, inputs, operation_id):
+        """Recovery only: preview and store a restore proposal for an applied fix of the latest round."""
+        from system.contracts import AuxiliaryKind, OperationState, RecoveryInput
+        from vm.ubuntu.remediation_schema import canonical
+        from .actions import AUXILIARY, plan_action
+        binding = self.check(connection_session_id, workflow_session_id, basis)
+        if AuxiliaryKind(kind) is not AuxiliaryKind.RECOVERY:
+            return OperationState(operation_id, 'refused', code='unsupported',
+                                  detail='Only approved recovery (restore) is implemented for Ubuntu.')
+        if binding is None or type(inputs) is not RecoveryInput or inputs.restoration_choice != 'restore_before_state':
+            raise ValueError('Recovery needs a workflow and the restore_before_state choice')
+        store = self._store()
+        latest = self._latest(store, binding)
+        original = next((p for p in store.proposals(binding, latest.round_id) if p.proposal_id == basis.record_id), None)
+        if (original is None or original.payload['action']['action_id'].startswith('recovery.') or not original.receipts
+                or original.receipts[-1]['outcome'] not in ('applied', 'reconciled_applied')):
+            raise ValueError('Only an applied fix of the latest round can be restored')
+        request = json.loads(original.approved_raw)
+        if (inputs.original_request_id, inputs.backup_manifest_digest) != (request['request_id'], request['before_state_sha256']):
+            raise ValueError('Recovery inputs do not name this fix and its recorded backup')
+        spec = AUXILIARY['recovery.restore.v1']
+        params = {'restores_request_id': request['request_id'],
+                  'restores_request_sha256': hashlib.sha256(original.approved_raw).hexdigest()}
+        preview = json.loads(self.session.channel.invoke_runner(
+            canonical({'op': 'preview', 'action_id': spec.action_id, 'parameters': params}) + b'\n'))
+        if type(preview) is not dict or preview.get('action_id') != spec.action_id:
+            raise ValueError('Restore preview for another action')
+        f = original.payload['fields']
+        plan = plan_action(spec, families=AUXILIARY, parameters=params,
+                           **{k: f[k] for k in ('target_id', 'registration_epoch', 'hostname', 'machine_id',
+                                                'workflow_session_id', 'round_id', 'evidence_sha256', 'control_id',
+                                                'predicate_id')},
+                           before_state_sha256=preview['before_state_sha256'],
+                           expected_after_sha256=preview['expected_after_sha256'],
+                           before_state_collected_at=preview['collected_at'], recovery=spec.recovery,
+                           job_deadline_seconds=spec.max_seconds)
+        store.add_proposal(binding, plan, title='Restore before-state of ' + f['control_id'] + ' (undo '
+                           + original.payload['action']['action_id'] + ')', preview=preview['summary'])
+        return self._ref(plan.proposal_id)
+
+    def dispatch_auxiliary(self, connection_session_id, workflow_session_id, proposal_ref, operation_id):
+        """Run one approved recovery proposal once, behind the same gates, then verify with a fresh scan."""
+        binding = self.check(connection_session_id, workflow_session_id, proposal_ref)
+        gate = execution_gate()
+        if gate:
+            raise ValueError(gate[0])
+        store = self._store()
+        latest = self._latest(store, binding)
+        proposal = next((p for p in store.proposals(binding, latest.round_id) if p.proposal_id == proposal_ref.record_id), None)
+        if proposal is None or not proposal.payload['action']['action_id'].startswith('recovery.') or proposal.decision != 'approved':
+            raise ValueError('Only an approved recovery proposal of the latest round can be dispatched')
+        if proposal.receipts:
+            return RoundHandle(operation_id, binding, self._ref(latest.round_id), 'completed')  # never twice
+        result = self._dispatch_one(store, binding, proposal, operation_id)
+        applied = [json.loads(proposal.approved_raw)['request_id']] if result.state == 'completed' else []
+        return RoundHandle(operation_id, binding, self._ref(latest.round_id),
+                           self._verify(store, binding, latest, applied, result.state))

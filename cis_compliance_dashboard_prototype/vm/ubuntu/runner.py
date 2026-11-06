@@ -30,6 +30,8 @@ class Runner:
             if self.state.is_symlink() or not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o077:
                 raise ValueError('Runner state directory must be a root-owned private directory')
         self.fence = self.state / 'active'
+        from .family_restore import ACTION_ID, RestoreFamily
+        self.families.setdefault(ACTION_ID, RestoreFamily(self))
 
     # ---- small durable primitives --------------------------------------------------------
     def _write_atomic(self, path, data):

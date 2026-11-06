@@ -35,6 +35,13 @@ class FileValueFamily:
         # Sanitized preview: lengths only, as a real family exports only allowlisted facts.
         return {'name': params['name'], 'current_length': len(before), 'proposed_length': len(params['value'])}
 
+    def restore(self, params, before):
+        path = self.root / params['name']
+        if before:
+            path.write_bytes(before)
+        elif path.exists():
+            path.unlink()
+
     def apply(self, params):
         (self.root / params['name']).write_bytes(params['value'].encode())
         with open(self.root / 'writes.log', 'a', encoding='utf-8') as log:

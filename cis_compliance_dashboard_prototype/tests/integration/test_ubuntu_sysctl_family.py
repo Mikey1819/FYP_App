@@ -34,6 +34,9 @@ class FakeSystem:
     def write_managed(self, content):
         self.writes.append(('file', content)); self.files[MANAGED] = content
 
+    def remove_managed(self):
+        self.writes.append(('remove',)); self.files.pop(MANAGED, None)
+
     def set_runtime(self, key, value):
         self.writes.append(('runtime', key, value)); self.runtime_values[key] = value
 

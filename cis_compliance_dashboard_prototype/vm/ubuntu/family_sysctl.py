@@ -148,6 +148,16 @@ class SysctlFamily:
         for key in sorted(params['keys']):
             self.system.set_runtime(key, params['keys'][key])
 
+    def restore(self, params, before):
+        """Approved recovery only: the managed file (or its absence) and runtime values as recorded before."""
+        state = json.loads(before)
+        if state['managed'] is None:
+            self.system.remove_managed()
+        else:
+            self.system.write_managed(state['managed'].encode('utf-8'))
+        for key in sorted(params['keys']):
+            self.system.set_runtime(key, state['runtime'][key])
+
 
 class LinuxSysctlSystem:
     """Fixed, bounded target I/O for the sysctl family; requires a preflighted FixedProbeIO. Unvalidated on the VM."""
@@ -213,6 +223,13 @@ class LinuxSysctlSystem:
         finally:
             os.close(fd)
         os.replace(tmp, target)
+
+    def remove_managed(self):
+        target = Path(MANAGED)
+        if target.is_symlink():
+            raise ValueError('Managed sysctl file must not be a symlink')
+        if target.exists():
+            target.unlink()
 
     def set_runtime(self, key, value):
         if key not in ALL_KEYS or type(value) is not int:

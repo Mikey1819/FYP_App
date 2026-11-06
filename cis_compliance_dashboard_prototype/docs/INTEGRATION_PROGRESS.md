@@ -498,3 +498,26 @@ Run by the user through the existing app: SSH connect with the independently ver
 - **Coverage** 25/30 (83%); **compliance** 5/25 (20%); 0 Error.
 - **SCAP/direct conflict:** 5.1.10, 5.1.19 and 5.1.21 have effective `sshd -T` values of `no` (the CIS audit method), but the ComplianceAsCode rules require an explicit configuration line, so the SCAP rules fail. Under the approved conflict rule this is Unknown, not a guess. Whether CIS-effective direct evidence should prevail for these three is a recorded interpretation question.
 - **Gates:** no write was possible; the execution gate is closed. Live remediation, recovery and watchdog acceptance remain outstanding.
+
+## 2026-11-06 approved restore (recovery.restore.v1) — task 10 partial
+
+Test-first: `tests/integration/test_ubuntu_restore.py`, two backend tests in `test_ubuntu_proposals.py`, and an extended page test. All failed before the implementation.
+
+- **Target, `vm/ubuntu/family_restore.py`:** an auxiliary family the runner always registers.
+  - **What it restores:** one applied request (exact request bytes and hash), back to its stored before-state.
+  - **When it refuses:** if the original was not applied, the original family or version is unavailable, the stored before-state fails its hash, or the current state no longer equals the state the fix produced. A restore therefore never overwrites a newer change.
+  - **Protocol:** the same runner fence, claim, receipt and at-most-once rules. Restores are not restorable.
+  - `SysctlFamily.restore` rewrites the recorded managed file, or removes it if it did not exist, and resets the recorded runtime values; `LinuxSysctlSystem.remove_managed` refuses symlinks.
+- **Host:**
+  - `actions.AUXILIARY` holds the restore spec, which is never a CIS family.
+  - `UbuntuBackend.request_auxiliary(RECOVERY, applied fix, RecoveryInput(request ID, before-state digest, restore_before_state))` previews on the target and stores a **recovery** proposal.
+  - `decide` approves it; `dispatch_auxiliary` runs it once behind the closed execution gate, followed by a fresh verification scan.
+  - Recovery proposals never join the `execute_approved` CIS fix set. Other auxiliary kinds are refused explicitly.
+  - `ProposalRow` gains an optional `before_state_sha256`.
+- **UI (authorized scoped edit):** **Prepare restore** for an applied fix; the restore is approved like any proposal; a confirmation checkbox and **Run approved restore** dispatch it once.
+  - Fixed in passing: the page's fix set now excludes approved restores, which would otherwise have made the backend reject the set.
+  - Re-entering the operator name for a new decision is expected, because Streamlit clears the hidden field.
+- **Coverage:** recovery is now `fixture_tested` for 1.5.1, 3.3.1, 3.3.2 and 3.3.8; live validation is still pending.
+- **Mutation:** disabling the newer-change guard failed the overwrite test; reverted.
+- Full suite **369 tests, all passed**; baseline: no protected changes; UI patch refreshed; bundle rebuilt.
+- **Note:** the helper bundle changed, so the VM needs a reinstall before the next live scan. Otherwise the collector digest no longer matches and the evidence is rejected.

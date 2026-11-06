@@ -61,6 +61,18 @@ def _sysctl_specs():
 FAMILIES = _sysctl_specs()
 
 
+def _restore_spec():
+    from backends.ubuntu.catalogue import EXPECTED_IDS
+    from vm.ubuntu.family_restore import ACTION_ID, IMPLEMENTATION_SHA256, validate_params
+    return ActionSpec(ACTION_ID, 1, IMPLEMENTATION_SHA256, tuple(sorted(EXPECTED_IDS)), validate_params, 60,
+                      title='Restore the exact state recorded before an applied fix',
+                      recovery={'kind': 'manual_console', 'scope': ['VM console and recovery snapshot']})
+
+
+# Auxiliary operations: same approval/runner protocol, never counted as CIS control families.
+AUXILIARY = {'recovery.restore.v1': _restore_spec()}
+
+
 @dataclass(frozen=True)
 class ActionPlan:
     spec: ActionSpec
