@@ -52,3 +52,10 @@ Selected ComplianceAsCode rule results are extra subchecks on the control. They 
 - **Why conflict is not a failure:** upstream rule variables and checks can differ from the PDF. Examples: SSH keepalive 300/3 versus the PDF's "positive" requirement, and the `zipl` rule on GRUB. A SCAP-only failure therefore needs investigation before it counts as a confirmed failure.
 - **Where the rule set comes from:** the target helper builds the rule set only from `vm/ubuntu/spec.py`, which a test keeps equal to the pinned catalogue mapping, profile and datastream hash.
 - **Live envelopes:** a Live (SSH) envelope must carry a `scap_rules` observation for every mapped control. That observation may be `error`, but it cannot be omitted. Synthetic fixtures may omit it, which gives direct-only results.
+
+## Persistent sysctl resolution aligned with the CIS audit (2026-11-06, from live evidence)
+
+- **Exact names only.** The persistent value is resolved by exact key name, as the CIS audit script (printed p.152) matches it. A key set in no loaded source is the typed fact `unset`, which the predicate fails, as the audit does ("not set in an included file").
+- **Glob lines** (`net.ipv4.conf.*.x`) are not exact settings. One that applies to the key, not excluded by a `-key` line, and could change the outcome is a **conflict** (an error), never a guessed value. Ubuntu's `/usr/lib/sysctl.d/50-default.conf` sets `net.ipv4.conf.default.accept_source_route = 0` exactly, plus a glob, and excludes `all` with `-net.ipv4.conf.all.accept_source_route`: `default` resolves to 0, `all` is `unset`.
+- **Remediation family:** accepts `-key` exclusion lines and refuses when a canonically later source has a conflicting glob or exact value.
+- **File trust:** root-owned and never world-writable; group write only when the group is root (`grub.cfg` is 0664 root:root on the target). Pending human review, like the other interpretations here.

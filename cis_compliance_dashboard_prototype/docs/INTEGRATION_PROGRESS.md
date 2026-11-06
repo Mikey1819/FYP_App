@@ -473,3 +473,14 @@ Six risk tests that encoded the pending state were updated to the recorded appro
 - A user-run read-only diagnostic traceback showed `OSError [Errno 12] Cannot allocate memory` from one `read(4 MiB + 1)` of `/proc/sys/kernel/hostname` in `preflight`: sysctl proc files allocate a buffer of the requested size.
 - **Fix:** `collector.read_bounded` reads in 64 KiB chunks and enforces the same limit across chunks. All collector file reads and the runner identity read use it. New `tests/integration/test_bounded_read.py` (a sysctl-like stream that fails on large reads) failed before the fix.
 - Bundle rebuilt; a reinstall is required. Full suite **354 tests, all passed**; baseline: no protected changes.
+
+## 2026-11-06 second live diagnostic: sysctl, GRUB and inventory fixes
+
+- **User-run read-only diagnostic:** `systemd-sysctl --cat-config` exit 0 (290 lines). Eight keys are set in no file; the IPv4 `accept_source_route` keys hit Ubuntu `50-default.conf` globs and exclusions. `grub.cfg` is uid 0, mode 0664 (refused by the old trust rule). The privileged inventory exceeded 20 s / 100,000 entries.
+- **Fixes (test-first, `tests/integration/test_live_findings.py`):**
+  - CIS-aligned exact-name resolver returning `unset`; schema accepts `unset`; the predicate fails it.
+  - The sysctl family parses exclusions and refuses conflicting later globs.
+  - `trusted_owner` allows root-group write only.
+  - Inventory budget 120 s / 2,000,000 entries, still metadata-only.
+- Earlier in the same pass: the sshd `without-password` alias maps to `prohibit-password`; units that are not installed report `not-found`.
+- Full suite **363 tests, all passed**; baseline: no protected changes; helper Python 3.10 syntax checked; bundle rebuilt. Reinstall required.

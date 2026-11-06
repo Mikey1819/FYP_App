@@ -24,8 +24,9 @@ def eligible_mounts(raw, filesystems):
     except (KeyError,TypeError,json.JSONDecodeError):raise ValueError('Malformed mount inventory') from None
 
 
-def discover_privileged(mounts, *, deadline_seconds=20, max_entries=100000, max_paths=4096):
-    if not 0<deadline_seconds<=20 or not 1<=len(mounts)<=64 or not 1<=max_entries<=100000:
+def discover_privileged(mounts, *, deadline_seconds=120, max_entries=2_000_000, max_paths=4096):
+    # A stock Ubuntu root filesystem exceeded 20 s / 100,000 entries on the target (2026-11-06).
+    if not 0<deadline_seconds<=120 or not 1<=len(mounts)<=64 or not 1<=max_entries<=2_000_000:
         raise ValueError('Invalid bounded inventory request')
     deadline=time.monotonic()+deadline_seconds
     count=0;found=set()

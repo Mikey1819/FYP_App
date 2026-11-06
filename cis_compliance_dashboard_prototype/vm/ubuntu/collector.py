@@ -60,6 +60,11 @@ GROUPS = {
 CHUNK = 65536
 
 
+def trusted_owner(info):
+    """Root-owned and not writable by others; group write only when the group is root (grub.cfg is 0664 root:root)."""
+    return info.st_uid == 0 and not info.st_mode & 0o002 and (not info.st_mode & 0o020 or info.st_gid == 0)
+
+
 def read_bounded(stream, limit):
     """Read to EOF in small chunks, refusing more than the limit in bytes.
 
@@ -194,7 +199,7 @@ class FixedProbeIO:
         fd = os.open(path,flags)
         try:
             before = os.fstat(fd)
-            if not stat.S_ISREG(before.st_mode) or before.st_uid != 0 or before.st_mode & 0o022:
+            if not stat.S_ISREG(before.st_mode) or not trusted_owner(before):
                 raise ValueError('Untrusted configuration ownership/type')
             with os.fdopen(fd,'rb',closefd=False) as stream: data = read_bounded(stream, limit)
             after = os.fstat(fd)
@@ -210,7 +215,7 @@ class FixedProbeIO:
         directory = Path(directory)
         if not directory.exists(): return ()
         info = directory.lstat()
-        if directory.is_symlink() or info.st_uid != 0 or info.st_mode & 0o022:
+        if directory.is_symlink() or not trusted_owner(info):
             raise ValueError('Untrusted configuration directory')
         paths = sorted(directory.glob(pattern),key=lambda p:p.name)
         if len(paths) > 256: raise ValueError('Too many configuration fragments')
@@ -222,7 +227,7 @@ class FixedProbeIO:
         output=self.command('mounts')
         if output.returncode != 0:raise ValueError('Mount discovery failed')
         mounts=eligible_mounts(output.stdout,self.read_file('/proc/filesystems'))
-        return discover_privileged(mounts,deadline_seconds=min(20,self.deadline-time.monotonic()))
+        return discover_privileged(mounts,deadline_seconds=min(120,self.deadline-time.monotonic()))
 
 
 def preflight(io, request):

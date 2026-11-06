@@ -21,24 +21,36 @@ def _integer(value):
 
 
 def resolve_sysctl(cat_config, name, *, ufw=None):
-    value = None
+    """Persistent value of one key by exact name, as the CIS audit script matches it; 'unset' if no source sets it.
+
+    CIS (printed p.152) treats a key not set in an included file as a failure, so absence is a typed fact, not an
+    error. A glob line ('net.ipv4.conf.*.x') is not an exact setting; one that applies to this key (not excluded by
+    a '-key' line) and could change the outcome is a conflict, never a guess.
+    """
+    value, globs, excluded = None, [], set()
     for text in (cat_config,ufw):
         if text is None: continue
         for line in _bounded(text).splitlines():
             line = line.strip()
             if not line or line.startswith(('#',';')): continue
             if '=' not in line:
-                if name in line or any(char in line for char in '*?[]'):
+                key = line.lstrip('-').strip().replace('/','.')
+                if line.startswith('-') and not any(char in key for char in '*?[]'):
+                    excluded.add(key)  # systemd: exclude this key from glob assignments
+                    continue
+                if key == name or any(char in key for char in '*?[]'):
                     raise ValueError('Unsupported sysctl exclusion')
                 continue
             key, raw = (p.strip() for p in line.split('=',1))
-            key = key.lstrip('-').replace('/','.')
-            if any(char in key for char in '*?[]') and fnmatch.fnmatchcase(name,key):
-                raise ValueError('Wildcard sysctl precedence requires explicit resolver support')
+            key = key.lstrip('-').strip().replace('/','.')
+            if any(char in key for char in '*?[]'):
+                if fnmatch.fnmatchcase(name,key): globs.append(_integer(raw))
+                continue
             if key == name:
                 value = _integer(raw)
-    if value is None: raise ValueError('Required persistent sysctl setting is absent')
-    return value
+    if name not in excluded and globs and (value is None or any(g != value for g in globs)):
+        raise ValueError('A glob sysctl assignment conflicts with the exact persistent setting')
+    return 'unset' if value is None else value
 
 
 def account_aging(passwd_text, shadow_text):

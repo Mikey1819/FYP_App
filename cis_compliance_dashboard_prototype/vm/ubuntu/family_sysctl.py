@@ -23,19 +23,39 @@ SYSCTL_DIRS = ('/etc/sysctl.d/', '/run/sysctl.d/', '/usr/local/lib/sysctl.d/', '
 
 def parse_conf(data):
     """sysctl.d syntax: comments (#, ;), optional leading '-', '/' or '.' separators; the last value wins."""
-    values = {}
+    return parse_entries(data)[0]
+
+
+def parse_entries(data):
+    """(values, excluded): settings by key (globs kept as written) and '-key' glob exclusions."""
+    values, excluded = {}, set()
     for raw in data.decode('utf-8').splitlines():
         line = raw.strip()
         if not line or line[0] in '#;':
             continue
         if '=' not in line:
+            if line.startswith('-'):
+                excluded.add(line.lstrip('-').strip().replace('/', '.'))  # e.g. Ubuntu 50-default.conf
+                continue
             raise ValueError('Unparseable sysctl setting')
         key, value = (part.strip() for part in line.split('=', 1))
         key = key.lstrip('-').strip().replace('/', '.')
         if not re.fullmatch(r'[a-z0-9_.*-]{1,128}', key):
             raise ValueError('Unsupported sysctl key syntax')
         values[key] = value
-    return values
+    return values, excluded
+
+
+def _conflicts(data, wanted):
+    import fnmatch
+    values, excluded = parse_entries(data) if data is not None else ({}, set())
+    for key, value in wanted.items():
+        if key in values and values[key] != value:
+            return True
+        if key not in excluded and any(any(c in g for c in '*?[]') and fnmatch.fnmatchcase(key, g) and v != value
+                                       for g, v in values.items()):
+            return True
+    return False
 
 
 def validate_params(control_id, params):
@@ -112,16 +132,11 @@ class SysctlFamily:
             name = path.rsplit('/', 1)[1]
             if path == MANAGED or name <= managed_name:
                 continue  # earlier sources are superseded by the managed file
-            data = self.system.read_config(path)
-            values = parse_conf(data) if data is not None else {}
-            if any(k in values and values[k] != v for k, v in wanted.items()):
+            if _conflicts(self.system.read_config(path), wanted):
                 raise ValueError('A later sysctl source sets one of these keys to another value')
         ufw_path = self.system.ufw_sysctl_path()
-        if ufw_path:
-            data = self.system.read_config(ufw_path)
-            values = parse_conf(data) if data is not None else {}
-            if any(k in values and values[k] != v for k, v in wanted.items()):
-                raise ValueError("UFW's sysctl file sets one of these keys to another value")
+        if ufw_path and _conflicts(self.system.read_config(ufw_path), wanted):
+            raise ValueError("UFW's sysctl file sets one of these keys to another value")
 
     def summary(self, params, before):
         state = json.loads(before)

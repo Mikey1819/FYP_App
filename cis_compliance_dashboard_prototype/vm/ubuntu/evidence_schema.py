@@ -13,6 +13,10 @@ def integer(value):
     return type(value) is int and -1 <= value <= 2**31-1
 
 
+def persisted(value):
+    return integer(value) or value == 'unset'  # 'unset': no loaded sysctl source sets the key (a CIS failure)
+
+
 def natural(value):
     return integer(value) and value >= 0
 
@@ -74,7 +78,8 @@ def schemas():
     for cid, packages in PACKAGES.items():
         result[cid] = {'package.'+p:PACKAGE for p in packages}
     for cid, keys in dict(SYSCTL, **{'1.5.3':{'fs.suid_dumpable':0}}).items():
-        result[cid] = {source+'.'+key:integer for source in ('runtime','persistent') for key in keys}
+        result[cid] = {source+'.'+key:(integer if source == 'runtime' else persisted)
+                       for source in ('runtime','persistent') for key in keys}
         result[cid]['sysctl_resolution'] = RESOLUTION
         if any('ipv6' in key for key in keys): result[cid]['ipv6_enabled'] = boolean
     result['1.5.3'].update(hard_core_limits=mapping,systemd_coredump_installed=boolean,
