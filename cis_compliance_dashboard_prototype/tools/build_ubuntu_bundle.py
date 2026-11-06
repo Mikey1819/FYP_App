@@ -37,7 +37,7 @@ install -d -o root -g root -m 0755 /usr/local/libexec/fyp-hardening /usr/local/l
 install -o root -g root -m 0644 libexec/fyp_ubuntu/* /usr/local/libexec/fyp-hardening/fyp_ubuntu/
 install -o root -g root -m 0755 libexec/collect libexec/runner /usr/local/libexec/fyp-hardening/
 install -d -o root -g root -m 0755 /usr/local/share/fyp-hardening
-install -o root -g root -m 0644 share/ssg-ubuntu2204-ds.xml /usr/local/share/fyp-hardening/
+install -o root -g root -m 0644 share/ssg-ubuntu2204-ds.xml share/fyp-selected-tailoring.xml /usr/local/share/fyp-hardening/
 install -d -o root -g root -m 0700 /var/lib/fyp-hardening /var/lib/fyp-hardening/scans /var/lib/fyp-hardening/runner
 install -o root -g root -m 0440 sudoers/fyp-hardening /etc/sudoers.d/fyp-hardening
 visudo -c >/dev/null || {{ rm -f /etc/sudoers.d/fyp-hardening; echo "Sudo configuration invalid; rule removed"; exit 1; }}
@@ -74,6 +74,12 @@ def build(out=DEFAULT):
     if hashlib.sha256(datastream).hexdigest() != DATASTREAM_SHA256:
         raise ValueError('Pinned datastream bytes changed; refusing to build')
     (out / 'share' / 'ssg-ubuntu2204-ds.xml').write_bytes(datastream)
+    from backends.ubuntu.scap_tailoring import build_tailoring
+    from vm.ubuntu.spec import SCAP_TAILORING_SHA256
+    tailoring = build_tailoring()
+    if hashlib.sha256(tailoring).hexdigest() != SCAP_TAILORING_SHA256:
+        raise ValueError('Generated tailoring differs from the pinned hash; refusing to build')
+    (out / 'share' / 'fyp-selected-tailoring.xml').write_bytes(tailoring)
     (out / 'sudoers').mkdir()
     (out / 'sudoers' / 'fyp-hardening').write_bytes(SUDOERS.encode('ascii'))
     (out / 'install.sh').write_bytes(INSTALL.encode('ascii'))

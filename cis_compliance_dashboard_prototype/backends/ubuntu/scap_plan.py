@@ -42,9 +42,9 @@ def prepare_scan(catalogues, request_id, *, engine_version, fixture=False):
                 raise ValueError('Selected profile variable differs from the pinned mapping')
     rule_ids=tuple(sorted({r for c in catalogue.controls for r in c.scap_rule_ids}))
     known=tuple(sorted(r.get('id') for r in xml.findall('.//x:Rule',NS)))
-    result='/var/lib/fyp-hardening/scans/'+request_id+'/xccdf.xml'
-    args=['/usr/bin/oscap','xccdf','eval','--profile',lock['profile_id'],'--results',result]
-    for rule in rule_ids:args.extend(('--rule',rule))
-    args.append('/usr/local/share/fyp-hardening/ssg-ubuntu2204-ds.xml')
-    return ScapPlan(tuple(args),rule_ids,known,lock['profile_id'],lock['datastream_sha256'],engine_version,
-                    result,catalogue.activation_ready and not fixture)
+    from vm.ubuntu.scap_results import SELECTED, result_path, scan_argv
+    if rule_ids != SELECTED:
+        raise ValueError('Catalogue rules differ from the helper selection')
+    # Scope is the pinned tailoring (OpenSCAP 1.2.17 honours only one --rule); argv is exactly the target's.
+    return ScapPlan(scan_argv(request_id),rule_ids,known,lock['profile_id'],lock['datastream_sha256'],engine_version,
+                    result_path(request_id),catalogue.activation_ready and not fixture)

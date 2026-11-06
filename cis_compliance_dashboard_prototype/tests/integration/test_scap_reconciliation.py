@@ -130,12 +130,13 @@ class TargetSanitizerTests(unittest.TestCase):
     def test_target_argv_is_fixed_read_only_and_bound_to_request(self):
         from vm.ubuntu.scap_results import scan_argv, RESULT_ROOT, DATASTREAM
         from vm.ubuntu.spec import SCAP_RULES, SCAP_PROFILE
+        from vm.ubuntu.spec import SCAP_TAILORED_PROFILE
         argv = scan_argv('a'*32)
-        self.assertEqual(argv[:4], ('/usr/bin/oscap', 'xccdf', 'eval', '--profile'))
-        self.assertEqual(argv[4], SCAP_PROFILE)
+        self.assertEqual(argv[:3], ('/usr/bin/oscap', 'xccdf', 'eval'))
+        self.assertEqual(argv[argv.index('--profile')+1], SCAP_TAILORED_PROFILE)  # extends SCAP_PROFILE
         self.assertEqual(argv[argv.index('--results')+1], RESULT_ROOT+'/'+'a'*32+'/xccdf.xml')
         self.assertEqual(argv[-1], DATASTREAM)
-        self.assertEqual(argv.count('--rule'), sum(len(r) for r in SCAP_RULES.values()))
+        self.assertNotIn('--rule', argv)  # OpenSCAP 1.2.17 honours only one; see test_scap_tailoring
         for forbidden in ('--remediate', '--fetch-remote-resources', '--report', '--oval-results'):
             self.assertNotIn(forbidden, argv)
         for bad in ('../x', 'A'*32, 'a'*31):

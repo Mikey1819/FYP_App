@@ -24,3 +24,9 @@ class IntegrationPaths:
 
 APP = Path(__file__).resolve().parents[1]
 PATHS = IntegrationPaths.for_app(APP)
+
+
+# Reviewed deployment facts, keyed by verified machine identity (never inferred from a running service).
+# FYP-Ubuntu2204: user-reported 2026-11-06 - UFW active and enabled, nftables disabled, netfilter-persistent
+# absent; registration approved by the user in chat. The collector still checks competing managers per scan.
+UBUNTU_FIREWALL_REGISTRATIONS = {'f1d16ae7e6bc4d2488f9410fcd858e36': 'ufw'}

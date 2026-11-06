@@ -1,15 +1,17 @@
 """Target-side selected-rule OpenSCAP invocation and result sanitization. Python 3.10, standard library only.
 
-The argument vector is built only from the digest-pinned helper constants and a validated request ID:
+The argument vector is built only from the digest-pinned helper constants, the hash-pinned tailoring file and
+a validated request ID:
 evaluation only, no remediation, no remote resources, no extra reports. Sanitization keeps one result
 token per selected rule and discards messages, values, system characteristics and all other text.
 """
 import re
 import xml.etree.ElementTree as ET
-from .spec import SCAP_PROFILE, SCAP_RESULTS, SCAP_RULE_PREFIX, SCAP_RULES
+from .spec import SCAP_RESULTS, SCAP_RULE_PREFIX, SCAP_RULES, SCAP_TAILORED_PROFILE
 
 OSCAP = '/usr/bin/oscap'
 DATASTREAM = '/usr/local/share/fyp-hardening/ssg-ubuntu2204-ds.xml'
+TAILORING = '/usr/local/share/fyp-hardening/fyp-selected-tailoring.xml'
 RESULT_ROOT = '/var/lib/fyp-hardening/scans'
 RESULT_LIMIT = 100*1024*1024
 SELECTED = tuple(sorted({rule for rules in SCAP_RULES.values() for rule in rules}))
@@ -23,11 +25,9 @@ def result_path(request_id):
 
 
 def scan_argv(request_id):
-    argv = [OSCAP, 'xccdf', 'eval', '--profile', SCAP_PROFILE, '--results', result_path(request_id)]
-    for rule in SELECTED:
-        argv.extend(('--rule', rule))
-    argv.append(DATASTREAM)
-    return tuple(argv)
+    # No --rule options: OpenSCAP 1.2.17 keeps only the last one. The pinned tailoring selects exactly SELECTED.
+    return (OSCAP, 'xccdf', 'eval', '--tailoring-file', TAILORING, '--profile', SCAP_TAILORED_PROFILE,
+            '--results', result_path(request_id), DATASTREAM)
 
 
 def engine_version(output):

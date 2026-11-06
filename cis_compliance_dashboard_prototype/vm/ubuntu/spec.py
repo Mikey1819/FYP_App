@@ -19,6 +19,10 @@ IDENTITY_PATHS = frozenset(('/etc/group','/etc/passwd','/etc/gshadow','/etc/shad
 SCAP_PROFILE = 'xccdf_org.ssgproject.content_profile_cis_level2_server'
 SCAP_DATASTREAM_SHA256 = 'c8be1aa2bf93284507b8810ea829f8904ab4552865f07d106561d5fd5d06ca67'
 SCAP_RULE_PREFIX = 'xccdf_org.ssgproject.content_rule_'
+# OpenSCAP 1.2.17 honours one --rule only: scope comes from a pinned tailored profile extending SCAP_PROFILE.
+SCAP_TAILORED_PROFILE = 'xccdf_org.fyphardening_profile_cis_level2_server_selected30'
+SCAP_TAILORING_SHA256 = '56d77459b9184b60726e68163e297d57785916aaa46e632cd763c4efe0ef800a'
+
 SCAP_RULES = {
     '1.3.1.1': tuple(SCAP_RULE_PREFIX + r for r in ('package_apparmor_installed', 'package_apparmor-utils_installed',)),
     '1.5.1': tuple(SCAP_RULE_PREFIX + r for r in ('sysctl_kernel_randomize_va_space',)),

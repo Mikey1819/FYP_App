@@ -448,3 +448,14 @@ Six risk tests that encoded the pending state were updated to the recorded appro
 - **Bundle:** `tools/build_ubuntu_bundle.py` builds `dist/ubuntu-helper` (git-ignored) with the exact helper bytes, launchers, pinned datastream, `SHA256SUMS`, `install.sh` and `uninstall.sh`. The sudo rule covers the read-only collector only. Two new tests check exact bytes, hashes, scope and script syntax.
 - **Bug found and fixed:** the installed package directory must also contain the launcher copies, or the target-side collector digest could never be computed.
 - Full suite **348 tests, all passed**; baseline: no protected changes. Nothing was run on the VM by the assistant.
+
+## 2026-11-06 OpenSCAP 1.2.17 selection finding; tailoring and UFW registration
+
+- **User-run read-only checks on FYP-Ubuntu2204:**
+  - `oscap info` parses the pinned SCAP 1.3 datastream and lists `cis_level2_server`; `oscap ds sds-validate` exits 0.
+  - A selected-rule evaluation with 53 `--rule` options exited 0 with **1 notapplicable and 622 notselected** results: OpenSCAP 1.2.17 evaluated only the last `--rule`.
+- **Fix:** `backends/ubuntu/scap_tailoring.py` generates a deterministic XCCDF tailoring file from the pinned datastream. It defines profile `xccdf_org.fyphardening_profile_cis_level2_server_selected30`, which extends `cis_level2_server` and keeps its refinements, selects exactly the 53 rules and deselects the other 570. Its SHA-256 is pinned in `spec.SCAP_TAILORING_SHA256`. Target and host scans use `--tailoring-file ... --profile <tailored>` with no `--rule`; the collector refuses a tailoring file that does not match the hash; the bundle ships and installs it.
+- **Other user-reported facts:** Python 3.10.12; `vboxuser` may run `(ALL : ALL) ALL` with `use_pty`; UFW active and enabled (deny incoming, **allow outgoing**, disabled routed, SSH allowed from 192.168.56.1 only); nftables disabled; netfilter-persistent absent; machine ID matches.
+- **UFW registration:** `system/config.UBUNTU_FIREWALL_REGISTRATIONS` registers UFW for machine `f1d16ae7…`, approved by the user. The collector still checks competing managers per scan.
+- **Still unaccepted:** the OpenSCAP version stays null until a tailored evaluation on the VM returns real pass/fail results.
+- Full suite **352 tests, all passed**; baseline: no protected changes; sources: activation false.

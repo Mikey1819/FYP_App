@@ -42,7 +42,9 @@ def _backend(session, ledger):
         from backends.windows.adapter import WindowsBackend
         return WindowsBackend(PATHS.windows_imports, session=session, ledger=ledger)
     from backends.ubuntu.adapter import UbuntuBackend
-    return UbuntuBackend(PATHS.ubuntu_imports, session=session, ledger=ledger)
+    from .config import UBUNTU_FIREWALL_REGISTRATIONS
+    return UbuntuBackend(PATHS.ubuntu_imports, session=session, ledger=ledger,
+                         registered_firewall_manager=UBUNTU_FIREWALL_REGISTRATIONS.get(session.identity.machine_identity))
 
 
 class ConnectionService:

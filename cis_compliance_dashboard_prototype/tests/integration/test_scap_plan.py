@@ -9,7 +9,9 @@ class ScapPlanTests(unittest.TestCase):
         app=Path(__file__).resolve().parents[2]
         plan=prepare_scan(app/'catalogues','a'*32,engine_version='1.3.7',fixture=True)
         self.assertGreater(len(plan.rule_ids),30)
-        self.assertEqual(plan.argv.count('--rule'),len(plan.rule_ids))
+        # OpenSCAP 1.2.17 (observed on the VM) honours only one --rule; scope comes from the pinned tailoring file.
+        self.assertNotIn('--rule',plan.argv)
+        self.assertEqual(plan.argv[plan.argv.index('--tailoring-file')+1],'/usr/local/share/fyp-hardening/fyp-selected-tailoring.xml')
         self.assertNotIn('--remediate',plan.argv)
         self.assertNotIn('--fetch-remote-resources',plan.argv)
         self.assertEqual(plan.argv[-1],'/usr/local/share/fyp-hardening/ssg-ubuntu2204-ds.xml')

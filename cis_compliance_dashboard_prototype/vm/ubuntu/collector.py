@@ -133,9 +133,9 @@ class FixedProbeIO:
         Writes only the request's own result file under the approved scan directory, then removes it.
         Not yet run on the target VM: engine output format and timing are unvalidated there.
         """
-        from .scap_results import (DATASTREAM, RESULT_LIMIT, RESULT_ROOT, SELECTED, engine_version as parse_version,
-                                   result_path, sanitize_results, scan_argv)
-        from .spec import SCAP_DATASTREAM_SHA256, SCAP_PROFILE
+        from .scap_results import (DATASTREAM, RESULT_LIMIT, RESULT_ROOT, SELECTED, TAILORING,
+                                   engine_version as parse_version, result_path, sanitize_results, scan_argv)
+        from .spec import SCAP_DATASTREAM_SHA256, SCAP_TAILORED_PROFILE, SCAP_TAILORING_SHA256
         self._ready()
         argv, result = scan_argv(request_id), Path(result_path(request_id))
         version = self.command('openscap_version')
@@ -143,6 +143,8 @@ class FixedProbeIO:
             raise ValueError('OpenSCAP engine differs from the accepted version')
         if hashlib.sha256(self._bytes(Path(DATASTREAM), 64*1024*1024)).hexdigest() != SCAP_DATASTREAM_SHA256:
             raise ValueError('Installed SCAP datastream differs from the pinned content')
+        if hashlib.sha256(self._bytes(Path(TAILORING), 1024*1024)).hexdigest() != SCAP_TAILORING_SHA256:
+            raise ValueError('Installed SCAP tailoring differs from the pinned selection')
         root = Path(RESULT_ROOT)
         info = root.lstat()
         if root.is_symlink() or not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o077:
@@ -152,7 +154,7 @@ class FixedProbeIO:
             proc = self._run(argv, 300)
             if proc.returncode not in (0, 2):  # 0 all pass, 2 at least one failed rule; others are errors.
                 raise ValueError('OpenSCAP evaluation failed')
-            return sanitize_results(self._bytes(result, RESULT_LIMIT), rule_ids=SELECTED, profile_id=SCAP_PROFILE,
+            return sanitize_results(self._bytes(result, RESULT_LIMIT), rule_ids=SELECTED, profile_id=SCAP_TAILORED_PROFILE,
                                     expected_target=self._identity[1])
         finally:
             for leftover in result.parent.iterdir():
