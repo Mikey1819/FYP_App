@@ -77,7 +77,7 @@ The user accepted these three consolidated objectives on 22 October 2026. The or
 
 **Control-count decision:** retain all 36 report candidates as the working target. The report also promises a minimum of 30. A reduction to 30–35 needs an explicit recorded scope decision identifying omissions and rationale; do not quietly count unsupported or unreviewed rows as implemented. Assessment coverage and remediation coverage are separate measures.
 
-**Benchmark decision:** the report names Server 2022 v5.1.0. The current lab catalogue is `cis-server2022-standalone-2.0.0-preview1`, based on the reviewed Stand-alone v2.0.0 PDF and its exact profile label `Level 1 - Member Server`. Do not copy candidate identifiers or values into executable rules without reconciling the selected edition, role and applicability. The name of that profile does not change the registered lab's standalone role.
+**Benchmark decision:** the report names Server 2022 v5.1.0. The current lab catalogue is `cis-server2022-standalone-2.0.0-full1` (32 controls), based on the reviewed Stand-alone v2.0.0 PDF and its exact profile label `Level 1 - Member Server`. Do not copy candidate identifiers or values into executable rules without reconciling the selected edition, role and applicability. The name of that profile does not change the registered lab's standalone role.
 
 ## Implementation evidence at this review
 
@@ -349,23 +349,23 @@ The complete candidate register and section-by-section coverage index below prov
 
 | No. | Security area | Report control | Report ID | Current implementation evidence |
 | --- | --- | --- | --- | --- |
-| 1 | Account Policies | Enforce password history | 1.1.1 | Source-reviewed; schema-3 collector/import/dashboard fixture-tested; independent VM comparison pending |
-| 2 | Account Policies | Maximum password age | 1.1.2 | Source-reviewed; schema-3 collector/import/dashboard fixture-tested; independent VM comparison pending |
-| 3 | Account Policies | Minimum password age | 1.1.3 | Source-reviewed; schema-3 collector/import/dashboard fixture-tested; independent VM comparison pending |
+| 1 | Account Policies | Enforce password history | 1.1.1 | Source-reviewed; collector/import/dashboard fixture-tested; independent VM comparison pending |
+| 2 | Account Policies | Maximum password age | 1.1.2 | Source-reviewed; collector/import/dashboard fixture-tested; independent VM comparison pending |
+| 3 | Account Policies | Minimum password age | 1.1.3 | Source-reviewed; collector/import/dashboard fixture-tested; independent VM comparison pending |
 | 4 | Account Policies | Minimum password length | 1.1.4 | Reviewed preview; one approved executable action |
-| 5 | Account Policies | Password complexity requirements | 1.1.5 | Source-reviewed; schema-3 collector/import/dashboard fixture-tested; independent VM comparison pending |
-| 6 | Account Policies | Reversible password encryption | 1.1.7 | Source-reviewed; schema-3 collector/import/dashboard fixture-tested; independent VM comparison pending |
-| 7 | Account Policies | Account lockout duration | 1.2.1 | Source-reviewed; schema-3 collector/import/dashboard fixture-tested; independent VM comparison pending |
+| 5 | Account Policies | Password complexity requirements | 1.1.5 | Source-reviewed; collector/import/dashboard fixture-tested; independent VM comparison pending |
+| 6 | Account Policies | Reversible password encryption | 1.1.7 | Source-reviewed; collector/import/dashboard fixture-tested; independent VM comparison pending |
+| 7 | Account Policies | Account lockout duration | 1.2.1 | Source-reviewed; collector/import/dashboard fixture-tested; independent VM comparison pending |
 | 8 | Account Policies | Account lockout threshold | 1.2.2 | Reviewed preview; assessment only |
-| 9 | Account Policies | Reset account lockout counter | 1.2.4 | Source-reviewed; schema-3 collector/import/dashboard fixture-tested; independent VM comparison pending |
+| 9 | Account Policies | Reset account lockout counter | 1.2.4 | Source-reviewed; collector/import/dashboard fixture-tested; independent VM comparison pending |
 | 10 | Account Policies | Administrator account lockout setting | 1.2.3 | Candidate; mapping and implementation pending |
 | 11 | Local Security Options | Guest account status | 2.3.1.1 | Reviewed preview; assessment only |
 | 12 | Local Security Options | Built-in Administrator account name | 2.3.1.3 | Candidate; mapping and implementation pending |
 | 13 | Local Security Options | Built-in Guest account name | 2.3.1.4 | Candidate; mapping and implementation pending |
-| 14 | Local Security Options | Local accounts with blank passwords | 2.3.1.2 | Source-reviewed; schema-4 collector/import/dashboard fixture-tested; independent VM comparison pending |
-| 15 | Local Security Options | Anonymous SID/name translation | 2.3.10.1 | Source-reviewed; schema-4 collector/import/dashboard fixture-tested; independent VM comparison pending |
-| 16 | Local Security Options | Anonymous enumeration of SAM accounts | 2.3.10.2 | Source-reviewed; schema-4 collector/import/dashboard fixture-tested; independent VM comparison pending |
-| 17 | Local Security Options | Anonymous enumeration of SAM accounts and shares | 2.3.10.3 | Source-reviewed; schema-4 collector/import/dashboard fixture-tested; independent VM comparison pending |
+| 14 | Local Security Options | Local accounts with blank passwords | 2.3.1.2 | Source-reviewed; collector/import/dashboard fixture-tested; independent VM comparison pending |
+| 15 | Local Security Options | Anonymous SID/name translation | 2.3.10.1 | Source-reviewed; collector/import/dashboard fixture-tested; independent VM comparison pending |
+| 16 | Local Security Options | Anonymous enumeration of SAM accounts | 2.3.10.2 | Source-reviewed; collector/import/dashboard fixture-tested; independent VM comparison pending |
+| 17 | Local Security Options | Anonymous enumeration of SAM accounts and shares | 2.3.10.3 | Source-reviewed; collector/import/dashboard fixture-tested; independent VM comparison pending |
 | 18 | Windows Defender Firewall | Domain firewall profile | 9.1.1 | Candidate; mapping and implementation pending |
 | 19 | Windows Defender Firewall | Private firewall profile | 9.2.1 | Candidate; mapping and implementation pending |
 | 20 | Windows Defender Firewall | Public firewall profile | 9.3.1 | Reviewed preview; assessment only |

@@ -11,8 +11,7 @@ from unittest.mock import patch
 from hardening.evidence_import import encode
 from hardening.import_storage import ImportedEvidenceStore
 from hardening.winrm_channel import LiveScanner
-from test_evidence_import import MACHINE_UUID, NOW
-from test_full_controls import full_fixture
+from evidence_fixture import MACHINE_UUID, NOW, evidence_fixture
 from test_winrm_channel import IDENTITY, FakeSession
 
 SCRIPT = Path(__file__).resolve().parents[2] / 'scripts' / 'tools' / 'cross_check_controls.py'
@@ -38,7 +37,7 @@ class CrossCheckTests(unittest.TestCase):
         folder = tempfile.TemporaryDirectory(); self.addCleanup(folder.cleanup)
         self.folder = Path(folder.name)
         self.store = ImportedEvidenceStore(self.folder / 'imports.sqlite3')
-        saved, _ = self.store.save(encode(full_fixture()), expected_hostname='FIXTURE-SERVER',
+        saved, _ = self.store.save(encode(evidence_fixture()), expected_hostname='FIXTURE-SERVER',
                                    expected_machine_uuid=MACHINE_UUID, now=NOW)
         rows = [dict(control_id=r.control.control_id, value=r.evidence.value, raw=str(r.evidence.value),
                      method='fixture') for r in saved.assessment.results]

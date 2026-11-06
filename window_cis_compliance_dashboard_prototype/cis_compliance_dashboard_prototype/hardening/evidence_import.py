@@ -1,6 +1,7 @@
-"""Strict, offline imported-evidence validation; no OS commands, model or writes.
+"""Strict, offline validation of collector evidence; no OS commands, model or writes.
 
-These files are user-supplied observations, not authenticated remote attestation.
+Every scan passes through load_evidence: live scans over WinRM, the runner's before/after evidence and an
+evidence file given to the command-line client. Evidence is an observation, not authenticated attestation.
 Risk is scored separately, by the deterministic engine in risk.py.
 """
 
@@ -13,19 +14,16 @@ from uuid import UUID
 
 from .domain import Evidence, EvidenceMode, assess
 from .server2022_catalogue import (
-    BENCHMARK_SHA256, PROFILE, evidence_contract,
+    BENCHMARK_SHA256, CATALOGUE, CATALOGUE_ID, COLLECTOR_ID, PROFILE, SCHEMA_VERSION, SOURCES,
 )
 
 MAX_BYTES = 65536
+# Effective state behind the firewall and NLA policy checks, so a policy that is merely not configured is not
+# mistaken for disabled protection. Used for risk Exposure only; never for compliance.
 CONTEXT_SOURCES = {
     "firewall_public_enabled": "Get-NetFirewallProfile:ActiveStore/Public/Enabled",
     "nla_required": "Win32_TSGeneralSetting:RDP-tcp/UserAuthenticationRequired",
     "nla_policy_source": "Win32_TSGeneralSetting:RDP-tcp/PolicySourceUserAuthenticationRequired",
-}
-# Schema 5 also reads the effective state behind the other firewall policy checks, so a policy that is
-# merely not configured is not mistaken for disabled protection (risk Exposure only; never compliance).
-CONTEXT_SOURCES_V5 = {
-    **CONTEXT_SOURCES,
     "firewall_private_enabled": "Get-NetFirewallProfile:ActiveStore/Private/Enabled",
     "firewall_private_inbound_blocked": "Get-NetFirewallProfile:ActiveStore/Private/DefaultInboundAction",
     "firewall_public_inbound_blocked": "Get-NetFirewallProfile:ActiveStore/Public/DefaultInboundAction",
@@ -34,24 +32,17 @@ BOOLEAN_CONTEXT = {"firewall_public_enabled", "firewall_private_enabled", "firew
                    "firewall_public_inbound_blocked"}
 
 
-def effective_context(raw):
-    """Read validated supplementary observations; legacy files have none."""
-    data = json.loads(raw.decode("utf-8-sig"))
-    return data.get("effective_context", [])
-
-
-def _validate_context(rows, started, completed, version=4):
-    sources = CONTEXT_SOURCES_V5 if version >= 5 else CONTEXT_SOURCES
-    if type(rows) is not list or len(rows) != len(sources):
-        raise ValueError(f"All {len(sources)} effective context observations are required")
+def _validate_context(rows, started, completed):
+    if type(rows) is not list or len(rows) != len(CONTEXT_SOURCES):
+        raise ValueError(f"All {len(CONTEXT_SOURCES)} effective context observations are required")
     seen = set()
     for row in rows:
         _object(row, "control_id source state value error collected_at", "effective context")
         key = row["control_id"]
-        if type(key) is not str or key not in sources or key in seen:
+        if type(key) is not str or key not in CONTEXT_SOURCES or key in seen:
             raise ValueError("Unknown or duplicate effective context")
         seen.add(key)
-        if row["source"] != sources[key] or not started <= _time(row["collected_at"]) <= completed:
+        if row["source"] != CONTEXT_SOURCES[key] or not started <= _time(row["collected_at"]) <= completed:
             raise ValueError("Invalid effective context provenance")
         state, value, error = row["state"], row["value"], row["error"]
         if state == "ok":
@@ -142,13 +133,11 @@ def load_evidence(raw: bytes, *, expected_hostname: str, expected_machine_uuid: 
     if type(data) is not dict:
         raise ValueError("Evidence must be an object")
     version = data.get("schema_version")
-    if type(version) is not int or version not in (1, 2, 3, 4, 5):
+    if type(version) is not int or version != SCHEMA_VERSION:
         raise ValueError("Unsupported evidence schema")
     _object(data, "schema_version collector_id catalogue_id benchmark_sha256 profile "
-            "evidence_mode started_at completed_at target observations" +
-            (" effective_context" if version >= 2 else ""), "export")
-    collector, catalogue_id, catalogue, sources = evidence_contract(version)
-    for key, expected in (("collector_id", collector), ("catalogue_id", catalogue_id),
+            "evidence_mode started_at completed_at target observations effective_context", "export")
+    for key, expected in (("collector_id", COLLECTOR_ID), ("catalogue_id", CATALOGUE_ID),
                           ("benchmark_sha256", BENCHMARK_SHA256), ("profile", PROFILE),
                           ("evidence_mode", EvidenceMode.IMPORTED.value)):
         if data[key] != expected:
@@ -179,18 +168,17 @@ def load_evidence(raw: bytes, *, expected_hostname: str, expected_machine_uuid: 
         raise ValueError("Invalid collection interval")
     if completed > now + timedelta(minutes=5):
         raise ValueError("Evidence timestamp is in the future; check the VM clock")
-    if version >= 2:
-        _validate_context(data["effective_context"], started, completed, version)
+    _validate_context(data["effective_context"], started, completed)
     observations = data["observations"]
-    if type(observations) is not list or len(observations) != len(catalogue):
-        raise ValueError(f"Export must include all {len(catalogue)} selected controls, including failures")
+    if type(observations) is not list or len(observations) != len(CATALOGUE):
+        raise ValueError(f"Export must include all {len(CATALOGUE)} selected controls, including failures")
     by_id = {}
     for row in observations:
         _object(row, "control_id source state value error collected_at", "observation")
         identifier = _string(row["control_id"], "control ID", 64)
-        if identifier not in sources or identifier in by_id:
+        if identifier not in SOURCES or identifier in by_id:
             raise ValueError("Unknown or duplicate control")
-        if row["source"] != sources[identifier]:
+        if row["source"] != SOURCES[identifier]:
             raise ValueError("Evidence source does not match the registered collector")
         timestamp = _time(row["collected_at"])
         if not started <= timestamp <= completed:
@@ -219,7 +207,7 @@ def load_evidence(raw: bytes, *, expected_hostname: str, expected_machine_uuid: 
     digest = hashlib.sha256(raw).hexdigest()
     assessment_id, target_id = "import-" + digest, "windows:" + uuid
     results = []
-    for control in catalogue:
+    for control in CATALOGUE:
         row = by_id[control.control_id]
         error = f"Collector reported {row['error']}" if row["state"] == "error" else None
         evidence = Evidence(target_id, control.control_id, row["value"], _time(row["collected_at"]),
