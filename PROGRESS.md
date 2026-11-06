@@ -598,3 +598,7 @@ The Ubuntu execution gate now opens only on evidence. The deployed runner must m
 ## 7 November 2026 — acceptance page and runner deployment preview (integration)
 
 Added the **Execution acceptance** section to the Ubuntu page, and `install-runner.sh` / `uninstall-runner.sh` as a separate, approval-gated stage (preview: `docs/RUNNER_DEPLOYMENT.md`). Fixed a page crash the new page test found: a pending-change list before any scan. Full suite: **504 passed**. Nothing is deployed; the next step needs the administrator's approval.
+
+## 7 November 2026 — fix: VM clock skew in the first live acceptance attempt (integration)
+
+The VM's clock drifted relative to the laptop's, so the first acceptance attempt was refused by the VM, and the second was blocked by the laptop's freshness check. Preview freshness now uses only the laptop clock, the runner tolerates 60 s, and offsets above 30 s are reported plainly by the deployment check. Full suite: **506 passed**. Reinstall the helper and re-run `install-runner.sh`.

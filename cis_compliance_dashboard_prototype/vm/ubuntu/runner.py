@@ -14,7 +14,9 @@ import stat
 import uuid
 from .remediation_schema import parse_request, receipt, utc
 
-CLOCK_SKEW_SECONDS = 5
+# VirtualBox guest clocks drift and are corrected in jumps (live 2026-11-07: >5 s behind, then ~1 s ahead).
+# The host reports offsets above 30 s as a deployment problem; this only tolerates the remainder.
+CLOCK_SKEW_SECONDS = 60
 
 
 def _sha(data):
@@ -184,7 +186,7 @@ class Runner:
         """What is deployed: helper digest, registered families, systemd launcher and boot rollback. Reads only."""
         from .provenance import collector_digest
         launcher = self.launcher
-        return {'collector_digest': collector_digest(),
+        return {'collector_digest': collector_digest(), 'now': self._stamp(),
                 'families': {aid: [f.version, f.implementation_sha256] for aid, f in sorted(self.families.items())},
                 'launcher': bool(launcher is not None and getattr(launcher, 'available', lambda: True)()),
                 'boot_rollback': getattr(launcher, 'boot_rollback_state', lambda: 'unknown')() if launcher else 'unknown'}

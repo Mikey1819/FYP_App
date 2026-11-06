@@ -10,6 +10,7 @@ class AcceptanceCase(SupervisedBackendCase):
     def setUp(self):
         super().setUp()
         self.launcher, self.marker = LauncherProbe(), FakeMarker()
+        self.vm_offset = timedelta(0)  # how far the simulated VM clock runs ahead of the host
 
     def runner(self, family=None, *, identity=None, clock=None):
         from vm.ubuntu.family_acceptance import AcceptanceMarkerFamily
@@ -17,7 +18,8 @@ class AcceptanceCase(SupervisedBackendCase):
         family = family or self.family
         marker = AcceptanceMarkerFamily(self.marker)
         return Runner(self.state, {family.action_id: family, marker.action_id: marker},
-                      lambda: identity or ('a' * 32, 'ubuntu-fixture'), clock=clock or self.clock,
+                      lambda: identity or ('a' * 32, 'ubuntu-fixture'),
+                      clock=lambda: datetime.now(timezone.utc) + self.vm_offset,  # the VM's own clock, always
                       require_root_owned=False, launcher=self.launcher)
 
     def deployed(self):
@@ -133,6 +135,28 @@ class ScenarioTests(AcceptanceCase):
         backend = self.deployed()  # no assessment yet: the Ubuntu store does not exist
         backend.start_acceptance('c', 'confirm', 'fixture-operator', 'op-a1')
         self.assertEqual(backend.pending_supervised('c'), ())
+
+    def test_vm_clock_a_little_ahead_or_behind_still_runs(self):
+        # Live 2026-11-07: the VM clock was ~1 s ahead at one moment and >5 s behind at another.
+        for offset in (timedelta(seconds=10), timedelta(seconds=-20)):  # -20 s: refused under the old 5 s skew
+            with self.subTest(offset=offset):
+                self.vm_offset = offset
+                backend = self.deployed()
+                self.assertEqual(backend.deployment_status('c').reasons, ())
+                run = backend.start_acceptance('c', 'confirm', 'fixture-operator', 'op-' + str(offset.seconds))
+                self.assertEqual((run.state, run.code), ('running', 'job_started'))
+                self.finish_job(run.request_id)
+                self.runner().rollback(run.request_id)  # settle it so the next subtest may start
+                backend.acceptance_status('c')
+
+    def test_a_large_vm_clock_offset_is_reported_and_keeps_the_gate_closed(self):
+        from backends.ubuntu.adapter import execution_gate
+        self.vm_offset = timedelta(minutes=7)
+        backend = self.deployed()
+        status = backend.deployment_status('c')
+        self.assertFalse(status.ok)
+        self.assertIn('clock', ' '.join(status.reasons).lower())
+        self.assertTrue(execution_gate(backend))
 
     def test_only_one_acceptance_run_at_a_time(self):
         backend = self.deployed()

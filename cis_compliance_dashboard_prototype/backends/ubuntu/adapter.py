@@ -88,6 +88,16 @@ class PendingChange:
     code: str
 
 
+def _host_now():
+    """Freshness of a preview is judged on the host clock alone: when the host received it. The VM's own stamp
+    can be skewed; the runner re-reads the exact before-state at execution anyway (stale_read_set)."""
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat()
+
+
+MAX_CLOCK_OFFSET_SECONDS = 30
+
+
 def _execution_operation(request_id):
     """One ledger operation per approved request, whatever page action dispatched it: never dispatched twice."""
     return 'ubuntu-execute:' + request_id
@@ -437,7 +447,7 @@ class UbuntuBackend(BoundBackend):
                                predicate_id=_controls()[fix['control_id']].predicate_id,
                                before_state_sha256=preview['before_state_sha256'],
                                expected_after_sha256=preview['expected_after_sha256'],
-                               before_state_collected_at=preview['collected_at'], recovery=spec.recovery,
+                               before_state_collected_at=_host_now(), recovery=spec.recovery,
                                job_deadline_seconds=spec.max_seconds)
             store.add_proposal(binding, plan, title=spec.title, preview=preview['summary'])
         except (ValueError, KeyError, TypeError, OSError, TimeoutError):
@@ -543,14 +553,21 @@ class UbuntuBackend(BoundBackend):
     def _probe_deployment(self):
         from vm.ubuntu.provenance import collector_digest
         from .actions import AUXILIARY
+        from datetime import datetime, timezone
         try:
+            sent = datetime.now(timezone.utc)
             probe = json.loads(self.session.channel.invoke_runner(b'{"op":"probe"}\n'))
-            if type(probe) is not dict or set(probe) != {'collector_digest', 'families', 'launcher', 'boot_rollback'}:
+            received = datetime.now(timezone.utc)
+            if type(probe) is not dict or set(probe) != {'collector_digest', 'now', 'families', 'launcher', 'boot_rollback'}:
                 raise ValueError('Unexpected probe')
+            offset = (datetime.fromisoformat(probe['now']) - (sent + (received - sent) / 2)).total_seconds()
         except Exception:
             return DeploymentStatus(False, ('The root-owned runner is not deployed or refused the probe; install-runner.sh '
                                             'needs its separate approval.',), None)
         reasons = []
+        if abs(offset) > MAX_CLOCK_OFFSET_SECONDS:
+            reasons.append('The VM clock differs from this computer by %d s (more than %d s); fix time sync on the VM '
+                           '(timedatectl) and reconnect.' % (round(offset), MAX_CLOCK_OFFSET_SECONDS))
         if probe['collector_digest'] != collector_digest(APP / 'vm' / 'ubuntu'):
             reasons.append('The deployed helper differs from this application; reinstall the bundle first.')
         expected = {aid: [spec.version, spec.implementation_sha256] for aid, spec in dict(self.families, **AUXILIARY).items()}
@@ -625,7 +642,7 @@ class UbuntuBackend(BoundBackend):
                            control_id='acceptance', predicate_id='ubuntu.acceptance.predicate.v1',
                            before_state_sha256=preview['before_state_sha256'],
                            expected_after_sha256=preview['expected_after_sha256'],
-                           before_state_collected_at=preview['collected_at'], recovery=spec.recovery,
+                           before_state_collected_at=_host_now(), recovery=spec.recovery,
                            job_deadline_seconds=spec.max_seconds)
         approved = approve(plan, operator, datetime.now(timezone.utc))
         request_id = approved.request['request_id']
@@ -832,7 +849,7 @@ class UbuntuBackend(BoundBackend):
                                                 'predicate_id')},
                            before_state_sha256=preview['before_state_sha256'],
                            expected_after_sha256=preview['expected_after_sha256'],
-                           before_state_collected_at=preview['collected_at'], recovery=spec.recovery,
+                           before_state_collected_at=_host_now(), recovery=spec.recovery,
                            job_deadline_seconds=spec.max_seconds)
         store.add_proposal(binding, plan, title='Restore before-state of ' + f['control_id'] + ' (undo '
                            + original.payload['action']['action_id'] + ')', preview=preview['summary'])

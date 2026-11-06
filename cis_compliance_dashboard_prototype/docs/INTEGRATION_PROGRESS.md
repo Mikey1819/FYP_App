@@ -844,3 +844,17 @@ The execution gate was a hard-coded "closed". It now opens only on evidence.
   - `tests/integration/test_ubuntu_acceptance_ui.py` drives both scenarios through the real page until the gate's reasons disappear. A wrong expectation about the final marker was corrected: the rollback correctly restores the marker the confirmed run left.
   - One bundle test covers the runner stage.
 - Full suite **504 tests, all passed**; baseline: no protected changes; source check passes; bundle rebuilt. **Nothing is deployed.** The runner stage waits for the administrator's approval.
+
+## 2026-11-07 fix: VM clock skew broke the first live acceptance attempts
+
+- **Live symptoms:**
+  - The first **Run confirm scenario** at 17:39 UTC reached the VM and was refused `not_yet_valid`, which happens only when the VM clock is more than 5 s behind the host.
+  - A later attempt failed on the host with "Before-state evidence is older than five minutes". The age check also rejects a negative age, which happens when the VM is ahead. The stored scans show the VM about 1 s ahead at those moments.
+  - So the VirtualBox guest clock drifts and is corrected in jumps. No change was applied on the VM.
+- **Fix:**
+  - **Freshness on the host clock:** plans now record `before_state_collected_at` as the host time the preview was received (CIS fixes, restores and acceptance). The runner's re-read of the exact before-state at execution still guards against stale state.
+  - **Runner tolerance:** `CLOCK_SKEW_SECONDS` is now 60, up from 5.
+  - **Offset reported by the probe:** the runner probe now reports the VM's `now`. The deployment check estimates the offset at the probe's midpoint and, above **30 s**, reports "The VM clock differs from this computer by N s…" as a deployment problem that keeps the gate closed.
+- **Tests:** two new acceptance tests (VM 10 s ahead and 20 s behind still run; 7 minutes is reported and blocks). The harness now always uses the simulated VM clock.
+  - **Mutation checks, all caught:** going back to the 5 s skew, VM-time freshness, and no offset check.
+- Full suite **506 tests, all passed**. **The runner changed:** reinstall the helper (`uninstall.sh` removes the runner stage too), then run `install-runner.sh` again.
