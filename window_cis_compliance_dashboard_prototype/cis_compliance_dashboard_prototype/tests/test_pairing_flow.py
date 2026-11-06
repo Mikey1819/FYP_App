@@ -92,7 +92,7 @@ class FindServerTests(unittest.TestCase):
     def test_a_wrong_code_gets_no_answer_and_the_question_is_repeated(self):
         server = self.serve()
         wrong = '000000000' if server.code != '000000000' else '111111111'
-        with self.assertRaisesRegex(PairingError, 'No server answered'):
+        with self.assertRaisesRegex(PairingError, 'No server answered. The code may be wrong or expired'):
             find_server(wrong, sources=[OWN], targets=[(OWN, server.port)], timeout=0.9, attempts=3)
         self.assertEqual(server.questions, 3)
 
