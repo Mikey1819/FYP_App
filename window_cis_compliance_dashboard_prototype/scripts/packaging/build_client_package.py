@@ -92,11 +92,12 @@ Your laptop and the server must be on the same network (for example the same Wi-
 5. When you have finished with a server, click "Revert changes" in the helper on that server.
 Next time, pick the server under My servers and type the password. If its address changed, use Re-pair.
 
-The AI agents (optional)
-------------------------
+The AI agents (needed to run a round)
+-------------------------------------
 The agents use a local AI model through Ollama on this laptop (https://ollama.com), model qwen3:8b
-("ollama pull qwen3:8b"). Without it, scanning, risk ranking and approved fixes still work; the workspace says the
-AI is unavailable.
+("ollama pull qwen3:8b"). The sidebar says whether it is ready. Without it, a new round cannot start, because the
+AI Agent Orchestrator starts the scan. Earlier scans, their risk ranking, history and drift stay viewable, and fixes
+you already approved can still be applied with "Execute remaining without AI".
 
 Good to know
 ------------
