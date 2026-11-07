@@ -14,11 +14,23 @@ def call(name, **arguments):
         {'function': {'name': name, 'arguments': dict(arguments, target_id=TARGET)}}]}
 
 
+def plan_call(decisions):
+    """A submit_plan call in the separate-lists format, from old-style decision entries (malformed ones stay malformed)."""
+    fixes, defers = [], []
+    for d in decisions:
+        (fixes if d.get('decision') == 'fix' else defers).append({k: v for k, v in d.items() if k != 'decision'})
+    arguments = {'fixes': fixes} if fixes else {}
+    if defers or not fixes:
+        arguments['defers'] = defers
+    return call('submit_plan', **arguments)
+
+
 class Scripted:
     def __init__(self, script):
-        self.script, self.seen = list(script), []
+        self.script, self.seen, self.tools_seen = list(script), [], []
     def chat(self, messages, tools, *, timeout):
         self.seen.append(json.dumps(messages))
+        self.tools_seen.append(tools)
         if not self.script:
             return {'role': 'assistant', 'content': 'Done.', 'tool_calls': []}
         item = self.script.pop(0)
@@ -89,7 +101,7 @@ class AgentRoundTests(unittest.TestCase):
 
     def test_complete_round_delegates_in_order_and_defers_every_finding(self):
         clients = team([call('delegate_scanner'), call('delegate_analysis'),
-                        call('submit_plan', decisions=[{'control_id': '1.5.1', 'decision': 'defer',
+                        plan_call([{'control_id': '1.5.1', 'decision': 'defer',
                                                         'reason_code': 'no_registered_action'}])],
                        scanner_ok(), analysis_ok())
         result = self.run_round(clients)
@@ -104,8 +116,8 @@ class AgentRoundTests(unittest.TestCase):
 
     def test_fabricated_tools_fixes_actions_and_factors_are_refused_without_effect(self):
         clients = team([call('run_shell', command='ufw disable'), call('delegate_scanner'), call('delegate_analysis'),
-                        call('submit_plan', decisions=[{'control_id': '1.5.1', 'decision': 'fix', 'reason_code': 'no_registered_action'}]),
-                        call('submit_plan', decisions=[{'control_id': '1.5.1', 'decision': 'defer',
+                        plan_call([{'control_id': '1.5.1', 'decision': 'fix', 'reason_code': 'no_registered_action'}]),
+                        plan_call([{'control_id': '1.5.1', 'decision': 'defer',
                                                         'reason_code': 'no_registered_action', 'action_id': 'ubuntu.1.5.1.v1'}])],
                        scanner_ok(),
                        [call('read_ranking'),
@@ -121,7 +133,7 @@ class AgentRoundTests(unittest.TestCase):
         self.assertEqual([e['kind'] for e in analysis_events].count('tool_rejected'), 1)
 
     def test_out_of_order_and_repeated_calls_are_blocked(self):
-        clients = team([call('submit_plan', decisions=[]), call('delegate_scanner'), call('delegate_scanner')], scanner_ok())
+        clients = team([plan_call([]), call('delegate_scanner'), call('delegate_scanner')], scanner_ok())
         result = self.run_round(clients)
         events = self.events(result['orchestrator_run_id'])
         self.assertEqual(events[1]['kind'], 'tool_rejected')
@@ -143,7 +155,7 @@ class AgentRoundTests(unittest.TestCase):
         self.assertIn(self.events(result['orchestrator_run_id'])[-1]['data']['status'], ('Time limit reached',))
 
     def test_evidence_text_never_reaches_any_model(self):
-        clients = team([call('delegate_scanner'), call('delegate_analysis'), call('submit_plan', decisions=[])],
+        clients = team([call('delegate_scanner'), call('delegate_analysis'), plan_call([])],
                        scanner_ok(), [call('read_ranking'), call('inspect_finding', control_id='5.2.3'),
                                       call('submit_analysis', flags=[], gap_triage=[{'control_id': '1.2.2.1', 'triage_code': 'manual_review'}])])
         result = self.run_round(clients, collect=self.collect_with(failing=('1.5.1',), inject=True))
@@ -176,7 +188,7 @@ class AgentRoundTests(unittest.TestCase):
 
     def test_outside_goal_requires_a_goal(self):
         plan = [call('delegate_scanner'), call('delegate_analysis'),
-                call('submit_plan', decisions=[{'control_id': '1.5.1', 'decision': 'defer', 'reason_code': 'outside_goal'}])]
+                plan_call([{'control_id': '1.5.1', 'decision': 'defer', 'reason_code': 'outside_goal'}])]
         without = self.run_round(team(list(plan), scanner_ok(), analysis_ok()))
         self.assertIsNone(without['plan'])
         self.collected.clear()
@@ -228,7 +240,7 @@ class BackendAgenticTests(unittest.TestCase):
                              model_probe=lambda: probe)
 
     def agentic_team(self):
-        return team([call('delegate_scanner'), call('delegate_analysis'), call('submit_plan', decisions=[])],
+        return team([call('delegate_scanner'), call('delegate_analysis'), plan_call([])],
                     scanner_ok(), RankingAware())
 
     def test_agentic_round_runs_in_same_workflow_with_agent_log_and_no_proposals(self):
@@ -236,7 +248,7 @@ class BackendAgenticTests(unittest.TestCase):
         with open_gate():
             backend = self.backend(self.agentic_team())
             self.assertTrue(backend.capabilities('c').can_use_model)
-            handle = backend.start_round('c', None, 'Focus on SSH', 'agentic', 'op-agentic')
+            handle = backend.start_round('c', None, None, 'agentic', 'op-agentic')  # goals disabled
             self.assertEqual(handle.state, 'completed')
             snap = backend.snapshot('c', handle.binding.workflow_session_id)
         self.assertEqual(snap.step_states, ('done', 'done', 'done', 'skipped', 'skipped', 'skipped'))
@@ -244,7 +256,7 @@ class BackendAgenticTests(unittest.TestCase):
         self.assertEqual({e.role for e in snap.events}, {'orchestrator', 'scanner', 'analysis'})
         self.assertTrue(all('Test client' in e.provenance for e in snap.events))
         self.assertEqual(len(snap.controls), 30)
-        self.assertEqual(snap.goal, 'Focus on SSH')
+        self.assertIsNone(snap.goal)
 
     def test_deterministic_mode_with_model_stopped_calls_no_model_and_labels_system_activity(self):
         from tests.integration.test_ubuntu_live_path import open_gate
@@ -280,7 +292,7 @@ class BackendAgenticTests(unittest.TestCase):
         from tests.integration.test_ubuntu_live_path import open_gate
         scanner = [call('scan_target'), call('read_coverage'), call('handoff_analysis', reason='ok')]
         with open_gate():
-            backend = self.backend(team([call('delegate_scanner'), call('delegate_analysis'), call('submit_plan', decisions=[])],
+            backend = self.backend(team([call('delegate_scanner'), call('delegate_analysis'), plan_call([])],
                                         scanner, [call('read_ranking')]))
             handle = backend.start_round('c', None, None, 'agentic', 'op-1')
             snap = backend.snapshot('c', handle.binding.workflow_session_id)
@@ -305,7 +317,7 @@ class PageAgenticRoundTests(unittest.TestCase):
         channel, clients = HelperSsh(), None
         def backend_factory(session):
             nonlocal clients
-            clients = team([call('delegate_scanner'), call('delegate_analysis'), call('submit_plan', decisions=[])],
+            clients = team([call('delegate_scanner'), call('delegate_analysis'), plan_call([])],
                            scanner_ok(), RankingAware())
             # The session's target ID is assigned at registration; the scripted calls must name it.
             for client in clients.values():

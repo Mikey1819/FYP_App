@@ -758,11 +758,10 @@ def render_agentic(database_path: Path):
                 _ubuntu_acceptance(backend, connection)
                 snapshot = backend.snapshot(connection, st.session_state.get(WORKFLOW_KEY))
                 _show_progress(dict(zip(STEPS, snapshot.step_states)), None)
-                goal = _goal_input()
-                with st.container(horizontal=True):
+                with st.container(horizontal=True):  # round goals are disabled for Ubuntu (due for removal)
                     if st.button('Start agentic round', key='agentic_run', disabled=not capabilities.can_use_model):
-                        # Bounded Ubuntu agents through the backend; no Ubuntu fix can be proposed yet.
-                        _run_round(None, None, goal)
+                        # Bounded Ubuntu agents through the backend; the orchestrator plans, the administrator approves.
+                        _run_round(None, None, None)
                     if st.button('Assess without AI', key='agentic_assess_without_ai', disabled=not capabilities.can_assess):
                         # Read-only deterministic scan through the backend; the helper gate is checked again there.
                         _run_round(None, None, None, AssessmentMode.DETERMINISTIC)

@@ -618,3 +618,7 @@ Two problems found in live agentic rounds, fixed on the host side (no reinstall 
 - The orchestrator then deferred 20 fixable controls as "no registered action". That reason is now refused when a fix exists, and the orchestrator is told which failures have registered actions.
 
 The Fixes tab now shows an AI plan table covering every Non-Compliant control, and proposal previews are readable. Full suite: **532 passed**. Next: a new agentic round, then the first live fix (3.3.2) after a snapshot.
+
+## 7 November 2026 — Ubuntu plan format and round goal (integration)
+
+In the next live round, the orchestrator offered fixes for all 22 failures but gave them defer reasons, so no plan was stored. `submit_plan` now takes separate `fixes` and `defers` lists, each with only its own reason codes. The Ubuntu round goal is disabled at the administrator's request (due for removal). Full suite: **538 passed**. Next: a new agentic round, then the first live fix (3.3.2) after a snapshot.

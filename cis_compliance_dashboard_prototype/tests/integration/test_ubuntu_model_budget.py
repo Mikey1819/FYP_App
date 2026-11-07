@@ -20,8 +20,8 @@ class UbuntuModelBudgetTests(unittest.TestCase):
         self.assertEqual(len(cis), 30)
         plan = {'name': 'submit_plan', 'arguments': {
             'target_id': 'ubuntu:00000000-0000-0000-0000-000000000000',
-            'decisions': [{'control_id': a[len('ubuntu.'):-len('.v1')], 'decision': 'fix',
-                           'reason_code': 'unblocks_other', 'action_id': a} for a in cis]}}
+            'fixes': [{'control_id': a[len('ubuntu.'):-len('.v1')], 'action_id': a,
+                       'reason_code': 'unblocks_other'} for a in cis]}}
         needed = len(json.dumps(plan)) / CHARS_PER_TOKEN
         self.assertGreaterEqual(self.backend().model_client_factory(ORCHESTRATOR).num_predict, needed)
 

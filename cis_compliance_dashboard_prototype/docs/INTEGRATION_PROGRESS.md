@@ -907,3 +907,13 @@ The execution gate was a hard-coded "closed". It now opens only on evidence.
 - Operator-created fixes were deliberately not added: project decision D4 has the orchestrator choose proposals. The round goal steers it.
 - **Tests:** 9 new tests, written first. One old assertion now expects readable preview text. Mutations caught: removing the honesty check, hiding `registered_actions`, listing only decided controls, and raw JSON previews.
 - Full suite **532 tests, all passed**; baseline: no protected changes. Host only: collector digest unchanged (`3df47649b229`).
+
+## 7 November 2026 — separate fix and defer lists; Ubuntu round goal disabled (live finding)
+- **Live symptom (round 03:57 UTC):** the orchestrator offered fixes for all 22 failures with the right action IDs, but gave each the defer reason `no_registered_action`. The plan was refused with a generic message; the model resent the identical call; the protected Coordinator blocked the repeat, so no plan was stored.
+- **Cause:** fix and defer reasons shared one `reason_code` enum in a single `decisions` list.
+- **Changes:**
+  - `submit_plan(fixes=[{control_id, action_id, reason_code}], defers=[{control_id, reason_code}])`. Each list carries only its own reason codes, `fixes` lists only controls that have a registered action, and both lists are optional (a failure in neither is recorded as not decided).
+  - Refusals name the valid codes or the registered action. The stored plan format is unchanged, so the adapter, UI and history read old and new rounds alike.
+  - **Round goal disabled for Ubuntu** at the administrator's request (due for removal): the page no longer shows the input and the backend refuses a goal. The Windows page keeps its goal for now (protected engine and original tests).
+- **Tests:** 6 new tests (5 plan format, 1 backend goal refusal) plus a page assertion, written first. Existing Ubuntu tests now send plans through a `plan_call` helper in the new format; one test no longer passes a goal. Mutations caught: fix reasons accepting defer codes, a mixed enum, a control in both lists, the goal check removed, and the goal input restored.
+- Full suite **538 tests, all passed**; baseline: no protected changes. Host only: collector digest unchanged.

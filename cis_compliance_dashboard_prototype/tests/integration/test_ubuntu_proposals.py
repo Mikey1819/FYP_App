@@ -124,13 +124,13 @@ class PreviewTests(Fixture):
 
 class EligibleFixTests(unittest.TestCase):
     def test_fix_only_for_eligible_control_with_its_exact_action(self):
-        from tests.integration.test_ubuntu_agents import AgentRoundTests, call, team, scanner_ok, analysis_ok
+        from tests.integration.test_ubuntu_agents import AgentRoundTests, call, plan_call, team, scanner_ok, analysis_ok
         case = AgentRoundTests('test_complete_round_delegates_in_order_and_defers_every_finding'); case.setUp()
         try:
             from backends.ubuntu.agents import run_agentic_round
             from backends.ubuntu.adapter import _controls
             def round_with(decisions):
-                clients = team([call('delegate_scanner'), call('delegate_analysis'), call('submit_plan', decisions=decisions)],
+                clients = team([call('delegate_scanner'), call('delegate_analysis'), plan_call(decisions)],
                                scanner_ok(), analysis_ok())
                 return run_agentic_round(client_factory=clients.__getitem__, collect=case.collect_with(), log_store=case.log,
                                          target_id='ubuntu:fixture', titles={c: x.title for c, x in _controls().items()},
@@ -153,7 +153,7 @@ class BackendRemediationTests(StoreFixture):
         from system.connection import VerifiedSession
         from system.identity import VerifiedIdentity
         from system.ledger import CoordinationLedger
-        from tests.integration.test_ubuntu_agents import call, team, scanner_ok, RankingAware
+        from tests.integration.test_ubuntu_agents import call, plan_call, team, scanner_ok, RankingAware
         from tests.integration.test_ubuntu_live_path import CliChannel, TARGET as LIVE
         test = self
 
@@ -192,7 +192,7 @@ class BackendRemediationTests(StoreFixture):
         session = VerifiedSession('c', VerifiedIdentity('ubuntu', LIVE[1], LIVE[0], '22.04', 'ssh'), 'ubuntu:fixture',
                                   'epoch', 'user', 'vm', 22, self.channel)
         clients = team([call('delegate_scanner'), call('delegate_analysis'),
-                        call('submit_plan', decisions=orchestrator_decisions)], scanner_ok(), RankingAware())
+                        plan_call(orchestrator_decisions)], scanner_ok(), RankingAware())
         return UbuntuBackend(self.root / 'backend.sqlite3', session=session, ledger=self.ledger,
                              families={spec.action_id: spec}, model_client_factory=clients.__getitem__,
                              model_probe=lambda: True)

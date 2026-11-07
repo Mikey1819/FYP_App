@@ -23,7 +23,7 @@ class MaintenanceUiTests(FixUiTests):
     def test_page_prepares_approves_and_runs_maintenance(self):
         from streamlit.testing.v1 import AppTest
         from tests.integration.test_system_acceptance import existing_page
-        from tests.integration.test_ubuntu_agents import call, team, scanner_ok, RankingAware, Scripted
+        from tests.integration.test_ubuntu_agents import call, plan_call, team, scanner_ok, RankingAware, Scripted
         from tests.integration.test_ubuntu_live_path import open_gate, TARGET as LIVE
         from backends.ubuntu.actions import ActionSpec
         from backends.ubuntu.adapter import UbuntuBackend
@@ -39,7 +39,7 @@ class MaintenanceUiTests(FixUiTests):
 
         def backend_factory(session):
             fix = {'control_id': '1.5.1', 'decision': 'fix', 'action_id': spec.action_id, 'reason_code': 'high_risk'}
-            clients = team([call('delegate_scanner'), call('delegate_analysis'), call('submit_plan', decisions=[fix])],
+            clients = team([call('delegate_scanner'), call('delegate_analysis'), plan_call([fix])],
                            scanner_ok(), RankingAware())
             for client in clients.values():
                 if isinstance(client, Scripted):

@@ -409,6 +409,8 @@ class UbuntuBackend(BoundBackend):
     def start_round(self, connection_session_id, workflow_session_id, goal, mode, operation_id):
         """Read-only deterministic assessment: one helper invocation, validated and stored, at most once per operation."""
         binding = self.check(connection_session_id, workflow_session_id)
+        if goal:  # disabled by the administrator (2026-11-07) and due for removal
+            raise ValueError('Round goals are disabled for Ubuntu. No scan was run.')
         gate = assessment_gate()
         if gate:
             raise ValueError(gate[0] + ' No scan was run.')

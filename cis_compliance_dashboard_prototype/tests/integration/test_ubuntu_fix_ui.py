@@ -46,7 +46,7 @@ class FixUiTests(StoreFixture):
     def test_page_approves_then_confirms_and_executes_the_exact_set_once(self):
         from streamlit.testing.v1 import AppTest
         from tests.integration.test_system_acceptance import existing_page
-        from tests.integration.test_ubuntu_agents import call, team, scanner_ok, RankingAware, Scripted
+        from tests.integration.test_ubuntu_agents import call, plan_call, team, scanner_ok, RankingAware, Scripted
         from tests.integration.test_ubuntu_live_path import open_gate, TARGET as LIVE
         from backends.ubuntu.actions import ActionSpec
         from backends.ubuntu.adapter import UbuntuBackend
@@ -62,7 +62,7 @@ class FixUiTests(StoreFixture):
 
         def backend_factory(session):
             fix = {'control_id': '1.5.1', 'decision': 'fix', 'action_id': spec.action_id, 'reason_code': 'high_risk'}
-            clients = team([call('delegate_scanner'), call('delegate_analysis'), call('submit_plan', decisions=[fix])],
+            clients = team([call('delegate_scanner'), call('delegate_analysis'), plan_call([fix])],
                            scanner_ok(), RankingAware())
             for client in clients.values():
                 if isinstance(client, Scripted):
@@ -86,6 +86,7 @@ class FixUiTests(StoreFixture):
             app.selectbox(key='agentic_method').select('SSH')
             app.run()
             app.button(key='agentic_connect').click().run()
+            self.assertEqual([t for t in app.text_input if t.key == 'agentic_goal'], [])  # round goals are disabled
             app.button(key='agentic_run').click().run()
             self.assertFalse(list(app.error), [e.value for e in app.error])
             approve = [b for b in app.button if b.key and b.key.startswith('ubuntu_approve_')]

@@ -53,7 +53,7 @@ index 483e086..cb52529 100644
                             st.Page(agentic_page, title="Agentic hardening", icon=":material/security:",
                                     url_path="agentic"),
 diff --git a/cis_compliance_dashboard_prototype/hardening/agentic_view.py b/cis_compliance_dashboard_prototype/hardening/agentic_view.py
-index 502536e..7490ebb 100644
+index 502536e..1db3e6b 100644
 --- a/cis_compliance_dashboard_prototype/hardening/agentic_view.py
 +++ b/cis_compliance_dashboard_prototype/hardening/agentic_view.py
 @@ -17,6 +17,10 @@ from .remediation import RemediationStore
@@ -469,7 +469,7 @@ index 502536e..7490ebb 100644
      for title, agent_round in phases:
          traces = sorted(hardening.traces(agent_round['round_id']), key=lambda t: AGENT_ORDER.get(t['agent_role'], 9))
          if not traces:
-@@ -476,6 +747,28 @@ def render_agentic(database_path: Path):
+@@ -476,6 +747,27 @@ def render_agentic(database_path: Path):
          st.info('Connect to the VM to start an agentic round.')
          return
      try:
@@ -484,11 +484,10 @@ index 502536e..7490ebb 100644
 +                _ubuntu_acceptance(backend, connection)
 +                snapshot = backend.snapshot(connection, st.session_state.get(WORKFLOW_KEY))
 +                _show_progress(dict(zip(STEPS, snapshot.step_states)), None)
-+                goal = _goal_input()
-+                with st.container(horizontal=True):
++                with st.container(horizontal=True):  # round goals are disabled for Ubuntu (due for removal)
 +                    if st.button('Start agentic round', key='agentic_run', disabled=not capabilities.can_use_model):
-+                        # Bounded Ubuntu agents through the backend; no Ubuntu fix can be proposed yet.
-+                        _run_round(None, None, goal)
++                        # Bounded Ubuntu agents through the backend; the orchestrator plans, the administrator approves.
++                        _run_round(None, None, None)
 +                    if st.button('Assess without AI', key='agentic_assess_without_ai', disabled=not capabilities.can_assess):
 +                        # Read-only deterministic scan through the backend; the helper gate is checked again there.
 +                        _run_round(None, None, None, AssessmentMode.DETERMINISTIC)
@@ -498,7 +497,7 @@ index 502536e..7490ebb 100644
          runtime, store, hardening = _services(database_path, target)
          session_id = st.session_state.get(SESSION)
          rounds = store.rounds(session_id) if session_id else []
-@@ -512,7 +805,11 @@ def render_agentic(database_path: Path):
+@@ -512,7 +804,11 @@ def render_agentic(database_path: Path):
              _show_risk(analysis, viewing['round_id'], viewing.get('analysis_outcome'))
          with controls:
              if viewing['framework_run_id']:

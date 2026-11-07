@@ -301,52 +301,68 @@ class OrchestratorTools(_RoleTools):
         return {c: a for c, a in eligible.items() if c in self.rounds.failing()}
 
     def _schemas(self):
-        t, codes = self.target_id, sorted(c for c in DEFER_REASONS if c != 'outside_goal' or self.rounds.goal)
-        eligible = self._eligible()
-        fields = {'control_id': {'type': 'string', 'enum': self.rounds.failing()},
-                  'decision': {'type': 'string', 'enum': ['defer'] + (['fix'] if eligible else [])},
-                  'reason_code': {'type': 'string', 'enum': codes + (sorted(self._fix_codes()) if eligible else [])}}
-        if eligible:
-            fields['action_id'] = {'type': 'string', 'enum': sorted(set(eligible.values())),
-                                   'description': 'Only with decision "fix": the exact registered action for that control.'}
-        decisions = {'type': 'array', 'maxItems': 40, 'items': {'type': 'object', 'properties': fields,
-                                                                 'required': ['control_id', 'decision', 'reason_code']}}
+        t, eligible = self.target_id, self._eligible()
+        defer_codes = sorted(self._defer_codes())
+        defers = _items({'control_id': {'type': 'string', 'enum': self.rounds.failing()},
+                         'reason_code': {'type': 'string', 'enum': defer_codes}})
+        properties = {'defers': defers}
+        if eligible:  # fixes and defers are separate lists, so neither can borrow the other's reason codes
+            properties = {'fixes': _items({'control_id': {'type': 'string', 'enum': sorted(eligible)},
+                                           'action_id': {'type': 'string', 'enum': sorted(set(eligible.values()))},
+                                           'reason_code': {'type': 'string', 'enum': sorted(self._fix_codes())}}),
+                          **properties}
+        plan = _tool('submit_plan', 'Submit the plan once. fixes: confirmed failures to fix, each with its exact '
+                     'registered action from registered_actions and a fix reason. defers: failures not fixed now, each '
+                     'with a defer reason; no_registered_action only for failures missing from registered_actions. '
+                     'A failure left out of both is recorded as not decided.', t, **properties)
+        plan['function']['parameters']['required'] = ['target_id']
         return {'delegate_scanner': _tool('delegate_scanner', 'Run the Scanner Agent.', t),
                 'delegate_analysis': _tool('delegate_analysis', 'Run the Analysis Agent.', t),
-                'submit_plan': _tool('submit_plan', 'One decision per confirmed failure: fix only where a registered '
-                                     'action is offered, otherwise defer. no_registered_action is only for failures '
-                                     'missing from registered_actions.', t, decisions=decisions)}
+                'submit_plan': plan}
+
+    def _defer_codes(self):
+        return {c for c in DEFER_REASONS if c != 'outside_goal' or self.rounds.goal}
 
     def _fix_codes(self):
         return {c: v for c, v in FIX_REASONS.items() if c != 'serves_goal' or self.rounds.goal}
 
-    def _decisions(self, entries):
-        if type(entries) is not list or len(entries) > 40:
-            raise ValueError('decisions must be a list of at most 40 items')
+    @staticmethod
+    def _entries(value, label):
+        if type(value) is not list or len(value) > 40 or any(type(e) is not dict for e in value):
+            raise ValueError(label + ' must be a list of at most 40 objects')
+        return value
+
+    def _plan(self, arguments):
+        """Validated (defers, fixes) in the stored plan format; every reason must be true and of its own kind."""
         eligible, seen, defers, fixes = self._eligible(), set(), [], []
-        defer_codes = {c for c in DEFER_REASONS if c != 'outside_goal' or self.rounds.goal}
-        for entry in entries:
-            if type(entry) is not dict or entry.get('decision') not in (('defer', 'fix') if eligible else ('defer',)):
-                raise ValueError('Each decision must be "defer"' + (' or an offered "fix"' if eligible else ''))
-            fix = entry['decision'] == 'fix'
-            keys = {'control_id', 'decision', 'reason_code'} | ({'action_id'} if fix else set())
-            if set(entry) != keys:
-                raise ValueError(('fix' if fix else 'defer') + ' entries take exactly: ' + ', '.join(sorted(keys)))
+        fix_codes, defer_codes = self._fix_codes(), self._defer_codes()
+        for entry in self._entries(arguments.get('fixes', []), 'fixes'):
+            if set(entry) != {'control_id', 'action_id', 'reason_code'}:
+                raise ValueError('fixes entries take exactly: control_id, action_id, reason_code')
             if entry['control_id'] not in self.rounds.failing() or entry['control_id'] in seen:
-                raise ValueError('Unknown or duplicate control in decisions')
+                raise ValueError('Unknown or duplicate control in the plan')
+            if eligible.get(entry['control_id']) != entry['action_id']:
+                raise ValueError(str(entry['control_id'])[:20] + ' has no registered action ' + str(entry['action_id'])[:60]
+                                 + '; use the action listed in registered_actions')
+            if entry['reason_code'] not in fix_codes:
+                raise ValueError('A fix reason_code must be one of: ' + ', '.join(sorted(fix_codes))
+                                 + ' (defer reasons belong in defers)')
             seen.add(entry['control_id'])
-            if fix:
-                if eligible.get(entry['control_id']) != entry['action_id'] or entry['reason_code'] not in self._fix_codes():
-                    raise ValueError('A fix must use the registered action offered for that control and a fix reason code')
-                fixes.append(dict(entry))
-            else:
-                if entry['reason_code'] not in defer_codes:
-                    raise ValueError('Unknown defer reason code')
-                if entry['reason_code'] == 'no_registered_action' and entry['control_id'] in eligible:
-                    # A deferral reason must be true (live: qwen3:8b claimed this for 20 offered actions).
-                    raise ValueError(entry['control_id'] + ' has registered action ' + eligible[entry['control_id']]
-                                     + ': fix it, or defer with another reason code')
-                defers.append(dict(entry))
+            fixes.append({'control_id': entry['control_id'], 'decision': 'fix', 'action_id': entry['action_id'],
+                          'reason_code': entry['reason_code']})
+        for entry in self._entries(arguments.get('defers', []), 'defers'):
+            if set(entry) != {'control_id', 'reason_code'}:
+                raise ValueError('defers entries take exactly: control_id, reason_code')
+            if entry['control_id'] not in self.rounds.failing() or entry['control_id'] in seen:
+                raise ValueError('Unknown or duplicate control in the plan')
+            if entry['reason_code'] not in defer_codes:
+                raise ValueError('A defer reason_code must be one of: ' + ', '.join(sorted(defer_codes)))
+            if entry['reason_code'] == 'no_registered_action' and entry['control_id'] in eligible:
+                # A deferral reason must be true (live: qwen3:8b claimed this for 20 offered actions).
+                raise ValueError(entry['control_id'] + ' has registered action ' + eligible[entry['control_id']]
+                                 + ': fix it, or defer with another reason code')
+            seen.add(entry['control_id'])
+            defers.append({'control_id': entry['control_id'], 'decision': 'defer', 'reason_code': entry['reason_code']})
         return defers, fixes
 
     def call(self, name, arguments):
@@ -369,8 +385,13 @@ class OrchestratorTools(_RoleTools):
                 return {'status': 'analysed', **self.rounds.analysis, **registered}
             return {'status': 'analysis_incomplete', **registered}
         if name == 'submit_plan':
-            args = self._args(name, arguments, 'decisions')
-            decisions, fixes = self._decisions(args['decisions'])
+            if name not in self.available():
+                raise ValueError('Tool not available now: ' + name)
+            if type(arguments) is not dict or not {'target_id'} <= set(arguments) <= {'target_id', 'fixes', 'defers'}:
+                raise ValueError('submit_plan takes: target_id, and optionally fixes and defers')
+            if arguments['target_id'] != self.target_id:
+                raise ValueError('Calls must name the verified target')
+            decisions, fixes = self._plan(arguments)
             decided = {d['control_id'] for d in decisions + fixes}
             omitted = [{'control_id': c, 'reason_code': 'not_decided'} for c in self.rounds.failing() if c not in decided]
             outcome = 'fix_proposed' if fixes else 'no_fix_proposed'

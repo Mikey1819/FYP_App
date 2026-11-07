@@ -16,8 +16,8 @@ class PlanHonestyTests(unittest.TestCase):
     def round_with(self, *plans):
         from backends.ubuntu.agents import run_agentic_round
         from backends.ubuntu.adapter import _controls
-        from tests.integration.test_ubuntu_agents import call, team, scanner_ok, analysis_ok
-        script = [call('delegate_scanner'), call('delegate_analysis')] + [call('submit_plan', decisions=d) for d in plans]
+        from tests.integration.test_ubuntu_agents import call, plan_call, team, scanner_ok, analysis_ok
+        script = [call('delegate_scanner'), call('delegate_analysis')] + [plan_call(d) for d in plans]
         clients = team(script, scanner_ok(), analysis_ok())
         result = run_agentic_round(client_factory=clients.__getitem__, collect=self.case.collect_with(),
                                    log_store=self.case.log, target_id='ubuntu:fixture',
