@@ -338,14 +338,18 @@ class OrchestratorTools(_RoleTools):
 
     @staticmethod
     def _entries(value, label):
-        """The list the model meant, from the two unambiguous shapes qwen3:8b sends: one object for a one-item list
-        (offline trial, 10 of 10) and one object of equal-length parallel lists (live 07:11). Then validated as usual."""
+        """The list the model meant, from the unambiguous shapes qwen3:8b sends: one object for a one-item list
+        (offline trial, 10 of 10), one object of equal-length parallel lists (live 07:11), and parallel lists with
+        one shared scalar such as a single reason for several controls (evaluation 15:42-15:44, 8 of 9 failed
+        rounds). Then validated as usual."""
         if type(value) is dict:
             columns = list(value.values())
-            if columns and all(type(c) is list for c in columns):
-                if len({len(c) for c in columns}) != 1:
+            lists = [c for c in columns if type(c) is list]
+            if lists and all(type(c) is list or type(c) not in (dict,) for c in columns):
+                if len({len(c) for c in lists}) != 1:
                     raise ValueError(label + ': parallel lists of different lengths; send a list of objects')
-                value = [dict(zip(value, row)) for row in zip(*columns)]
+                size = len(lists[0])
+                value = [{k: (v[i] if type(v) is list else v) for k, v in value.items()} for i in range(size)]
             elif not any(type(c) in (list, dict) for c in columns):
                 value = [value]
         if type(value) is not list or len(value) > 40 or any(type(e) is not dict for e in value):
@@ -353,8 +357,9 @@ class OrchestratorTools(_RoleTools):
         return value
 
     def _plan(self, arguments):
-        """Validated (defers, fixes) in the stored plan format; every reason must be true and of its own kind."""
-        eligible, seen, defers, fixes = self._eligible(), set(), [], []
+        """Validated (defers, fixes, ignored) in the stored plan format; every reason must be true and of its own kind.
+        `ignored`: defers entries that cannot change the plan (a fix restated, or a control that is not failing)."""
+        eligible, seen, defers, fixes, ignored = self._eligible(), set(), [], [], []
         fix_codes, defer_codes = self._fix_codes(), self._defer_codes()
         for entry in self._entries(arguments.get('fixes', []), 'fixes'):
             if set(entry) != {'control_id', 'action_id', 'reason_code'}:
@@ -374,10 +379,16 @@ class OrchestratorTools(_RoleTools):
         for entry in self._entries(arguments.get('defers', []), 'defers'):
             if set(entry) != {'control_id', 'reason_code'}:
                 raise ValueError('defers entries take exactly: control_id, reason_code')
-            if entry['control_id'] in fixed:  # live 07:11: the fixes were repeated in defers with their fix reasons
+            restated = entry['control_id'] in fixed and entry['reason_code'] in fix_codes
+            if restated or (entry['control_id'] not in self.rounds.failing() and entry['control_id'] not in seen):
+                # Live 07:11 and evaluation 15:44: the fixes restated in defers with their own fix reasons, or a
+                # Compliant control deferred. Neither can change what is proposed; both are recorded, not stored.
+                ignored.append({'control_id': str(entry['control_id'])[:20], 'reason_code': str(entry['reason_code'])[:40]})
+                continue
+            if entry['control_id'] in fixed:  # a real conflict: fixed and deferred with a defer reason
                 raise ValueError(str(entry['control_id'])[:20] + ' is in fixes; defers is only for failures you do not '
                                  'fix, so leave it out of defers')
-            if entry['control_id'] not in self.rounds.failing() or entry['control_id'] in seen:
+            if entry['control_id'] in seen:
                 raise ValueError('Unknown or duplicate control in the plan')
             if entry['reason_code'] not in defer_codes:
                 raise ValueError('%s: %r is not a defer reason_code; use one of: %s'
@@ -392,7 +403,7 @@ class OrchestratorTools(_RoleTools):
         # reason says so (live: the model's first plan held only the two flagged fixes, and no retry recovered).
         fixes += [{'control_id': c, 'decision': 'fix', 'action_id': eligible[c], 'reason_code': 'not_deferred'}
                   for c in self.rounds.failing() if c not in seen and c in eligible]
-        return defers, fixes
+        return defers, fixes, ignored
 
     def call(self, name, arguments):
         if name == 'delegate_scanner':
@@ -422,7 +433,7 @@ class OrchestratorTools(_RoleTools):
                 raise ValueError('submit_plan takes: target_id, and optionally fixes and defers')
             if arguments['target_id'] != self.target_id:
                 raise ValueError('Calls must name the verified target')
-            decisions, fixes = self._plan(arguments)
+            decisions, fixes, ignored = self._plan(arguments)
             decided = {d['control_id'] for d in decisions + fixes}
             # Only failures without an applicable registered action can be left out (checked in _plan): that is a
             # fact the code records, not a judgement (live: 6.3.1.2 waits for auditd from 6.3.1.1).
@@ -430,6 +441,8 @@ class OrchestratorTools(_RoleTools):
                        for c in self.rounds.failing() if c not in decided]
             outcome = 'fix_proposed' if fixes else 'no_fix_proposed'
             self.rounds.plan = {'outcome': outcome, 'decisions': decisions, 'fixes': fixes, 'deferred_by_code': omitted}
+            if ignored:
+                self.rounds.plan['ignored'] = ignored
             self.terminal_outcome = {'outcome': outcome, 'reason': 'Plan submitted; every fix still needs administrator approval.'}
             return {'status': 'accepted', 'deferred_by_code': [d['control_id'] for d in omitted]}
         raise ValueError('Unknown tool: ' + str(name)[:80])
