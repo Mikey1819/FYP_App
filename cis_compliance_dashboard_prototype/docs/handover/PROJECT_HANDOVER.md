@@ -25,6 +25,11 @@ The detailed, dated record is `docs/INTEGRATION_PROGRESS.md`; this section summa
   - the 2.1.2 mask-and-retain branch (needs a site decision);
   - the remaining task 16 items (Ubuntu-specific details inside the existing tabs, full Windows regression evidence);
   - the task 17 evaluation, scenarios and final handover.
+- **Pending, set aside by the administrator on 2026-11-07** (details in `docs/INTEGRATION_PROGRESS.md`, "planned fixes the VM will not preview"):
+  - 1.2.2.1 and 2.1.2 are planned, but the VM refuses their read-only preview, so they have no fix plan. Diagnose them with the three read-only commands in that entry (`apt-get -s purge avahi-daemon`, `apt-get -s upgrade`, `dpkg --audit`).
+  - Make the runner report a refusal category instead of one generic refusal. This changes the VM helper, so it needs a reinstall and the administrator's approval.
+  - Apply 6.3.1.1 (install auditd) live; 6.3.1.2, 6.3.3.4, 6.3.3.6 and 6.3.3.8 become proposable after it.
+  - First live CIS fix recorded: 3.3.2, applied and verified Compliant (05:08–05:09 UTC), then restored by an approved restore, then fixed again later.
 
 ## 1. Executive summary and architecture overview
 

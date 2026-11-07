@@ -21,3 +21,14 @@ The original pre-change Python suite passed 178 tests. With the first two preser
 Original Streamlit tests exercise individual/bulk decisions, comments, confirmation, fallback, goals and resumption. Added tests cover the same existing connection form, both platform tabs, Windows/Ubuntu/Windows switching, workflow resume, cross-platform page isolation and stale form invalidation. The original Overview styling was observed in the browser. A later browser-control failure prevented completing the visual comparison; automated UI coverage does not close that visual gate.
 
 No integration milestone is declared complete. Review the current progress record for exact later regression counts and outstanding UI migration work.
+
+## Visual and fixture regression check, 7 November 2026 (task 16 gate)
+
+- **Protected files:** `python -B -m tools.baseline` reports `protected: []`, `missing: []`. The only changes are the five authorized UI files and `PROGRESS.md`.
+- **Original PowerShell fixture suites:** all four pass again (remediation runner, collector helpers, cross-check values, server access). Before running, each was inspected: every library is dot-sourced with `-FunctionsOnly` and returns before any action, and only parsing/planning helpers are called. The server-access window is built and disposed without being shown or used.
+- **Python suite:** 572 tests pass, including the original Windows tests.
+- **Side-by-side visual comparison:** the verified pre-change archive (SHA256 `b85cbd26…`, plus the theme supplement `afeb2f96…`) was extracted to a scratch folder, and the current committed tree was exported with `git archive HEAD`. Both ran with the same `.venv-integration` on empty, isolated stores, and the browser compared them (no live data or VM).
+  - **Overview** and **History and drift:** identical text, theme (cream background, yellow highlights, black sidebar), navigation, status badges and empty states.
+  - **Agentic hardening:** identical layout, styling, password notice, server-access helper, button and empty state. The connection form differs only as authorized by task 2 (one neutral form for both platforms): "VM machine UUID" → "VM machine identity", "WinRM host (…)" → "VM IP address / host", "Administrator account" → "Username", and an added "Advanced settings" (transport) expander.
+  - **Open observation for review:** the baseline pre-filled the Windows lab values (host `127.0.0.1`, port `55985`, account `Administrator`). The neutral form starts empty, so Windows users now type them. This was not changed; it awaits the administrator's choice.
+- **Not covered visually:** pages after a live Windows connection (no Windows VM in this check). Those states are covered by the original Streamlit AppTest decision, comment, confirmation, fallback, goal and resumption tests, which pass.
