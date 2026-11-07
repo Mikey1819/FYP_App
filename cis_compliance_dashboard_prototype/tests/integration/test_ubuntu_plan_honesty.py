@@ -97,10 +97,18 @@ class PlanTableTests(unittest.TestCase):
         row = next(r for r in snap.plan if r.control_id == '1.5.1')
         self.assertEqual((row.decision, row.reason), ('Deferred', 'Needs human review before any change'))
 
-    def test_a_round_without_a_valid_plan_still_lists_every_failure(self):
-        snap = self.snapshot([])  # an empty plan leaves the failure undecided, so it is refused: no plan
+    def test_an_empty_plan_proposes_every_registered_fix_it_did_not_defer(self):
+        snap = self.snapshot([])  # since 2026-11-07 06:57 the orchestrator decides by deferring
         row = next(r for r in snap.plan if r.control_id == '1.5.1')
-        self.assertEqual(row.decision, 'No plan')
+        self.assertEqual((row.decision, row.reason),
+                         ('Fix proposed', 'Confirmed CIS failure with a registered fix; the planner did not defer it'))
+
+    def test_a_round_without_a_valid_plan_still_lists_every_failure(self):
+        from backends.ubuntu.adapter import _plan_rows, _controls
+        from types import SimpleNamespace as N
+        from system.contracts import ComplianceStatus
+        evidence = N(assessments=[N(control_id='1.5.1', status=ComplianceStatus.NON_COMPLIANT)])
+        self.assertEqual(_plan_rows({'plan': None}, evidence, _controls())[0].decision, 'No plan')
 
     def test_rounds_stored_with_the_old_risk_reason_still_read_in_words(self):
         from backends.ubuntu.adapter import _plan_rows, _controls

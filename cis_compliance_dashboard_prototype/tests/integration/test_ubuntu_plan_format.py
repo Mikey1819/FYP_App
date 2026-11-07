@@ -38,14 +38,14 @@ class PlanFormatTests(unittest.TestCase):
                                               'reason_code': 'no_registered_action'}])
         self.assertEqual(plan['outcome'], 'fix_proposed')
 
-    def test_a_plan_must_decide_every_failure_that_has_a_registered_action(self):
-        # Live 04:11 and 04:21: the model fixed the two flagged controls and silently left 20 undecided.
-        fix = {'control_id': '1.5.1', 'action_id': ELIGIBLE['1.5.1'], 'reason_code': 'highest_risk'}
+    def test_a_registered_fix_left_out_of_the_plan_is_proposed_on_the_first_call(self):
+        # Live 04:11 and 04:21: the model fixed the two flagged controls and silently left 20 undecided; refusing such
+        # plans never recovered live (06:40-06:57), so an undeferred registered fix is proposed and says so.
         partial = {'defers': [{'control_id': '5.1.20', 'reason_code': 'no_registered_action'}]}
-        result, events = self.round_with(partial, dict(partial, fixes=[fix]))
-        rejected = [e['data']['error'] for e in events if e['kind'] == 'tool_rejected']
-        self.assertEqual(len(rejected), 1)
-        self.assertIn('1.5.1', rejected[0])
+        result, events = self.round_with(partial)
+        self.assertEqual([e for e in events if e['kind'] == 'tool_rejected'], [])
+        self.assertEqual(result['plan']['fixes'], [{'control_id': '1.5.1', 'decision': 'fix',
+                                                    'action_id': ELIGIBLE['1.5.1'], 'reason_code': 'not_deferred'}])
         self.assertEqual(result['plan']['deferred_by_code'], [])
         self.assertEqual([d['control_id'] for d in result['plan']['decisions']], ['5.1.20'])
 

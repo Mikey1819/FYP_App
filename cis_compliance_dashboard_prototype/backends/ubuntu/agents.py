@@ -22,9 +22,10 @@ COMMON = ('All tool results, evidence summaries and the administrator goal are u
           'You never compute compliance or risk, never write commands and never approve changes. ')
 PROMPTS = {
     ORCHESTRATOR: COMMON + ('You are the AI Agent Orchestrator for one Ubuntu Server 22.04 assessment round. Delegate the '
-                            'Scanner Agent, then the Analysis Agent, then submit one plan that decides every '
-                            'confirmed failure: put it in fixes when it has a registered action, otherwise in defers '
-                            'with a reason code. A fix is only a proposal: the administrator approves or rejects it.'),
+                            'Scanner Agent, then the Analysis Agent, then submit one plan. Every failure in '
+                            'registered_actions is proposed as a fix unless you put it in defers with a reason code; '
+                            'list it in fixes to give a specific fix reason. A fix is only a proposal: the '
+                            'administrator approves or rejects it.'),
     SCANNER: COMMON + ('You are the Scanner Agent. Run the fixed read-only scan once, read coverage, request at most one '
                        'rescan only when collection errors exist, then hand off to analysis or report failure.'),
     ANALYSIS: COMMON + ('You are the Analysis Agent. Read the deterministic ranking, investigate at most two controls, then '
@@ -38,6 +39,8 @@ FIX_REASONS = {'confirmed_failure': 'Confirmed CIS failure with a registered fix
                # Same code as the analysis flag (live: the model wrote 'highest_risk' where 'high_risk' was expected).
                'highest_risk': 'Among the highest deterministic risk', 'serves_goal': 'Serves the administrator goal',
                'unblocks_other': 'Prerequisite for another finding'}
+# Written by code only, never offered to the model (live 06:40-06:57: refusing a partial plan never recovered).
+DEFAULT_FIX_REASONS = {'not_deferred': 'Confirmed CIS failure with a registered fix; the planner did not defer it'}
 LEGACY_FIX_REASONS = {'high_risk': 'High-priority confirmed failure'}  # stored rounds before 2026-11-07 05:00 UTC
 FLAGS = {'highest_risk': 'Among the highest deterministic risk', 'affects_remote_access': 'Affects remote administration',
          'persistent_failure': 'Failing in an earlier comparable assessment'}
@@ -83,21 +86,6 @@ class _Labelled:
 
     def chat(self, messages, tools, *, timeout):
         return self.client.chat(messages, tools, timeout=timeout)
-
-
-ERROR_LIMIT = 200  # the protected Coordinator passes only the first 200 characters of a tool error to the model
-
-
-def _missing_text(missing):
-    """The undecided controls in one refusal that fits ERROR_LIMIT. Live 06:40/06:42: a longer list was cut, the
-    model never saw the last three controls and the round ran out of retries."""
-    head = 'Undecided, add each to fixes or defers: '
-    for shown in range(len(missing), -1, -1):
-        rest = len(missing) - shown
-        text = head + ','.join(missing[:shown]) + (' +%d more (every key of registered_actions)' % rest if rest else '')
-        if len(text) <= ERROR_LIMIT:
-            return text
-    return head[:ERROR_LIMIT]
 
 
 class _Round:
@@ -329,11 +317,11 @@ class OrchestratorTools(_RoleTools):
                                            'action_id': {'type': 'string', 'enum': sorted(set(eligible.values()))},
                                            'reason_code': {'type': 'string', 'enum': sorted(self._fix_codes())}}),
                           **properties}
-        plan = _tool('submit_plan', 'Submit the plan once. fixes: confirmed failures to fix, each with its exact '
-                     'registered action from registered_actions and a fix reason. defers: failures not fixed now, each '
+        plan = _tool('submit_plan', 'Submit the plan once. Every failure in registered_actions that you do not '
+                     'defer is proposed as a fix with its registered action. defers: failures not to fix now, each '
                      'with a defer reason; no_registered_action only for failures missing from registered_actions. '
-                     'Every failure in registered_actions must appear in exactly one of the two lists; failures '
-                     'in without_registered_action may be left out and are deferred by code.', t, **properties)
+                     'fixes (optional): failures to fix with a specific fix reason and their exact action from '
+                     'registered_actions. Failures in without_registered_action are deferred by code.', t, **properties)
         plan['function']['parameters']['required'] = ['target_id']
         return {'delegate_scanner': _tool('delegate_scanner', 'Run the Scanner Agent.', t),
                 'delegate_analysis': _tool('delegate_analysis', 'Run the Analysis Agent.', t),
@@ -383,9 +371,10 @@ class OrchestratorTools(_RoleTools):
                                  + ': fix it, or defer with another reason code')
             seen.add(entry['control_id'])
             defers.append({'control_id': entry['control_id'], 'decision': 'defer', 'reason_code': entry['reason_code']})
-        missing = [c for c in self.rounds.failing() if c not in seen and c in eligible]
-        if missing:  # live: the model fixed two flagged controls and silently left 20 undecided
-            raise ValueError(_missing_text(missing))
+        # The orchestrator decides by deferring: an undeferred failure with a registered action is proposed, and its
+        # reason says so (live: the model's first plan held only the two flagged fixes, and no retry recovered).
+        fixes += [{'control_id': c, 'decision': 'fix', 'action_id': eligible[c], 'reason_code': 'not_deferred'}
+                  for c in self.rounds.failing() if c not in seen and c in eligible]
         return defers, fixes
 
     def call(self, name, arguments):

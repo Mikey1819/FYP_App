@@ -646,3 +646,7 @@ First live CIS fix: 3.3.2 applied, and the automatic re-scan read Compliant. An 
 ## 7 November 2026 — Ubuntu plan refusals no longer cut off (integration)
 
 After 3.3.2 was fixed, two rounds stored no plan. The model's first plan was incomplete, and the refusal naming the missing controls was longer than the 200 characters the Coordinator passes back, so the model never saw the last three and ran out of retries. The refusal is now compact and always fits. Full suite: **557 passed**.
+
+## 7 November 2026 — Ubuntu orchestrator decides by deferring (integration)
+
+In five live rounds, the model's first plan held only the two flagged fixes, and every retry ended inside the protected Coordinator (an identical repeat, or three refusals) with no plan stored. Every registered fix the orchestrator does not defer is now proposed, with a reason that says so; the administrator still approves each one. All the live first attempts now replay as accepted (20 fixes). Full suite: **561 passed**.

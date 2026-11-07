@@ -990,3 +990,15 @@ The execution gate was a hard-coded "closed". It now opens only on evidence.
 - **Change (`backends/ubuntu/agents.py`):** the undecided-controls refusal is now compact (`Undecided, add each to fixes or defers: …`) and always fits 200 characters. When every name cannot fit, it says `+N more (every key of registered_actions)`. The live case now fits in 168 characters with all 18 controls.
 - **Tests:** 3 new tests (`test_ubuntu_plan_errors`), written first: the live partial plan, the worst case (all 30 controls) and every other plan refusal stay within the limit. The first two failed before the change (225 and 319 characters).
 - Full suite **557 tests, all passed**; baseline: no protected changes. Host only: collector digest unchanged (`b1b17b633dfd`).
+
+## 7 November 2026 — the orchestrator decides by deferring (live finding)
+- **Rounds at 06:52 and 06:57 UTC** (after the compact refusal) also stored no plan. The model got the complete undecided list, then resubmitted the **identical** two-fix plan, and the protected Coordinator ended the round ("Repeated call blocked").
+- **Pattern across 06:40–06:59 (5 rounds):** qwen3:8b's first `submit_plan` always held only the two analysis-flagged fixes (5.1.20, 4.1.4) and deferred 6.3.1.2. Every refusal-and-retry path ends inside the protected Coordinator: a cut-off error, a false `no_registered_action`, 3 invalid calls, or an identical repeat.
+- **Change (`backends/ubuntu/agents.py`):** every confirmed failure in `registered_actions` that the orchestrator does not defer is now proposed as a fix with its registered action. These fixes carry the code-only reason `not_deferred`, shown as "Confirmed CIS failure with a registered fix; the planner did not defer it".
+  - The model cannot use that code: it is not in the schema's enum, and the validator refuses it.
+  - Deferral stays the orchestrator's decision. A false `no_registered_action` for a control with a registered action is still refused.
+  - Every fix is still only a proposal that needs administrator approval (D4).
+  - The prompt and the `submit_plan` description now state this rule. The undecided-list refusal is gone.
+- **Replay:** every refused live first attempt from 06:39 to 06:59 is now accepted on the first call (20 fixes; 6.3.1.2 deferred).
+- **Tests:** 5 new tests (`test_ubuntu_plan_defaults`), written first; 3 failed before the change with the live refusal. Two tests that encoded the old refusal were rewritten (`plan_format`, `plan_honesty`), and the "No plan" row is still covered. The undecided-list tests were removed with that refusal; the guard that every remaining refusal fits 200 characters stays.
+- Full suite **561 tests, all passed**; baseline: no protected changes. Host only: collector digest unchanged (`b1b17b633dfd`).
