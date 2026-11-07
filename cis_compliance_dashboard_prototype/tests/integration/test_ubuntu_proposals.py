@@ -218,7 +218,7 @@ class BackendRemediationTests(StoreFixture):
         self.assertEqual((proposal.control_id, proposal.action_id, proposal.decision),
                          ('1.5.1', 'fixture.file_value.v1', None))
         self.assertEqual(proposal.eligible_commands, ('approve', 'reject'))
-        self.assertIn('current_length', proposal.exact_preview)
+        self.assertIn('Current length: 3', proposal.exact_preview)  # readable lines, not raw JSON
         self.assertEqual(self.writes(), [])
         workflow = handle.binding.workflow_session_id
         decision = backend.decide('c', workflow, proposal.reference, True, 'fixture-operator', 'Looks right', 'op-decide')

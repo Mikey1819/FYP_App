@@ -53,11 +53,24 @@ def render_controls(snapshot):
             'Observed': row.observed, 'Required': row.expected, 'Source': row.source} for row in snapshot.controls], hide_index=True)
 
 
+def plan_table(snapshot):
+    """The orchestrator's decision for every Non-Compliant control (empty where a backend reports no plan)."""
+    return [{'Control': r.control_id, 'Title': r.title, 'Planner decision': r.decision, 'Reason': r.reason,
+             'Analysis flag': r.flag or '—'} for r in getattr(snapshot, 'plan', ())]
+
+
 def render_snapshot_tabs(snapshot, *, tabs=None, fix_actions=None):
     """Common panels, also used while a verified backend requires setup. `fix_actions` renders the page's own
     decision/execution controls inside Fixes; the panels themselves never call a backend."""
     fixes, risk, controls, results, log = tabs or st.tabs(TABS)
     with fixes:
+        plan = plan_table(snapshot)
+        if plan:
+            proposed = sum(r['Planner decision'] == 'Fix proposed' for r in plan)
+            st.markdown('**AI plan for all %d Non-Compliant controls** · %d fix(es) proposed below. The AI Agent '
+                        'Orchestrator chooses what to propose; every proposal still needs your approval.'
+                        % (len(plan), proposed))
+            st.dataframe(plan, hide_index=True)
         if not snapshot.proposals:
             st.info('No fixes have been proposed for this round.')
         else:

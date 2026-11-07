@@ -31,7 +31,7 @@ PROMPTS = {
                         'submit flags (at most three confirmed failures) and one triage code for every unresolved control. '
                         'You cannot change any status or risk factor.'),
 }
-DEFER_REASONS = {'no_registered_action': 'No Ubuntu remediation family is implemented yet',
+DEFER_REASONS = {'no_registered_action': 'No registered fix exists for this control',
                  'outside_goal': 'Outside the administrator goal',
                  'needs_manual_review': 'Needs human review before any change'}
 FIX_REASONS = {'high_risk': 'High-priority confirmed failure', 'serves_goal': 'Serves the administrator goal',
@@ -314,7 +314,8 @@ class OrchestratorTools(_RoleTools):
         return {'delegate_scanner': _tool('delegate_scanner', 'Run the Scanner Agent.', t),
                 'delegate_analysis': _tool('delegate_analysis', 'Run the Analysis Agent.', t),
                 'submit_plan': _tool('submit_plan', 'One decision per confirmed failure: fix only where a registered '
-                                     'action is offered, otherwise defer.', t, decisions=decisions)}
+                                     'action is offered, otherwise defer. no_registered_action is only for failures '
+                                     'missing from registered_actions.', t, decisions=decisions)}
 
     def _fix_codes(self):
         return {c: v for c, v in FIX_REASONS.items() if c != 'serves_goal' or self.rounds.goal}
@@ -341,6 +342,10 @@ class OrchestratorTools(_RoleTools):
             else:
                 if entry['reason_code'] not in defer_codes:
                     raise ValueError('Unknown defer reason code')
+                if entry['reason_code'] == 'no_registered_action' and entry['control_id'] in eligible:
+                    # A deferral reason must be true (live: qwen3:8b claimed this for 20 offered actions).
+                    raise ValueError(entry['control_id'] + ' has registered action ' + eligible[entry['control_id']]
+                                     + ': fix it, or defer with another reason code')
                 defers.append(dict(entry))
         return defers, fixes
 
@@ -357,10 +362,12 @@ class OrchestratorTools(_RoleTools):
             self._args(name, arguments)
             outcome = self._child(ANALYSIS, AnalysisTools(self.rounds)).get('outcome')
             self.analysed = True  # Advisory: an incomplete analysis is recorded, the plan can still be submitted.
+            # The plan step's facts in plain form: which confirmed failures have a registered action.
+            registered = {'registered_actions': dict(sorted(self._eligible().items()))}
             if outcome and outcome.get('outcome') == 'analysed':
                 self.rounds.analysis = {k: outcome[k] for k in ('flags', 'triage')}
-                return {'status': 'analysed', **self.rounds.analysis}
-            return {'status': 'analysis_incomplete'}
+                return {'status': 'analysed', **self.rounds.analysis, **registered}
+            return {'status': 'analysis_incomplete', **registered}
         if name == 'submit_plan':
             args = self._args(name, arguments, 'decisions')
             decisions, fixes = self._decisions(args['decisions'])

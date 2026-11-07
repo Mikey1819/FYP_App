@@ -17,6 +17,8 @@ Hot reload is deliberately off (`.streamlit/config.toml`). Restart the app after
 1. **Connect:** enter the VM hostname, machine ID, address and user, then the password. The password is kept in memory only. The SSH host fingerprint is checked before login.
 2. **Assess:** **Assess without AI** runs a read-only, deterministic scan. **Start agentic round** also lets the bounded agents rank findings and propose fixes. Fixes are proposed only in agentic rounds, and only for confirmed Non-Compliant controls.
 3. **Decide:** in **Fixes**, name the operator, then approve or reject each proposal. The approval screen shows the exact change, its impact and how to recover.
+   - The **AI plan** table at the top of Fixes lists every Non-Compliant control with the orchestrator's decision (fix proposed, deferred, not decided), its reason and any analysis flag. The **Agent log** tab shows every agent step.
+   - The orchestrator chooses what to propose (project decision D4). To steer it, use **Goal for this round**, for example "Propose fixes for the sysctl controls 3.3.1, 3.3.2 and 3.3.8 only"; controls outside the goal are deferred as `outside_goal`.
 4. **Execute:** tick the confirmation, then **Execute approved fixes**. Each approved change runs at most once.
    - Supervised jobs (packages, GRUB, patches) appear above the tabs with **Check status**.
    - **SSH and UFW changes:** when the panel says "waiting for confirmation", **disconnect, reconnect, then press Confirm change** within 10 minutes. Without that, the VM restores the change by itself.

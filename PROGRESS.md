@@ -610,3 +610,11 @@ Added the two maintenance operations from the plan, each approved and run once t
 ## 7 November 2026 — handover status and operations guide (integration)
 
 Updated `docs/handover/PROJECT_HANDOVER.md` with a dated status section and corrected milestone table (all 30 families implemented and fixture-tested, none live-validated). Added `docs/OPERATIONS.md`: launch, everyday use, helper/runner updates, maintenance, recovery options and troubleshooting. Documentation only.
+
+## 7 November 2026 — live agentic round fixes (integration)
+
+Two problems found in live agentic rounds, fixed on the host side (no reinstall needed):
+- The Ubuntu agents' 384-token output limit cut off the orchestrator's plan, so no fixes were proposed. Each role now has its own budget.
+- The orchestrator then deferred 20 fixable controls as "no registered action". That reason is now refused when a fix exists, and the orchestrator is told which failures have registered actions.
+
+The Fixes tab now shows an AI plan table covering every Non-Compliant control, and proposal previews are readable. Full suite: **532 passed**. Next: a new agentic round, then the first live fix (3.3.2) after a snapshot.

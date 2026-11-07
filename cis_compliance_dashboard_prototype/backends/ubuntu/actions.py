@@ -1,6 +1,6 @@
 """Host-side registered Ubuntu action families and deterministic action plans.
 
-`FAMILIES` is empty: no Ubuntu remediation family is implemented yet (tasks 11-15). Reserved catalogue
+`FAMILIES` holds the registered fix for each of the 30 controls plus the auxiliary operations. Reserved catalogue
 action IDs are not implementations. Parameters come from deterministic planners, never from a model.
 """
 from dataclasses import dataclass, field

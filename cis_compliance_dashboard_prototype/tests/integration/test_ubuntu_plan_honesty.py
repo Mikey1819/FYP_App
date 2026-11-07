@@ -1,0 +1,113 @@
+"""Live 2026-11-07: qwen3:8b deferred 20 controls as "no_registered_action" although every one had a registered,
+offered action, and the plan was accepted. A deferral reason must be true, and the orchestrator is told which
+failures have actions. Proposal previews are shown as readable lines. Scripted models; no VM is contacted."""
+import unittest
+
+ELIGIBLE = {'1.5.1': 'fixture.file_value.v1'}
+
+
+class PlanHonestyTests(unittest.TestCase):
+    def setUp(self):
+        from tests.integration.test_ubuntu_agents import AgentRoundTests
+        self.case = AgentRoundTests('test_complete_round_delegates_in_order_and_defers_every_finding')
+        self.case.setUp()
+        self.addCleanup(self.case.doCleanups)
+
+    def round_with(self, *plans):
+        from backends.ubuntu.agents import run_agentic_round
+        from backends.ubuntu.adapter import _controls
+        from tests.integration.test_ubuntu_agents import call, team, scanner_ok, analysis_ok
+        script = [call('delegate_scanner'), call('delegate_analysis')] + [call('submit_plan', decisions=d) for d in plans]
+        clients = team(script, scanner_ok(), analysis_ok())
+        result = run_agentic_round(client_factory=clients.__getitem__, collect=self.case.collect_with(),
+                                   log_store=self.case.log, target_id='ubuntu:fixture',
+                                   titles={c: x.title for c, x in _controls().items()},
+                                   rank=lambda r, e: None, eligible=ELIGIBLE)
+        return result, self.case.events(result['orchestrator_run_id'])
+
+    def test_no_registered_action_is_refused_for_a_control_that_has_one(self):
+        false = [{'control_id': '1.5.1', 'decision': 'defer', 'reason_code': 'no_registered_action'}]
+        manual = [{'control_id': '1.5.1', 'decision': 'defer', 'reason_code': 'needs_manual_review'}]
+        result, events = self.round_with(false, manual)
+        rejected = [e['data'] for e in events if e['kind'] == 'tool_rejected']
+        self.assertEqual(len(rejected), 1)
+        self.assertIn('1.5.1', rejected[0]['error'])
+        self.assertEqual(result['plan']['decisions'], manual)
+
+    def test_no_registered_action_stays_valid_for_a_control_without_one(self):
+        true = [{'control_id': '5.1.20', 'decision': 'defer', 'reason_code': 'no_registered_action'}]
+        result, _ = self.round_with(true)
+        self.assertEqual(result['plan']['decisions'], true)
+
+    def test_the_orchestrator_is_told_which_failures_have_a_registered_action(self):
+        _, events = self.round_with([])
+        analysis = [e['data'] for e in events if e['kind'] == 'tool' and e['data']['name'] == 'delegate_analysis'][0]
+        self.assertEqual(analysis['result']['registered_actions'], ELIGIBLE)
+
+
+class PreviewTextTests(unittest.TestCase):
+    def test_preview_is_readable_lines_with_every_value(self):
+        from backends.ubuntu.adapter import preview_text
+        text = preview_text({'commands': ['ufw allow in on lo', 'ufw deny in from ::1'], 'confirm_window_seconds': 600,
+                             'current_effective': {'permitrootlogin': 'without-password'}, 'order': 'appended'})
+        self.assertNotIn('{"', text)
+        self.assertEqual(text.splitlines(), [
+            'Commands:', '  - ufw allow in on lo', '  - ufw deny in from ::1',
+            'Confirm window seconds: 600',
+            'Current effective:', '  - permitrootlogin = without-password',
+            'Order: appended'])
+
+    def test_proposal_rows_use_the_readable_preview(self):
+        from tests.integration.test_ubuntu_proposals import BackendRemediationTests
+        from backends.ubuntu.adapter import preview_text
+        case = BackendRemediationTests('setUp'); case.setUp()
+        try:
+            backend = case.backend(case.FIX)
+            handle, snap = case.round(backend)
+            row = snap.proposals[0]
+            stored = backend._store().proposals(handle.binding, snap.current_round_reference.record_id)[0]
+            self.assertEqual(row.exact_preview, preview_text(stored.payload['preview']))
+            self.assertNotIn('{"', row.exact_preview)
+        finally:
+            case.doCleanups()
+
+
+class PlanTableTests(unittest.TestCase):
+    """The Fixes tab accounts for every Non-Compliant control: the planner's decision, its reason and any flag."""
+
+    def snapshot(self, decisions):
+        from tests.integration.test_ubuntu_proposals import BackendRemediationTests
+        case = BackendRemediationTests('setUp'); case.setUp()
+        self.addCleanup(case.doCleanups)
+        return case.round(case.backend(decisions))[1]
+
+    def test_every_non_compliant_control_has_a_plan_row(self):
+        from tests.integration.test_ubuntu_proposals import BackendRemediationTests
+        snap = self.snapshot(BackendRemediationTests.FIX)
+        failing = sorted(c.control_id for c in snap.controls if c.status.value == 'Non-Compliant')
+        self.assertEqual(sorted(r.control_id for r in snap.plan), failing)
+        row = next(r for r in snap.plan if r.control_id == '1.5.1')
+        self.assertEqual((row.decision, row.reason), ('Fix proposed', 'High-priority confirmed failure'))
+        self.assertTrue(row.title)
+
+    def test_a_deferral_shows_its_reason_in_words(self):
+        snap = self.snapshot([{'control_id': '1.5.1', 'decision': 'defer', 'reason_code': 'needs_manual_review'}])
+        row = next(r for r in snap.plan if r.control_id == '1.5.1')
+        self.assertEqual((row.decision, row.reason), ('Deferred', 'Needs human review before any change'))
+
+    def test_a_control_the_planner_left_out_still_has_a_row(self):
+        snap = self.snapshot([])
+        row = next(r for r in snap.plan if r.control_id == '1.5.1')
+        self.assertEqual(row.decision, 'Not decided')
+
+    def test_the_fixes_tab_table_lists_the_plan(self):
+        from tests.integration.test_ubuntu_proposals import BackendRemediationTests
+        from system.ui.components import plan_table
+        snap = self.snapshot(BackendRemediationTests.FIX)
+        rows = plan_table(snap)
+        self.assertEqual(len(rows), len(snap.plan))
+        self.assertEqual(set(rows[0]), {'Control', 'Title', 'Planner decision', 'Reason', 'Analysis flag'})
+
+
+if __name__ == '__main__':
+    unittest.main()

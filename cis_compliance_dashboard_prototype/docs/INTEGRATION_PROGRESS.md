@@ -895,3 +895,15 @@ The execution gate was a hard-coded "closed". It now opens only on evidence.
 - **Fix (host only):** per-role clients, with orchestrator 2048, analysis 768 and scanner 512 tokens; the Windows engine uses 1024/768/512. 2048 output plus a prompt of about 1,600 tokens fits the client's fixed 4,096-token context. The protected `ollama_client.py` is unchanged.
 - **Tests:** 2 new tests, written first: the orchestrator budget covers a plan fixing all 30 controls, and role budgets match or exceed the Windows engine. Mutations caught: orchestrator 1024, and one shared client.
 - Full suite **523 tests, all passed**; baseline: no protected changes. The collector digest is unchanged (`3df47649b229`): no reinstall, and the acceptance results still apply.
+
+## 7 November 2026 — honest plan reasons, AI plan table and readable previews (live finding)
+- **Live symptom (round 03:28 UTC):** with the output budget fixed, the plan arrived and proposed 4.1.4 and 5.1.20 (both flagged highest risk). The other 20 Non-Compliant controls were deferred as `no_registered_action`, although each had a registered, offered action. The Fixes tab showed only the two proposals, as raw JSON.
+- **Changes:**
+  - `submit_plan` now refuses `no_registered_action` for a control that has a registered action. The refusal names the action, so the model can correct its plan within the invalid-call limit.
+  - The `delegate_analysis` result gives the orchestrator `registered_actions` (failing control → action ID) in plain form, and the tool description says when that reason applies.
+  - New `PlanRow` contract field (default empty, so Windows is unaffected). The Fixes tab shows an **AI plan** table for every Non-Compliant control: decision, reason in words, analysis flag.
+  - Proposal previews are readable lines with every key and value kept (`preview_text`), not raw JSON.
+  - Stale wording ("no Ubuntu remediation family is implemented yet") updated.
+- Operator-created fixes were deliberately not added: project decision D4 has the orchestrator choose proposals. The round goal steers it.
+- **Tests:** 9 new tests, written first. One old assertion now expects readable preview text. Mutations caught: removing the honesty check, hiding `registered_actions`, listing only decided controls, and raw JSON previews.
+- Full suite **532 tests, all passed**; baseline: no protected changes. Host only: collector digest unchanged (`3df47649b229`).

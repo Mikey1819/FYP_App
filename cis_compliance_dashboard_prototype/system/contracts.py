@@ -242,6 +242,16 @@ class AgentEvent:
 
 
 @dataclass(frozen=True)
+class PlanRow:
+    """The orchestrator's decision for one Non-Compliant control, in words (reason codes are fixed vocabularies)."""
+    control_id: str
+    title: str
+    decision: str
+    reason: str
+    flag: str
+
+
+@dataclass(frozen=True)
 class WorkspaceSnapshot:
     target: TargetSummary
     workflow_binding: WorkflowBinding | None = None
@@ -257,6 +267,7 @@ class WorkspaceSnapshot:
     goal_read_as: str | None = None
     available_commands: tuple[str, ...] = ()
     revision: str = ''
+    plan: tuple[PlanRow, ...] = ()
 
 
 @dataclass(frozen=True)

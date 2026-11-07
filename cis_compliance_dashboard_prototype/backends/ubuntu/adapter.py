@@ -12,7 +12,7 @@ from pathlib import Path
 from uuid import uuid4
 from backends.base import BoundBackend
 from system.contracts import (AgentEvent, AssessmentMode, AssessmentSummary, Capabilities, ComparisonResult, ComplianceStatus,
-                              ControlRow, DecisionResult, HistoryRow, ProposalRow, RecordRef, ResultRow, RoundHandle,
+                              ControlRow, DecisionResult, HistoryRow, PlanRow, ProposalRow, RecordRef, ResultRow, RoundHandle,
                               Subcheck, TargetSummary, WorkspaceSnapshot)
 
 APP = Path(__file__).resolve().parents[2]
@@ -115,6 +115,42 @@ def _risk_policy():
     return load_policy()
 
 
+def _plan_rows(details, evidence, catalogue):
+    """One row per Non-Compliant control: what the orchestrator decided and why, from its fixed reason codes."""
+    from .agents import DEFER_REASONS, FIX_REASONS, FLAGS
+    plan = details.get('plan') or {}
+    decided = {e['control_id']: ('Fix proposed', FIX_REASONS.get(e['reason_code'], e['reason_code']))
+               for e in plan.get('fixes', ())}
+    decided.update({e['control_id']: ('Deferred', DEFER_REASONS.get(e['reason_code'], e['reason_code']))
+                    for e in plan.get('decisions', ())})
+    missing = ('Not decided', 'The planner left it out of its plan') if plan else (
+        'No plan', 'The round stopped before the planner submitted a plan')
+    flags = {}
+    for f in (details.get('analysis') or {}).get('flags', ()):
+        flags.setdefault(f['control_id'], []).append(FLAGS.get(f['flag_code'], f['flag_code']))
+    return tuple(PlanRow(a.control_id, catalogue[a.control_id].title, *decided.get(a.control_id, missing),
+                         '; '.join(flags.get(a.control_id, ())))
+                 for a in evidence.assessments if a.status is ComplianceStatus.NON_COMPLIANT)
+
+
+def preview_text(preview):
+    """The stored target preview as readable lines for the Fixes tab; every key and value is kept."""
+    lines = []
+    for key in sorted(preview):
+        label, value = key.replace('_', ' ').capitalize(), preview[key]
+        if isinstance(value, dict):
+            lines += [label + ':'] + ['  - %s = %s' % (k, _plain(v)) for k, v in sorted(value.items())]
+        elif isinstance(value, (list, tuple)):
+            lines += [label + ':'] + ['  - ' + _plain(v) for v in value]
+        else:
+            lines.append(label + ': ' + _plain(value))
+    return chr(10).join(lines)
+
+
+def _plain(value):
+    return value if isinstance(value, str) else json.dumps(value, sort_keys=True)
+
+
 class UbuntuBackend(BoundBackend):
     def __init__(self, database_path, *, session, ledger, registered_firewall_manager=None,
                  model_client_factory=None, model_probe=None, families=None):
@@ -146,7 +182,7 @@ class UbuntuBackend(BoundBackend):
         reasons = gate + (() if model or gate else
                           ('The local model (qwen3:8b) is unavailable; Assess without AI remains usable.',))
         if not self.families:
-            reasons += ('No Ubuntu remediation family is implemented yet: rounds defer every finding and propose no fix.',)
+            reasons += ('No Ubuntu fix is registered: rounds defer every finding and propose no fix.',)
         reasons += execution_gate(self)
         if not _risk_policy().activated:
             reasons += ('Ubuntu risk ranking is withheld: the risk-attribute manifest is pending human review.',)
@@ -273,14 +309,17 @@ class UbuntuBackend(BoundBackend):
                      ('done' if all(r.verification_status is not None for r in executed) else 'pending')
                      if executed else 'skipped')  # verification is a fresh scan
             events = self._agent_events(store, details)
+            plan = _plan_rows(details, evidence, catalogue)
         else:
+            plan = ()
             steps = ('done', 'done' if _risk_policy().activated else 'pending', 'skipped', 'skipped', 'skipped', 'skipped')
             events = (AgentEvent(row.round_id, 'system', 'deterministic_assessment', '', '',
                                  'Read-only scan and deterministic predicates; no model was called and no proposal was created.',
                                  'no_ai', row.created_at, 'Deterministic (no AI)'),)
         return WorkspaceSnapshot(self._target(evidence.expected.evidence_mode), binding, self._ref(row.round_id),
                                  self._summary(row.framework_run_id, evidence), tuple(controls), findings,
-                                 proposals, results, events=events, step_states=steps, goal=details.get('goal'))
+                                 proposals, results, events=events, step_states=steps, goal=details.get('goal'),
+                                 plan=plan)
 
     def _proposal_rows(self, store, binding, row, latest, all_rounds=()):
         proposals, results = [], []
@@ -295,7 +334,7 @@ class UbuntuBackend(BoundBackend):
                     'maintenance.reboot.v1': 'reboot'}.get(action_id, 'control_remediation')
             proposals.append(ProposalRow(self._ref(p.proposal_id), kind, p.payload['fields']['control_id'],
                 p.payload['action']['action_id'], p.payload['title'], 'v%d' % p.payload['action']['version'],
-                json.dumps(p.payload['preview'], sort_keys=True), (), recovery['kind'] + ': ' + ', '.join(recovery['scope']),
+                preview_text(p.payload['preview']), (), recovery['kind'] + ': ' + ', '.join(recovery['scope']),
                 (), p.decision, approved['expires_at'] if approved else None,
                 'Deterministic plan from the registered family; the target preview supplied the before/after digests.',
                 ('approve', 'reject') if latest and p.decision is None else (),
