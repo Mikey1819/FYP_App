@@ -944,3 +944,14 @@ The execution gate was a hard-coded "closed". It now opens only on evidence.
   - Mutations caught: the collision reintroduced, and a misspelled system call.
 - Full suite **542 tests, all passed**; baseline: no protected changes; source check passes; bundle rebuilt.
 - **Helper changed (collector digest `b1b17b633dfd`):** reinstall, rerun `install-runner.sh` and repeat both acceptance scenarios before any live fix.
+
+## 7 November 2026 — acceptance passed on runner b1b17b633dfd; failures without an action deferred by code
+- **Acceptance (live, after the reinstall):** confirm → `confirmed` (04:49:02 UTC); rollback → `rolled_back` (04:49:21 UTC). The execution gate is open for collector digest `b1b17b633dfd`.
+- **Live rounds 04:43 and 04:52 UTC:** the orchestrator proposed **21 correct fixes**, all with `confirmed_failure`. It left out 6.3.1.2, which has no applicable action until auditd is installed by 6.3.1.1. The completeness rule refused the plan, the identical retry was blocked, and no plan was stored.
+- **Changes:**
+  - The completeness rule now covers only failures that have a registered action. A failure without one that the model leaves out is recorded by code in `deferred_by_code` as `no_registered_action`: a fact, not a judgement.
+  - `delegate_analysis` also returns `without_registered_action`.
+  - The reason text is now "No registered fix applies in the current state", and the AI plan table shows "Deferred (by the app)".
+- **Replay:** the exact rejected 04:52 arguments are accepted under the new rule (21 fixes, 6.3.1.2 deferred by code).
+- **Tests:** 4 new tests plus 1 rewritten, written first. Mutations caught: requiring eligible-less failures again, and dropping the eligible check.
+- Full suite **546 tests, all passed**; baseline: no protected changes. Host only: collector digest unchanged (`b1b17b633dfd`).

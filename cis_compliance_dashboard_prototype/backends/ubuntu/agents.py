@@ -31,7 +31,7 @@ PROMPTS = {
                         'submit flags (at most three confirmed failures) and one triage code for every unresolved control. '
                         'You cannot change any status or risk factor.'),
 }
-DEFER_REASONS = {'no_registered_action': 'No registered fix exists for this control',
+DEFER_REASONS = {'no_registered_action': 'No registered fix applies in the current state',
                  'outside_goal': 'Outside the administrator goal',
                  'needs_manual_review': 'Needs human review before any change'}
 FIX_REASONS = {'confirmed_failure': 'Confirmed CIS failure with a registered fix',
@@ -315,7 +315,8 @@ class OrchestratorTools(_RoleTools):
         plan = _tool('submit_plan', 'Submit the plan once. fixes: confirmed failures to fix, each with its exact '
                      'registered action from registered_actions and a fix reason. defers: failures not fixed now, each '
                      'with a defer reason; no_registered_action only for failures missing from registered_actions. '
-                     'Every confirmed failure must appear in exactly one of the two lists.', t, **properties)
+                     'Every failure in registered_actions must appear in exactly one of the two lists; failures '
+                     'in without_registered_action may be left out and are deferred by code.', t, **properties)
         plan['function']['parameters']['required'] = ['target_id']
         return {'delegate_scanner': _tool('delegate_scanner', 'Run the Scanner Agent.', t),
                 'delegate_analysis': _tool('delegate_analysis', 'Run the Analysis Agent.', t),
@@ -364,9 +365,10 @@ class OrchestratorTools(_RoleTools):
                                  + ': fix it, or defer with another reason code')
             seen.add(entry['control_id'])
             defers.append({'control_id': entry['control_id'], 'decision': 'defer', 'reason_code': entry['reason_code']})
-        missing = [c for c in self.rounds.failing() if c not in seen]
+        missing = [c for c in self.rounds.failing() if c not in seen and c in eligible]
         if missing:  # live: the model fixed two flagged controls and silently left 20 undecided
-            raise ValueError('Decide every confirmed failure in fixes or defers; missing: ' + ', '.join(missing))
+            raise ValueError('Decide every failure that has a registered action, in fixes or defers; missing: '
+                             + ', '.join(missing))
         return defers, fixes
 
     def call(self, name, arguments):
@@ -383,7 +385,9 @@ class OrchestratorTools(_RoleTools):
             outcome = self._child(ANALYSIS, AnalysisTools(self.rounds)).get('outcome')
             self.analysed = True  # Advisory: an incomplete analysis is recorded, the plan can still be submitted.
             # The plan step's facts in plain form: which confirmed failures have a registered action.
-            registered = {'registered_actions': dict(sorted(self._eligible().items()))}
+            eligible = self._eligible()
+            registered = {'registered_actions': dict(sorted(eligible.items())),
+                          'without_registered_action': [c for c in self.rounds.failing() if c not in eligible]}
             if outcome and outcome.get('outcome') == 'analysed':
                 self.rounds.analysis = {k: outcome[k] for k in ('flags', 'triage')}
                 return {'status': 'analysed', **self.rounds.analysis, **registered}
@@ -397,7 +401,10 @@ class OrchestratorTools(_RoleTools):
                 raise ValueError('Calls must name the verified target')
             decisions, fixes = self._plan(arguments)
             decided = {d['control_id'] for d in decisions + fixes}
-            omitted = [{'control_id': c, 'reason_code': 'not_decided'} for c in self.rounds.failing() if c not in decided]
+            # Only failures without an applicable registered action can be left out (checked in _plan): that is a
+            # fact the code records, not a judgement (live: 6.3.1.2 waits for auditd from 6.3.1.1).
+            omitted = [{'control_id': c, 'reason_code': 'no_registered_action'}
+                       for c in self.rounds.failing() if c not in decided]
             outcome = 'fix_proposed' if fixes else 'no_fix_proposed'
             self.rounds.plan = {'outcome': outcome, 'decisions': decisions, 'fixes': fixes, 'deferred_by_code': omitted}
             self.terminal_outcome = {'outcome': outcome, 'reason': 'Plan submitted; every fix still needs administrator approval.'}

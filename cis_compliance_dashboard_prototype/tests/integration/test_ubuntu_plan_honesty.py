@@ -102,6 +102,17 @@ class PlanTableTests(unittest.TestCase):
         row = next(r for r in snap.plan if r.control_id == '1.5.1')
         self.assertEqual(row.decision, 'No plan')
 
+    def test_a_deferral_recorded_by_code_says_so(self):
+        from backends.ubuntu.adapter import _plan_rows, _controls
+        from types import SimpleNamespace as N
+        from system.contracts import ComplianceStatus
+        evidence = N(assessments=[N(control_id='6.3.1.2', status=ComplianceStatus.NON_COMPLIANT)])
+        details = {'plan': {'fixes': [], 'decisions': [],
+                            'deferred_by_code': [{'control_id': '6.3.1.2', 'reason_code': 'no_registered_action'}]}}
+        row = _plan_rows(details, evidence, _controls())[0]
+        self.assertEqual(row.decision, 'Deferred (by the app)')
+        self.assertEqual(row.reason, 'No registered fix applies in the current state')
+
     def test_the_fixes_tab_table_lists_the_plan(self):
         from tests.integration.test_ubuntu_proposals import BackendRemediationTests
         from system.ui.components import plan_table

@@ -38,16 +38,34 @@ class PlanFormatTests(unittest.TestCase):
                                               'reason_code': 'no_registered_action'}])
         self.assertEqual(plan['outcome'], 'fix_proposed')
 
-    def test_a_plan_must_decide_every_confirmed_failure(self):
+    def test_a_plan_must_decide_every_failure_that_has_a_registered_action(self):
         # Live 04:11 and 04:21: the model fixed the two flagged controls and silently left 20 undecided.
         fix = {'control_id': '1.5.1', 'action_id': ELIGIBLE['1.5.1'], 'reason_code': 'high_risk'}
-        complete = {'fixes': [fix], 'defers': [{'control_id': '5.1.20', 'reason_code': 'no_registered_action'}]}
-        result, events = self.round_with({'fixes': [fix]}, complete)
+        partial = {'defers': [{'control_id': '5.1.20', 'reason_code': 'no_registered_action'}]}
+        result, events = self.round_with(partial, dict(partial, fixes=[fix]))
         rejected = [e['data']['error'] for e in events if e['kind'] == 'tool_rejected']
         self.assertEqual(len(rejected), 1)
-        self.assertIn('5.1.20', rejected[0])
+        self.assertIn('1.5.1', rejected[0])
         self.assertEqual(result['plan']['deferred_by_code'], [])
         self.assertEqual([d['control_id'] for d in result['plan']['decisions']], ['5.1.20'])
+
+    def test_a_failure_without_a_registered_action_left_out_is_deferred_by_code(self):
+        # Live 04:43 and 04:52: 21 correct fixes; 6.3.1.2 (auditd not installed yet) was left out, the plan was
+        # refused, and the identical retry was blocked.
+        fix = {'control_id': '1.5.1', 'action_id': ELIGIBLE['1.5.1'], 'reason_code': 'confirmed_failure'}
+        result, events = self.round_with({'fixes': [fix]})
+        self.assertEqual([e for e in events if e['kind'] == 'tool_rejected'], [])
+        self.assertEqual(result['plan']['deferred_by_code'], [{'control_id': '5.1.20', 'reason_code': 'no_registered_action'}])
+        self.assertEqual(result['plan']['decisions'], [])
+
+    def test_the_orchestrator_is_told_which_failures_have_no_registered_action(self):
+        _, events = self.round_with({})
+        analysis = [e['data'] for e in events if e['kind'] == 'tool' and e['data']['name'] == 'delegate_analysis'][0]
+        self.assertEqual(analysis['result']['without_registered_action'], ['5.1.20'])
+
+    def test_the_no_registered_action_reason_is_accurate_for_a_prerequisite(self):
+        from backends.ubuntu.agents import DEFER_REASONS
+        self.assertEqual(DEFER_REASONS['no_registered_action'], 'No registered fix applies in the current state')
 
     def test_an_ordinary_confirmed_failure_has_an_honest_fix_reason(self):
         from backends.ubuntu.agents import FIX_REASONS

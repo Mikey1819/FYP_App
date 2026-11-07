@@ -630,3 +630,7 @@ The orchestrator listed only the two highest-risk fixes because ordinary failure
 ## 7 November 2026 — 5.1.20 root cause: IO method collisions (integration)
 
 The VM evidence showed that the SSH job never wrote a file. The combined target IO class had two name collisions: the audit `_put` shadowed the SSH one, and the SSH `write_managed` shadowed the sysctl one. The SSH job failed before writing and rolled back; sysctl fixes would have failed the same way. The SSH methods are renamed, and three guard tests check the real composed class. Full suite: **542 passed**. Helper changed: reinstall and repeat both acceptance scenarios.
+
+## 7 November 2026 — plans with all registered fixes accepted (integration)
+
+Acceptance passed on runner `b1b17b633dfd`. The orchestrator then proposed 21 correct fixes but left out 6.3.1.2, which has no applicable action until auditd is installed, and the plan was refused. Failures without an action are now deferred by code; the AI must still decide every fixable one. The live plan replays as accepted. Full suite: **546 passed**.

@@ -123,6 +123,8 @@ def _plan_rows(details, evidence, catalogue):
                for e in plan.get('fixes', ())}
     decided.update({e['control_id']: ('Deferred', DEFER_REASONS.get(e['reason_code'], e['reason_code']))
                     for e in plan.get('decisions', ())})
+    decided.update({e['control_id']: ('Deferred (by the app)', DEFER_REASONS[e['reason_code']])
+                    for e in plan.get('deferred_by_code', ()) if e['reason_code'] in DEFER_REASONS})
     missing = ('Not decided', 'The planner left it out of its plan') if plan else (
         'No plan', 'The round stopped before the planner submitted a plan')
     flags = {}
