@@ -344,6 +344,9 @@ class OrchestratorTools(_RoleTools):
         rounds). Then validated as usual."""
         if type(value) is dict:
             columns = list(value.values())
+            # A one-item list is a shared value too (evaluation 16:22: ["no_registered_action"] for three controls).
+            value = {k: (v[0] if type(v) is list and len(v) == 1 else v) for k, v in value.items()}
+            columns = list(value.values())
             lists = [c for c in columns if type(c) is list]
             if lists and all(type(c) is list or type(c) not in (dict,) for c in columns):
                 if len({len(c) for c in lists}) != 1:

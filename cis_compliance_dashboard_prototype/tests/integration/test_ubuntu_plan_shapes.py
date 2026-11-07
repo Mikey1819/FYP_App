@@ -46,7 +46,9 @@ class PlanShapeTests(unittest.TestCase):
         self.assertEqual([d['control_id'] for d in plan['decisions']], ['5.1.20', '4.1.4'])
 
     def test_parallel_lists_of_different_lengths_are_refused(self):
-        text = refusal({'defers': {'control_id': ['5.1.20', '4.1.4'], 'reason_code': ['needs_manual_review']}})
+        # A one-item list is one shared value (evaluation 16:22); two values for three controls stay ambiguous.
+        text = refusal({'defers': {'control_id': ['5.1.20', '4.1.4', '4.1.7'],
+                                   'reason_code': ['needs_manual_review', 'needs_manual_review']}})
         self.assertIn('defers', text)
 
     def test_the_live_0711_restated_fixes_are_ignored_in_defers_and_recorded(self):
@@ -74,6 +76,14 @@ class PlanShapeTests(unittest.TestCase):
                                    'defers': {'control_id': audit, 'reason_code': 'no_registered_action'}})
         self.assertEqual([(d['control_id'], d['reason_code']) for d in tools.rounds.plan['decisions']],
                          [(c, 'no_registered_action') for c in audit])
+
+    def test_a_one_item_reason_list_applies_to_each_control(self):
+        # Evaluation 16:22 (injection, 3 of 3): the shared reason written as a one-item list.
+        audit = ['6.3.3.4', '6.3.3.6', '6.3.3.8']
+        tools = tools_for(LIVE_FAILING, {c: a for c, a in ELIGIBLE.items() if c not in audit})
+        tools.call('submit_plan', {'target_id': 'ubuntu:fixture',
+                                   'defers': {'control_id': audit, 'reason_code': ['no_registered_action']}})
+        self.assertEqual([d['control_id'] for d in tools.rounds.plan['decisions']], audit)
 
     def test_a_deferral_of_a_control_that_is_not_failing_is_ignored_and_recorded(self):
         # Evaluation 15:44: 6.3.1.1 deferred while Compliant (with a triage code); it can change nothing.

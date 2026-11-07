@@ -1023,3 +1023,20 @@ The execution gate was a hard-coded "closed". It now opens only on evidence.
 - **Fixes cards:** a planned fix without a stored plan now reads "No fix plan: the read-only preview failed", with a warning explaining that there is nothing to approve and why. The summary adds "· N without a fix plan".
 - **Tests:** 5 new tests (`test_ubuntu_preview_gaps`), written first; 4 failed before the change. One card-state expectation was updated.
 - Full suite **572 tests, all passed**; baseline: no protected changes. Host only: collector digest unchanged (`b1b17b633dfd`).
+
+## 7 November 2026 — Task 17 offline agentic evaluation; plan shapes from the full agent team
+- **Task 16 Windows regression gate recorded** in `docs/BASELINE.md` (fixture suites, protected-file check and the side-by-side visual comparison). The administrator chose to keep the neutral connection form empty.
+- **New harness `scripts/evaluation/evaluate_ubuntu_agentic_rounds.py`:** the real local qwen3:8b plays Orchestrator, Scanner and Analysis through the production code (agents, protected Coordinator, risk ranking, eligibility, plan validation). Only the VM collection is simulated, from the latest stored live scan, which is read from a temporary copy of the store and altered per scenario, then re-evaluated by the production envelope parser and predicates.
+  - Scenarios: `live`, `transient_error` (collection error on 1.5.1 in the first scan), `injection` (an instruction inside a sudoers log path) and `auditd_installed`.
+  - Expected results are fixed in `EXPECTED` before any run. Each run is compared with the fixed rule "propose every registered fix; rescan only after a collection error".
+  - Output: `data/agentic_evaluations/ubuntu-<stamp>/` (git-ignored).
+- **First runs (15:42–15:44) found plan failures that the scripted-scanner trial did not show.** 9 of 12 rounds stored no plan:
+  - **8 rounds:** `defers` arrived as `{"control_id": [four audit controls], "reason_code": "no_registered_action"}`, a list of controls with one shared reason.
+  - The fixes restated in `defers` with their own fix reasons, then a Compliant control (6.3.1.1) deferred with a triage code. Each was resubmitted until the Coordinator's limit.
+- **Change (`backends/ubuntu/agents.py`):**
+  - Parallel lists may share one scalar, which applies to every entry.
+  - A `defers` entry that restates a fix (the same control is in `fixes`, with a fix reason) or names a control that is not failing cannot change the plan. It is ignored and recorded in the stored plan as `ignored`.
+  - Still refused: a real conflict (a control in `fixes` deferred with a defer reason), a fix for a control that is not failing, and a false `no_registered_action`.
+  - Tests: 5 new or rewritten tests in `test_ubuntu_plan_shapes`, written first; 3 failed before the change. Full suite **576 tests, all passed**.
+- **One-item lists (evaluation 16:22, injection 3 of 3):** a shared reason written as `["no_registered_action"]` for three controls is now read as one shared value. Lists of genuinely different lengths are still refused. 1 test added, 1 updated; full suite **577 tests, all passed**.
+- **Final evaluation (16:33, 12 rounds):** 12/12 plans stored, all on the first `submit_plan`; plans equal the fixed rule in 12/12; no evidence text reached a model; analysis flags are the top two of the risk ranking. The Scanner never used its rescan after a real collection error (0/3). Write-up: `docs/evaluation/UBUNTU_AGENTIC_EVALUATION.md`.

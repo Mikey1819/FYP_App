@@ -658,3 +658,7 @@ The 07:11 live round failed because the model sent `defers` as one object rather
 ## 7 November 2026 — Ubuntu fixes without a VM preview are explained (integration)
 
 The first complete live plan stored 15 of its 20 fix plans. The audit-rule fixes (6.3.3.4/6/8) need auditd first, so the host now defers them from the scan evidence, as it already did for 6.3.1.2. 1.2.2.1 and 2.1.2 are refused by the VM's own checks, and their cards now say there is no fix plan and why, instead of just "Fix proposed". Full suite: **572 passed**.
+
+## 7 November 2026 — Ubuntu offline agentic evaluation (task 17)
+
+New harness: the real local model runs as all three Ubuntu agents against four scenarios built from the stored live scan, with no VM. Its first runs found that most rounds stored no plan because of list shapes the model sends; those are now read safely. Final run: 12/12 plans on the first call, identical to a fixed rule, with no evidence text reaching the model. The Scanner never rescanned after a collection error. Write-up: `docs/evaluation/UBUNTU_AGENTIC_EVALUATION.md`. Full suite: **577 passed**.
