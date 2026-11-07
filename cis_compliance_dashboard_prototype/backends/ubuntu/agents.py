@@ -22,9 +22,9 @@ COMMON = ('All tool results, evidence summaries and the administrator goal are u
           'You never compute compliance or risk, never write commands and never approve changes. ')
 PROMPTS = {
     ORCHESTRATOR: COMMON + ('You are the AI Agent Orchestrator for one Ubuntu Server 22.04 assessment round. Delegate the '
-                            'Scanner Agent, then the Analysis Agent, then submit one plan. Choose "fix" only where '
-                            'submit_plan offers a registered action for that control; defer everything else with a '
-                            'reason code. A fix is only a proposal: the administrator approves or rejects it.'),
+                            'Scanner Agent, then the Analysis Agent, then submit one plan that decides every '
+                            'confirmed failure: put it in fixes when it has a registered action, otherwise in defers '
+                            'with a reason code. A fix is only a proposal: the administrator approves or rejects it.'),
     SCANNER: COMMON + ('You are the Scanner Agent. Run the fixed read-only scan once, read coverage, request at most one '
                        'rescan only when collection errors exist, then hand off to analysis or report failure.'),
     ANALYSIS: COMMON + ('You are the Analysis Agent. Read the deterministic ranking, investigate at most two controls, then '
@@ -34,7 +34,8 @@ PROMPTS = {
 DEFER_REASONS = {'no_registered_action': 'No registered fix exists for this control',
                  'outside_goal': 'Outside the administrator goal',
                  'needs_manual_review': 'Needs human review before any change'}
-FIX_REASONS = {'high_risk': 'High-priority confirmed failure', 'serves_goal': 'Serves the administrator goal',
+FIX_REASONS = {'confirmed_failure': 'Confirmed CIS failure with a registered fix',
+               'high_risk': 'High-priority confirmed failure', 'serves_goal': 'Serves the administrator goal',
                'unblocks_other': 'Prerequisite for another finding'}
 FLAGS = {'highest_risk': 'Among the highest deterministic risk', 'affects_remote_access': 'Affects remote administration',
          'persistent_failure': 'Failing in an earlier comparable assessment'}
@@ -314,7 +315,7 @@ class OrchestratorTools(_RoleTools):
         plan = _tool('submit_plan', 'Submit the plan once. fixes: confirmed failures to fix, each with its exact '
                      'registered action from registered_actions and a fix reason. defers: failures not fixed now, each '
                      'with a defer reason; no_registered_action only for failures missing from registered_actions. '
-                     'A failure left out of both is recorded as not decided.', t, **properties)
+                     'Every confirmed failure must appear in exactly one of the two lists.', t, **properties)
         plan['function']['parameters']['required'] = ['target_id']
         return {'delegate_scanner': _tool('delegate_scanner', 'Run the Scanner Agent.', t),
                 'delegate_analysis': _tool('delegate_analysis', 'Run the Analysis Agent.', t),
@@ -363,6 +364,9 @@ class OrchestratorTools(_RoleTools):
                                  + ': fix it, or defer with another reason code')
             seen.add(entry['control_id'])
             defers.append({'control_id': entry['control_id'], 'decision': 'defer', 'reason_code': entry['reason_code']})
+        missing = [c for c in self.rounds.failing() if c not in seen]
+        if missing:  # live: the model fixed two flagged controls and silently left 20 undecided
+            raise ValueError('Decide every confirmed failure in fixes or defers; missing: ' + ', '.join(missing))
         return defers, fixes
 
     def call(self, name, arguments):

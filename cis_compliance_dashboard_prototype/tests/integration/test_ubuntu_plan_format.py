@@ -38,10 +38,24 @@ class PlanFormatTests(unittest.TestCase):
                                               'reason_code': 'no_registered_action'}])
         self.assertEqual(plan['outcome'], 'fix_proposed')
 
-    def test_either_list_may_be_omitted(self):
+    def test_a_plan_must_decide_every_confirmed_failure(self):
+        # Live 04:11 and 04:21: the model fixed the two flagged controls and silently left 20 undecided.
+        fix = {'control_id': '1.5.1', 'action_id': ELIGIBLE['1.5.1'], 'reason_code': 'high_risk'}
+        complete = {'fixes': [fix], 'defers': [{'control_id': '5.1.20', 'reason_code': 'no_registered_action'}]}
+        result, events = self.round_with({'fixes': [fix]}, complete)
+        rejected = [e['data']['error'] for e in events if e['kind'] == 'tool_rejected']
+        self.assertEqual(len(rejected), 1)
+        self.assertIn('5.1.20', rejected[0])
+        self.assertEqual(result['plan']['deferred_by_code'], [])
+        self.assertEqual([d['control_id'] for d in result['plan']['decisions']], ['5.1.20'])
+
+    def test_an_ordinary_confirmed_failure_has_an_honest_fix_reason(self):
+        from backends.ubuntu.agents import FIX_REASONS
+        self.assertEqual(FIX_REASONS['confirmed_failure'], 'Confirmed CIS failure with a registered fix')
         result, _ = self.round_with({'fixes': [{'control_id': '1.5.1', 'action_id': ELIGIBLE['1.5.1'],
-                                                'reason_code': 'high_risk'}]})
-        self.assertEqual(result['plan']['deferred_by_code'], [{'control_id': '5.1.20', 'reason_code': 'not_decided'}])
+                                                'reason_code': 'confirmed_failure'}],
+                                     'defers': [{'control_id': '5.1.20', 'reason_code': 'no_registered_action'}]})
+        self.assertEqual(result['plan']['fixes'][0]['reason_code'], 'confirmed_failure')
 
     def test_each_list_offers_only_its_own_reasons(self):
         from backends.ubuntu.agents import DEFER_REASONS, FIX_REASONS
@@ -59,7 +73,8 @@ class PlanFormatTests(unittest.TestCase):
 
     def test_the_live_mistake_is_refused_with_the_valid_fix_reasons_named(self):
         _, events = self.round_with({'fixes': [{'control_id': '1.5.1', 'action_id': ELIGIBLE['1.5.1'],
-                                                'reason_code': 'no_registered_action'}]})
+                                                'reason_code': 'no_registered_action'}],
+                                     'defers': [{'control_id': '5.1.20', 'reason_code': 'no_registered_action'}]})
         rejected = [e['data']['error'] for e in events if e['kind'] == 'tool_rejected']
         self.assertTrue(rejected)
         self.assertIn('high_risk', rejected[0])

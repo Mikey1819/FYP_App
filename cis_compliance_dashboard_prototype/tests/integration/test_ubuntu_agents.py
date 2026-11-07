@@ -102,7 +102,7 @@ class AgentRoundTests(unittest.TestCase):
     def test_complete_round_delegates_in_order_and_defers_every_finding(self):
         clients = team([call('delegate_scanner'), call('delegate_analysis'),
                         plan_call([{'control_id': '1.5.1', 'decision': 'defer',
-                                                        'reason_code': 'no_registered_action'}])],
+                                                        'reason_code': 'no_registered_action'}, {'control_id': '5.1.20', 'decision': 'defer', 'reason_code': 'no_registered_action'}])],
                        scanner_ok(), analysis_ok())
         result = self.run_round(clients)
         self.assertEqual(len(self.collected), 1)
@@ -110,8 +110,9 @@ class AgentRoundTests(unittest.TestCase):
         self.assertEqual(result['analysis']['flags'], [{'control_id': '1.5.1', 'flag_code': 'highest_risk'}])
         plan = result['plan']
         self.assertEqual(plan['outcome'], 'no_fix_proposed')
-        self.assertEqual(plan['decisions'], [{'control_id': '1.5.1', 'decision': 'defer', 'reason_code': 'no_registered_action'}])
-        self.assertEqual(plan['deferred_by_code'], [{'control_id': '5.1.20', 'reason_code': 'not_decided'}])
+        self.assertEqual(plan['decisions'], [{'control_id': '1.5.1', 'decision': 'defer', 'reason_code': 'no_registered_action'},
+                                             {'control_id': '5.1.20', 'decision': 'defer', 'reason_code': 'no_registered_action'}])
+        self.assertEqual(plan['deferred_by_code'], [])  # every confirmed failure is decided
         self.assertEqual(set(result['children']), {'scanner', 'analysis'})
 
     def test_fabricated_tools_fixes_actions_and_factors_are_refused_without_effect(self):
@@ -155,7 +156,8 @@ class AgentRoundTests(unittest.TestCase):
         self.assertIn(self.events(result['orchestrator_run_id'])[-1]['data']['status'], ('Time limit reached',))
 
     def test_evidence_text_never_reaches_any_model(self):
-        clients = team([call('delegate_scanner'), call('delegate_analysis'), plan_call([])],
+        clients = team([call('delegate_scanner'), call('delegate_analysis'),
+                        plan_call([{'control_id': '1.5.1', 'decision': 'defer', 'reason_code': 'no_registered_action'}])],
                        scanner_ok(), [call('read_ranking'), call('inspect_finding', control_id='5.2.3'),
                                       call('submit_analysis', flags=[], gap_triage=[{'control_id': '1.2.2.1', 'triage_code': 'manual_review'}])])
         result = self.run_round(clients, collect=self.collect_with(failing=('1.5.1',), inject=True))
@@ -188,7 +190,7 @@ class AgentRoundTests(unittest.TestCase):
 
     def test_outside_goal_requires_a_goal(self):
         plan = [call('delegate_scanner'), call('delegate_analysis'),
-                plan_call([{'control_id': '1.5.1', 'decision': 'defer', 'reason_code': 'outside_goal'}])]
+                plan_call([{'control_id': c, 'decision': 'defer', 'reason_code': 'outside_goal'} for c in ('1.5.1', '5.1.20')])]
         without = self.run_round(team(list(plan), scanner_ok(), analysis_ok()))
         self.assertIsNone(without['plan'])
         self.collected.clear()

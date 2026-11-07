@@ -917,3 +917,13 @@ The execution gate was a hard-coded "closed". It now opens only on evidence.
   - **Round goal disabled for Ubuntu** at the administrator's request (due for removal): the page no longer shows the input and the backend refuses a goal. The Windows page keeps its goal for now (protected engine and original tests).
 - **Tests:** 6 new tests (5 plan format, 1 backend goal refusal) plus a page assertion, written first. Existing Ubuntu tests now send plans through a `plan_call` helper in the new format; one test no longer passes a goal. Mutations caught: fix reasons accepting defer codes, a mixed enum, a control in both lists, the goal check removed, and the goal input restored.
 - Full suite **538 tests, all passed**; baseline: no protected changes. Host only: collector digest unchanged.
+
+## 7 November 2026 — complete plans and an honest fix reason; first live SSH attempt (live finding)
+- **Live rounds 04:11 and 04:21 UTC:** the plan was valid but listed only 5.1.20 and 4.1.4, both flagged `highest_risk`, and left the other 20 failures out (recorded as not decided).
+  - **Cause:** the only fix reasons were `high_risk` and `unblocks_other`; an ordinary confirmed failure had no true fix reason.
+  - **Changes:** a new fix reason, `confirmed_failure` ("Confirmed CIS failure with a registered fix"). `submit_plan` must place every confirmed failure in `fixes` or `defers`; a refusal names the missing controls. The orchestrator prompt and tool description say so.
+- **First live CIS execution, 5.1.20 (administrator-approved):** the commit-confirm job started at 04:22:32.07 (VM clock). The job then rolled itself back 0.33 s later as `rolled_back` / `nothing_to_restore`, with identical before- and after-state digests. No status call came from the host until 04:23:41, so the rollback came from the job, after `apply` failed.
+  - `SshFamily.apply` puts the previous drop-in back when `sshd -t` or `systemctl reload ssh.service` fails, so nothing changed. The runner discards the exception, so the failing step needs read-only VM evidence (journal of `fyp-hardening-job-<request>`, `ssh.service` around 04:22, `sshd -t`).
+  - SSH configuration is unchanged.
+- **Tests:** 2 new tests, written first; older tests now send complete plans. Mutations caught: completeness check removed; the plan table listing only decided controls.
+- Full suite **539 tests, all passed**; baseline: no protected changes. Host only: collector digest unchanged (`3df47649b229`).

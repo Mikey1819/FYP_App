@@ -26,8 +26,9 @@ class PlanHonestyTests(unittest.TestCase):
         return result, self.case.events(result['orchestrator_run_id'])
 
     def test_no_registered_action_is_refused_for_a_control_that_has_one(self):
-        false = [{'control_id': '1.5.1', 'decision': 'defer', 'reason_code': 'no_registered_action'}]
-        manual = [{'control_id': '1.5.1', 'decision': 'defer', 'reason_code': 'needs_manual_review'}]
+        other = {'control_id': '5.1.20', 'decision': 'defer', 'reason_code': 'no_registered_action'}
+        false = [{'control_id': '1.5.1', 'decision': 'defer', 'reason_code': 'no_registered_action'}, other]
+        manual = [{'control_id': '1.5.1', 'decision': 'defer', 'reason_code': 'needs_manual_review'}, other]
         result, events = self.round_with(false, manual)
         rejected = [e['data'] for e in events if e['kind'] == 'tool_rejected']
         self.assertEqual(len(rejected), 1)
@@ -36,7 +37,8 @@ class PlanHonestyTests(unittest.TestCase):
 
     def test_no_registered_action_stays_valid_for_a_control_without_one(self):
         true = [{'control_id': '5.1.20', 'decision': 'defer', 'reason_code': 'no_registered_action'}]
-        result, _ = self.round_with(true)
+        fix = [{'control_id': '1.5.1', 'decision': 'fix', 'action_id': ELIGIBLE['1.5.1'], 'reason_code': 'high_risk'}]
+        result, _ = self.round_with(fix + true)
         self.assertEqual(result['plan']['decisions'], true)
 
     def test_the_orchestrator_is_told_which_failures_have_a_registered_action(self):
@@ -95,10 +97,10 @@ class PlanTableTests(unittest.TestCase):
         row = next(r for r in snap.plan if r.control_id == '1.5.1')
         self.assertEqual((row.decision, row.reason), ('Deferred', 'Needs human review before any change'))
 
-    def test_a_control_the_planner_left_out_still_has_a_row(self):
-        snap = self.snapshot([])
+    def test_a_round_without_a_valid_plan_still_lists_every_failure(self):
+        snap = self.snapshot([])  # an empty plan leaves the failure undecided, so it is refused: no plan
         row = next(r for r in snap.plan if r.control_id == '1.5.1')
-        self.assertEqual(row.decision, 'Not decided')
+        self.assertEqual(row.decision, 'No plan')
 
     def test_the_fixes_tab_table_lists_the_plan(self):
         from tests.integration.test_ubuntu_proposals import BackendRemediationTests

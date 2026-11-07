@@ -622,3 +622,7 @@ The Fixes tab now shows an AI plan table covering every Non-Compliant control, a
 ## 7 November 2026 — Ubuntu plan format and round goal (integration)
 
 In the next live round, the orchestrator offered fixes for all 22 failures but gave them defer reasons, so no plan was stored. `submit_plan` now takes separate `fixes` and `defers` lists, each with only its own reason codes. The Ubuntu round goal is disabled at the administrator's request (due for removal). Full suite: **538 passed**. Next: a new agentic round, then the first live fix (3.3.2) after a snapshot.
+
+## 7 November 2026 — complete Ubuntu plans; first live SSH attempt (integration)
+
+The orchestrator listed only the two highest-risk fixes because ordinary failures had no true fix reason. It now has `confirmed_failure`, and every plan must decide every confirmed failure. The first live fix (5.1.20) failed inside its job and rolled itself back without changing SSH; read-only VM logs are needed to find the failing step. Full suite: **539 passed**.

@@ -130,7 +130,8 @@ class EligibleFixTests(unittest.TestCase):
             from backends.ubuntu.agents import run_agentic_round
             from backends.ubuntu.adapter import _controls
             def round_with(decisions):
-                clients = team([call('delegate_scanner'), call('delegate_analysis'), plan_call(decisions)],
+                rest = [{'control_id': '5.1.20', 'decision': 'defer', 'reason_code': 'no_registered_action'}]
+                clients = team([call('delegate_scanner'), call('delegate_analysis'), plan_call(decisions + rest)],
                                scanner_ok(), analysis_ok())
                 return run_agentic_round(client_factory=clients.__getitem__, collect=case.collect_with(), log_store=case.log,
                                          target_id='ubuntu:fixture', titles={c: x.title for c, x in _controls().items()},
