@@ -20,14 +20,16 @@ from system.contracts import WorkflowBinding, encode_record
 from .envelope import ExpectedEvidence, parse_bundle
 
 def _rules(rules):
-    from .predicates import CIS_AUDIT_WORDING_V1
-    return {**rules, 'audit_wording': CIS_AUDIT_WORDING_V1} if rules.get('audit_wording') == 'v1' else rules
+    from .predicates import CIS_AUDIT_WORDING_V1, CIS_AUDIT_WORDING_V2
+    versions = {'v1': CIS_AUDIT_WORDING_V1, 'v2': CIS_AUDIT_WORDING_V2}
+    return {**rules, 'audit_wording': versions[rules['audit_wording']]} if 'audit_wording' in rules else rules
 
 
 # Documented interpretation decisions, newest last; a stored scan may match the rules in force when it was stored.
 EARLIER_RULES = (dict(ssh_effective_authority=False, cis_audit_authority=False),  # before both decisions
                  dict(cis_audit_authority=False),  # after the SSH decision, before the 6.3.3.4 wording decision
-                 dict(audit_wording='v1'))  # 6.3.3.4 reviewed, 6.3.3.8 not yet (live 11:20 scan)
+                 dict(audit_wording='v1'),  # 6.3.3.4 reviewed, 6.3.3.8 not yet (live 11:20 scan)
+                 dict(audit_wording='v2'))  # 6.3.3.4 and 6.3.3.8 reviewed, 5.3.3.2.2 not yet (live 15:17, 15:18)
 from .predicates import Assessment
 
 PAYLOAD_VERSION = 1

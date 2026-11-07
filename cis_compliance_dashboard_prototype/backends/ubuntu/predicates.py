@@ -255,9 +255,14 @@ def evaluate(control_id, observations, *, reviewed_avahi_retention=False, ssh_ef
 CIS_AUDIT_WORDING_V1 = {'6.3.3.4': {'audit_rules_time_clock_settime': (
     'CIS v2.0.0 audits every clock_settime call (-S adjtimex,settimeofday,clock_settime), which the persistent and '
     'loaded rules contain; this SCAP rule only accepts its narrower form -S clock_settime -F a0=0x0')}}
-CIS_AUDIT_WORDING = {**CIS_AUDIT_WORDING_V1, '6.3.3.8': {'audit_rules_usergroup_modification_pamd': (
+CIS_AUDIT_WORDING_V2 = {**CIS_AUDIT_WORDING_V1, '6.3.3.8': {'audit_rules_usergroup_modification_pamd': (
     'CIS v2.0.0 watches /etc/pam.d (-w /etc/pam.d -p wa -k identity), which the persistent and loaded rules contain; '
     'this SCAP rule matches the path only with a trailing slash, /etc/pam.d/')}}  # live 11:20, same decision
+# Not only audit rules despite the name (kept for stored-evidence compatibility): any reviewed SCAP rule narrower
+# than the CIS audit. Live 15:17: CIS recommends pwquality.conf.d and audits both locations.
+CIS_AUDIT_WORDING = {**CIS_AUDIT_WORDING_V2, '5.3.3.2.2': {'accounts_password_pam_minlen': (
+    'CIS v2.0.0 recommends minlen in a .conf file in /etc/security/pwquality.conf.d and audits both locations; the '
+    'effective minlen resolved from them is 14 or more. This SCAP rule reads only /etc/security/pwquality.conf')}}
 
 
 def _scap(f, control_id, reviewed_avahi_retention, ssh_effective_authority=True, cis_audit_authority=True,
@@ -285,9 +290,9 @@ def _scap(f, control_id, reviewed_avahi_retention, ssh_effective_authority=True,
                    and any(c.name == 'ssh_context_resolution' and c.state == 'pass' for c in f.checks))
     reviewed = CIS_AUDIT_WORDING if audit_wording is None else audit_wording
     wording = reviewed.get(control_id, {}) if cis_audit_authority else {}
-    audit_decided = bool(wording) and not direct_failed and all(
-        any(c.name == source and c.state == 'pass' for c in f.checks)
-        for source in ('persistent_audit_rules', 'loaded_audit_rules'))
+    # Every direct check must pass (for the audit controls: the persistent and loaded rules; for 5.3.3.2.2: a
+    # complete PAM resolution and the effective minlen). An unresolved or missing check never becomes advisory.
+    audit_decided = bool(wording) and bool(f.checks) and all(c.state == 'pass' for c in f.checks)
     for rule in SCAP_RULES[control_id]:
         name, result = 'scap.' + rule[len(SCAP_RULE_PREFIX):], observation['value'][rule]
         if result == 'pass':

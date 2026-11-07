@@ -1140,3 +1140,12 @@ The execution gate was a hard-coded "closed". It now opens only on evidence.
   2. A `stale_read_set` card now explains itself (`refusal_detail`): what the plan was approved against changed, usually another fix in the round changing the same file first; nothing was written; start a new round to re-plan it.
 - **Tests:** 3 new tests (`test_ubuntu_execution_batch`): the live batch continues and verifies 1.5.1 with 5.2.3; uncertain outcomes still stop; the refusal wording. Written first; 2 failed before the change. Full suite **623 tests, all passed**. Host-only change, no reinstall.
 - **Possible improvement (needs a decision; helper change):** narrow the sysctl family's read set to its own keys' lines, so independent sysctl fixes could run in one batch. That would mean a reinstall, both acceptance scenarios again, and re-validating the sysctl family (3.3.2, 1.5.1).
+
+## 7 November 2026 — stages 1 and 2 complete; 5.3.3.2.2 CIS wording
+- **Stage 1, finished one shared-file fix per round:** 1.5.3 and 5.2.3 (applied 15:05), 3.3.1 (15:08) and 3.3.8 (15:12), all verified Compliant.
+- **Stage 2:** 5.3.3.2.2 and 5.4.1.5 executed together, both applied at 15:16:01. 5.4.1.5 verified Compliant. **5.3.3.2.2 read Unknown**: the effective minlen read 14 and PAM resolution was complete, but the SCAP rule `accounts_password_pam_minlen` failed. That rule reads only `/etc/security/pwquality.conf`, whereas CIS v2.0.0 (PDF pp. 607–608) recommends a `.conf` file in `pwquality.conf.d` (its example is `50-pwlength.conf`) and audits both locations.
+- **Under the administrator's "Follow CIS" decision**, 5.3.3.2.2's rule joins the reviewed list (third version; `CIS_AUDIT_WORDING_V2` kept for the 15:17/15:18 scans). The advisory condition is now "every direct check passes" (stricter in general, identical for the audit controls), so an unresolved PAM stack or a short minlen never becomes Compliant.
+  - All 55 stored scans load; the latest reads 5.3.3.2.2 Compliant. Host-only change, no reinstall.
+- **Tests:** 4 new tests, written first. Full suite **627 tests, all passed**.
+- **Register:** **13 validated live**, 1 attempted and not applied (5.1.20), 16 not run live. 8 controls remain Non-Compliant: 1.2.2.1, 2.1.2, 4.1.4, 4.1.7, 5.1.7, 5.1.16, 5.1.20, 6.3.1.3. OpenSCAP cross-check: no unexplained disagreement (3 CIS wording, 3 SSH explicit line).
+- **Pending (administrator):** batching shared-file fixes by narrowing the sysctl family's read set (handover, outstanding decisions).

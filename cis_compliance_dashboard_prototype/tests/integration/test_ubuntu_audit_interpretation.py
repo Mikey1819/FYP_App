@@ -132,3 +132,51 @@ class IdentityWordingTests(unittest.TestCase):
             self.assertEqual((statuses['6.3.3.4'], statuses['6.3.3.8']), ('Compliant', 'Unknown'))
             loaded = store.get_evidence(old.raw_sha256, expected.target_id, expected.registration_epoch)
             self.assertEqual(next(a for a in loaded.assessments if a.control_id == '6.3.3.8').status.value, 'Compliant')
+
+
+def minlen_facts(minlen=14, scap='fail'):
+    return {'pam_resolution': observation('complete'), 'effective_minlen': observation({'common-password': minlen}),
+            'scap_rules': observation({PREFIX + 'accounts_password_pam_minlen': scap})}
+
+
+class PasswordLengthWordingTests(unittest.TestCase):
+    """Live 15:17 and 15:18: 5.3.3.2.2 applied `minlen = 14` in /etc/security/pwquality.conf.d/60-fyp-hardening-cis.conf,
+    the effective minlen read 14, and the control read Unknown. CIS v2.0.0 (PDF pp. 607-608) recommends a .conf file in
+    pwquality.conf.d and audits both locations; the pinned SCAP rule reads only /etc/security/pwquality.conf. Same
+    administrator decision (Follow CIS)."""
+
+    def status(self, obs, **kwargs):
+        from backends.ubuntu.predicates import evaluate
+        return evaluate('5.3.3.2.2', obs, **kwargs).status.value
+
+    def test_the_live_scan_reads_compliant(self):
+        self.assertEqual(self.status(minlen_facts()), 'Compliant')
+
+    def test_a_short_effective_minlen_is_still_non_compliant(self):
+        self.assertEqual(self.status(minlen_facts(minlen=8)), 'Non-Compliant')
+
+    def test_an_unresolved_pam_stack_is_never_made_compliant_by_the_advisory(self):
+        obs = minlen_facts()
+        obs['pam_resolution'] = observation('incomplete')
+        self.assertNotEqual(self.status(obs), 'Compliant')
+
+    def test_scans_stored_under_the_second_wording_list_still_load(self):
+        from backends.ubuntu import predicates
+        from backends.ubuntu.envelope import ExpectedEvidence
+        from backends.ubuntu.storage import UbuntuStore
+        from tests.integration.test_ubuntu_evidence import envelope
+        doc = envelope()
+        doc['observations']['6.3.3.8'] = identity_facts()
+        doc['observations']['5.3.3.2.2'] = minlen_facts()
+        raw = json.dumps(doc).encode()
+        expected = ExpectedEvidence(*[doc[f] for f in ExpectedEvidence.__dataclass_fields__])
+        earlier = predicates.evaluate
+        with tempfile.TemporaryDirectory() as folder:
+            store = UbuntuStore(Path(folder) / 'ubuntu.sqlite3')
+            with mock.patch('backends.ubuntu.envelope.evaluate', lambda cid, obs, **kw: earlier(
+                    cid, obs, **{**kw, 'audit_wording': predicates.CIS_AUDIT_WORDING_V2})):
+                old = store.save_evidence(raw, expected, now=datetime(2026, 11, 6, 0, 0, 2, tzinfo=timezone.utc))
+            statuses = {a.control_id: a.status.value for a in old.assessments}
+            self.assertEqual((statuses['6.3.3.8'], statuses['5.3.3.2.2']), ('Compliant', 'Unknown'))
+            loaded = store.get_evidence(old.raw_sha256, expected.target_id, expected.registration_epoch)
+            self.assertEqual(next(a for a in loaded.assessments if a.control_id == '5.3.3.2.2').status.value, 'Compliant')
