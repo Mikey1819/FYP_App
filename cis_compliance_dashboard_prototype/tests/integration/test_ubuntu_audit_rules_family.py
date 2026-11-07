@@ -102,13 +102,41 @@ class TimeChangeTests(AuditRulesCase):
     def test_locked_missing_wiping_or_unparseable_configurations_are_refused(self):
         for system in (FakeAudit(enabled=2), FakeAudit(installed=False),
                        FakeAudit(files={'10-base-config.rules': BASE, '99-finalize.rules': b'-e 2\n'}),
-                       FakeAudit(files={'10-base-config.rules': BASE, '90-reset.rules': b'-D\n'}),
+                       # A -D with options stays in place under augenrules and may delete these rules; the collector parser
+                       # refuses it. (A bare -D is moved to the top: StockUbuntuFileTests.)
+                       FakeAudit(files={'10-base-config.rules': BASE, '90-reset.rules': b'-D -k time-change\n'}),
                        FakeAudit(files={'10-base-config.rules': BASE, '20-x.rules': b'-a never,exit -S all\n'})):
             with self.subTest(files=sorted(system.files), enabled=system.enabled), self.assertRaises(ValueError):
                 self.family(system).check_eligible(self.PARAMS)
 
     def test_a_failed_load_is_raised(self):
         with self.assertRaises(OSError):self.family(FakeAudit(load_fails=True)).apply(self.PARAMS)
+
+
+class StockUbuntuFileTests(AuditRulesCase):
+    """Live 2026-11-07 10:1x: the 6.3.3.4 preview was refused right after auditd was installed. Ubuntu ships its base
+    rules as /etc/audit/rules.d/audit.rules (bare -D first), which sorts after 60-fyp-cis-*.rules. augenrules (audit
+    3.0.7, init.d/augenrules) moves the last bare -D to the first line of the generated file, so it never deletes
+    rules from another file; the family refused it, and the collector cleared the earlier files' rules."""
+    CONTROL, PARAMS, FILE = '6.3.3.4', {'ruleset': 'time-change'}, '60-fyp-cis-time-change.rules'
+
+    def test_the_stock_audit_rules_file_does_not_block_the_change(self):
+        self.family(FakeAudit(files={'audit.rules': BASE})).check_eligible(self.PARAMS)
+
+    def test_a_bare_minus_d_in_a_later_file_keeps_the_earlier_rules_in_the_scan(self):
+        from vm.ubuntu.probes import audit_rules
+        text = '-w /etc/localtime -p wa -k time-change' + chr(10) + BASE.decode()  # our file, then audit.rules
+        self.assertEqual([r['path'] for r in audit_rules(text)], ['/etc/localtime'])
+
+    def test_after_the_fix_the_collected_rules_read_compliant_beside_the_stock_file(self):
+        from backends.ubuntu.predicates import evaluate
+        from tests.integration.ubuntu_fixtures import observation
+        system = FakeAudit(files={'audit.rules': BASE})
+        self.cycle(system)
+        persistent, loaded = self.collected(system)
+        facts = {'audit_architectures': observation(['b32', 'b64']), 'persistent_audit_rules': observation(persistent),
+                 'loaded_audit_rules': observation(loaded)}
+        self.assertEqual(evaluate('6.3.3.4', facts).status.value, 'Compliant')
 
 
 class IdentityTests(AuditRulesCase):

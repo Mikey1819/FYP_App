@@ -1073,3 +1073,17 @@ The execution gate was a hard-coded "closed". It now opens only on evidence.
 - **Independent check:** direct probes and OpenSCAP agree on all six audit controls. The audit-rule controls were "not applicable" to OpenSCAP while auditd was absent; both sides now read them Non-Compliant, with no rules loaded.
 - **Effect on planning:** 18 Non-Compliant controls, all with an applicable registered fix. 6.3.3.4, 6.3.3.6 and 6.3.3.8 are now eligible, because `loaded_audit_rules` is readable.
 - Register: **3 validated live** (3.3.2, 5.4.1.1, 6.3.1.1), 1 attempted and not applied (5.1.20), 26 not run live. OpenSCAP cross-check: latest scan 26 agree, 3 SSH explicit-line, 1 not comparable (1.2.2.1); no unexplained disagreement in any scan.
+
+## 7 November 2026 — audit-rule fixes refused by Ubuntu's stock rules file (live finding; helper change)
+- **Live, after 6.3.1.1:** the 6.3.3.4 card read "No fix plan: the read-only preview failed".
+- **Cause, reproduced offline:** installing auditd creates `/etc/audit/rules.d/audit.rules` (bare `-D`, `-b 8192`, `--backlog_wait_time 60000`, `-f 1`). It sorts after `60-fyp-cis-*.rules`. Two bugs followed from that:
+  1. The audit family refused any later file with a bare `-D` ("A later rules file deletes all rules"). The test fixture had named the same content `10-base-config.rules`, which sorts first, so the tests never saw this.
+  2. The collector joins the rule files in name order, and `audit_rules()` cleared every rule seen so far at a bare `-D`. So even a correct fix would have scanned Non-Compliant.
+- **Upstream behaviour:** augenrules in audit 3.0.7 (`init.d/augenrules`, checked against the v3.0.7 source) moves the last bare `-D` to the first line of the generated rules. It never deletes another file's rules. `-e` goes last; `-D` with options stays in place.
+- **Changes (`vm/ubuntu/family_audit.py`, `vm/ubuntu/probes.py`):**
+  - A bare `-D` no longer refuses the change and no longer clears rules in the scan.
+  - A `-D` with options is still refused, by the collector parser.
+  - A file with `-e 2` still refuses.
+- **Tests:** 3 new tests (stock `audit.rules` eligible; a scan keeps earlier files' rules; fix then collect reads Compliant beside the stock file), written first, all 3 failing before the change. The case that expected a bare `-D` to be refused was corrected to `-D -k time-change`.
+  - Full suite **600 tests, all passed**.
+- **Helper change:** collector digest is now **`a0a1c666395c`**. `dist/ubuntu-helper` has been rebuilt. The VM must reinstall the helper and runner, and both acceptance scenarios must run again before scans and fixes are accepted. This needs the administrator's approval; nothing has been done on the VM.

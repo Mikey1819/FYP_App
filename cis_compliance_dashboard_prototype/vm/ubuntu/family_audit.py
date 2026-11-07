@@ -111,8 +111,9 @@ class AuditRulesFamily:
                 tokens = line.split('#', 1)[0].split()
                 if tokens == ['-e', '2']:
                     raise ValueError('Another rules file locks the configuration; a restore would need a reboot')
-                if tokens == ['-D'] and name > self.name:
-                    raise ValueError('A later rules file deletes all rules, including these')
+                # A bare -D needs no check: augenrules moves it to the first line of the generated rules, so it
+                # never deletes another file's rules (live 2026-11-07: Ubuntu's stock audit.rules, which sorts after
+                # these files, was wrongly refused). A -D with options stays in place; audit_rules() refuses it.
         if self.control_id == '6.3.3.6':
             changed = [path for path in params['paths'] if not self.system.is_privileged(path)]
             if changed:

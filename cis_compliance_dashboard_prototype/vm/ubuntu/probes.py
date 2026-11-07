@@ -135,7 +135,8 @@ def audit_rules(text):
         tokens = shlex.split(line,comments=True)
         if not tokens or tokens == ['No','rules']: continue
         if tokens == ['-D']:
-            rows.clear()
+            # augenrules puts a bare -D first, before every file's rules: it clears the kernel's earlier rules, never
+            # the rules of the other files. A -D with options is refused below (unsupported syntax).
             continue
         if len(tokens) == 2 and tokens[0] in ('-b','-f','-e','--backlog_wait_time'):
             _integer(tokens[1])
