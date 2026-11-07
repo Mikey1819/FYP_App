@@ -59,7 +59,13 @@ ICONS = {'Awaiting your decision': ':material/build:', 'Fix proposed': ':materia
          'Approved, ready to execute': ':material/thumb_up:', 'Rejected': ':material/block:',
          'Running': ':material/hourglass_top:', 'Applied, re-scan pending': ':material/hourglass_top:',
          'Fixed, re-scan: Compliant': ':material/check_circle:', 'Not applied': ':material/cancel:',
-         'Outcome unknown': ':material/help:', 'Restored to the before-state': ':material/undo:'}
+         'Outcome unknown': ':material/help:', 'Restored to the before-state': ':material/undo:',
+         'No fix plan: the read-only preview failed': ':material/report:'}
+NO_PLAN = 'No fix plan: the read-only preview failed'
+NO_PLAN_NOTE = ('The planner proposed this fix, but the read-only preview on the target was refused, so there is '
+                'nothing to approve. The target checks the current state before any plan is stored: a prerequisite '
+                'may be missing, or the change would affect more than this control. It is offered again in a later '
+                'round once the target allows it.')
 
 
 def _card_state(row, fix, recovery, results):
@@ -67,7 +73,9 @@ def _card_state(row, fix, recovery, results):
            for r in recovery):
         return 'Restored to the before-state'
     if fix is None:
-        return row.decision  # Fix proposed (no stored proposal), Deferred, Deferred (by the app), No plan ...
+        # A planned fix gets its stored plan right after the plan step, unless the read-only preview failed
+        # (live 05:08-07:19: 1.2.2.1, 2.1.2 and 6.3.3.x always said only "Fix proposed").
+        return NO_PLAN if row.decision == 'Fix proposed' else row.decision  # Deferred, Deferred (by the app), No plan
     result = results.get(fix.reference.record_id)
     if result is None:
         return {'approved': 'Approved, ready to execute', 'rejected': 'Rejected'}.get(fix.decision,
@@ -93,6 +101,7 @@ def plan_cards(snapshot):
         recovery = [p for p in own if p.kind == 'recovery']
         state = _card_state(row, fixes[-1] if fixes else None, recovery, results)
         cards.append({'control_id': row.control_id, 'title': row.title, 'state': state, 'decision': row.decision,
+                      'note': NO_PLAN_NOTE if state == NO_PLAN else '',
                       'reason': row.reason, 'flag': row.flag, 'proposals': own,
                       'results': {p.reference.record_id: results[p.reference.record_id]
                                   for p in own if p.reference.record_id in results},
@@ -106,8 +115,10 @@ def plan_summary(snapshot):
     proposed = sum(c['decision'] == 'Fix proposed' for c in cards)
     approved = sum(p.decision == 'approved' for c in cards for p in c['proposals'] if p.kind == 'control_remediation')
     fixed = sum(c['state'] == 'Fixed, re-scan: Compliant' for c in cards)
-    return '%d Non-Compliant controls · %d %s proposed · %d approved · %d fixed (re-scan Compliant)' % (
-        len(cards), proposed, 'fix' if proposed == 1 else 'fixes', approved, fixed)
+    unplanned = sum(c['state'] == NO_PLAN for c in cards)
+    return '%d Non-Compliant controls · %d %s proposed · %d approved · %d fixed (re-scan Compliant)%s' % (
+        len(cards), proposed, 'fix' if proposed == 1 else 'fixes', approved, fixed,
+        ' · %d without a fix plan' % unplanned if unplanned else '')
 
 
 def _render_cards(snapshot, control_actions):
@@ -120,6 +131,8 @@ def _render_cards(snapshot, control_actions):
             st.markdown('**Planner decision:** ' + md_escape(card['decision']) + '  \n**Reason:** '
                         + md_escape(card['reason']) + ('  \n**Analysis flag:** ' + md_escape(card['flag'])
                                                       if card['flag'] else ''))
+            if card['note']:
+                st.warning(md_escape(card['note']))
             for p in card['proposals']:
                 st.markdown(('**Proposed fix:** ' if p.kind == 'control_remediation' else '**Restore:** ')
                             + md_escape(p.title) + ' · ' + md_escape(p.version) + ' · '

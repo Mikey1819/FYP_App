@@ -1013,3 +1013,13 @@ The execution gate was a hard-coded "closed". It now opens only on evidence.
 - **Offline trial after the change:** 10 of 10 rounds were accepted on the first `submit_plan` (6.3.1.2 deferred, every registered fix proposed; the fixture marks 2.1.2 compliant, hence 19).
 - **Tests:** 6 new tests (`test_ubuntu_plan_shapes`), written first; 5 failed before the change.
 - Full suite **567 tests, all passed**; baseline: no protected changes. Host only: collector digest unchanged (`b1b17b633dfd`).
+
+## 7 November 2026 — planned fixes the VM will not preview (live finding)
+- **Live round 07:19 UTC:** the first complete plan (20 fixes, 6.3.1.2 deferred) stored only **15** fix plans. 1.2.2.1, 2.1.2, 6.3.3.4, 6.3.3.6 and 6.3.3.8 got none in this round or in the 05:08 and 06:36 rounds.
+  - Each fix's read-only VM preview was refused. `_propose` drops a refused preview silently, and the runner returns one generic refusal, so their cards said "Fix proposed" with nothing to approve.
+- **6.3.3.4 / 6.3.3.6 / 6.3.3.8:** the VM audit family refuses while auditd is not installed ("6.3.1.1 comes first"). The live scan records `loaded_audit_rules` as `missing` for all three.
+  - The host spec now returns no proposal unless `loaded_audit_rules` is `ok`, as the 6.3.1.2 spec already does. Replay on the 07:18 scan: these three are now deferred by the app, and 17 controls remain eligible.
+- **1.2.2.1 / 2.1.2:** the host checks pass (fresh metadata and 10 pending updates; avahi-daemon installed), but the VM's checks refuse the preview. The exact reason is not reported back (generic runner refusal). For 2.1.2 the likely cause is "the purge would also remove dependent packages" (the pending avahi site decision). Not yet diagnosed on the VM.
+- **Fixes cards:** a planned fix without a stored plan now reads "No fix plan: the read-only preview failed", with a warning explaining that there is nothing to approve and why. The summary adds "· N without a fix plan".
+- **Tests:** 5 new tests (`test_ubuntu_preview_gaps`), written first; 4 failed before the change. One card-state expectation was updated.
+- Full suite **572 tests, all passed**; baseline: no protected changes. Host only: collector digest unchanged (`b1b17b633dfd`).

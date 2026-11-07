@@ -364,6 +364,8 @@ def _audit_specs():
             if result is None or result.status is not ComplianceStatus.NON_COMPLIANT:
                 return None
             facts = json.loads(evidence.raw)['observations'][cid]
+            if facts.get('loaded_audit_rules', {}).get('state') != 'ok':
+                return None  # auditd not installed: 6.3.1.1 comes first (live 07:19: the VM preview refused these)
             if cid in RULESETS:
                 return {'ruleset': RULESETS[cid]}
             paths, uid = facts.get('privileged_paths', {}), facts.get('uid_min', {})

@@ -45,7 +45,7 @@ class FixCardTests(unittest.TestCase):
 
     def test_states_follow_the_life_of_a_fix(self):
         cases = [
-            ((), (), 'Fix proposed'),  # plan row without a stored proposal (preview failed): still says so
+            ((), (), 'No fix plan: the read-only preview failed'),  # plan row without a stored proposal
             ((proposal('p', '3.3.2'),), (), 'Awaiting your decision'),
             ((proposal('p', '3.3.2', decision='approved', commands=()),), (), 'Approved, ready to execute'),
             ((proposal('p', '3.3.2', decision='rejected', commands=()),), (), 'Rejected'),

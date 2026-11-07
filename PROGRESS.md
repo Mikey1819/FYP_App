@@ -654,3 +654,7 @@ In five live rounds, the model's first plan held only the two flagged fixes, and
 ## 7 November 2026 — Ubuntu plan accepts the list shapes the model sends (integration)
 
 The 07:11 live round failed because the model sent `defers` as one object rather than a list. An offline trial with the real local model showed the same thing in 10 of 10 rounds. Unambiguous single-object and parallel-list shapes are now read as the list they mean, and still validated. A refused plan can be resubmitted within the Coordinator's limit. After the change, 10 of 10 offline rounds produced a plan on the first call. Full suite: **567 passed**.
+
+## 7 November 2026 — Ubuntu fixes without a VM preview are explained (integration)
+
+The first complete live plan stored 15 of its 20 fix plans. The audit-rule fixes (6.3.3.4/6/8) need auditd first, so the host now defers them from the scan evidence, as it already did for 6.3.1.2. 1.2.2.1 and 2.1.2 are refused by the VM's own checks, and their cards now say there is no fix plan and why, instead of just "Fix proposed". Full suite: **572 passed**.
