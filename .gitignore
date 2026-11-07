@@ -10,3 +10,5 @@
 .env.*
 **/secrets.toml
 dist/
+store-backups/
+restored-data/

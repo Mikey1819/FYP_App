@@ -4,6 +4,16 @@ Final Year Project (Khoo Teng Yi, TAR UMT). Four local-LLM agents assess one sta
 
 The target is always the registered lab VM. **The development laptop is never hardened.** It runs Streamlit, Python and Ollama (`qwen3:8b`) only.
 
+## Unified Windows and Ubuntu system (integration branch)
+
+The same application and connection form now also assess and harden one Ubuntu Server 22.04 VM (30 CIS controls). The Windows framework described below is unchanged (`cis_compliance_dashboard_prototype/docs/BASELINE.md`). Start it from `cis_compliance_dashboard_prototype` with the integration environment:
+
+```powershell
+..\.venv-integration\Scripts\python.exe -m streamlit run app.py
+```
+
+Ubuntu runbook, backup and recovery: [OPERATIONS.md](cis_compliance_dashboard_prototype/docs/OPERATIONS.md). Architecture and interfaces: [UNIFIED_ARCHITECTURE.md](cis_compliance_dashboard_prototype/docs/UNIFIED_ARCHITECTURE.md). Live and offline evidence: `cis_compliance_dashboard_prototype/docs/evaluation/`.
+
 ## The agents
 
 | Agent | What it decides itself | What it can never do |

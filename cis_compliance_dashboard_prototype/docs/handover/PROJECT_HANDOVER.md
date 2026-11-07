@@ -19,7 +19,7 @@ The detailed, dated record is `docs/INTEGRATION_PROGRESS.md`; this section summa
 - **Execution gate:** evidence-based. It opens only when the deployed runner matches this application and both live acceptance scenarios have passed on the VM for that runner version.
   - The runner stage (`install-runner.sh`) was deployed with the administrator's approval on 2026-11-07, and the confirm scenario passed.
   - After the maintenance-operations runner change, the administrator reinstalled the helper and runner. Both scenarios passed live on 2026-11-07 for runner digest `3df47649b229`: confirm → confirmed (03:05 UTC), rollback → rolled_back (03:07 UTC). The execution gate is open for that version.
-- **Operations guide:** `docs/OPERATIONS.md`. Runner deployment preview: `docs/RUNNER_DEPLOYMENT.md`.
+- **Operations guide:** `docs/OPERATIONS.md` (including store backup and restore). Architecture and interfaces: `docs/UNIFIED_ARCHITECTURE.md`. Runner deployment preview: `docs/RUNNER_DEPLOYMENT.md`. Evaluation evidence: `docs/evaluation/` (live-validation register, OpenSCAP cross-check, fault-scenario matrix, agentic evaluation).
 - **Outstanding:**
   - live validation of every family (task 17);
   - the 2.1.2 mask-and-retain branch (needs a site decision);

@@ -59,6 +59,20 @@ cd ~/ubuntu-helper && sudo bash install.sh && sudo bash install-runner.sh
 3. **Remove the runner stage:** `sudo bash uninstall-runner.sh` on the VM console.
 4. **VirtualBox snapshot:** take one before each live session (for example `Before_Live_Fixes_<date>`); it is the last resort.
 
+## Back up and restore the stores
+
+The stores under `data/` hold every scan, round, approval, receipt and the coordination ledger (`UNIFIED_ARCHITECTURE.md`, "Stores"). Back them up before each live session, next to the VirtualBox snapshot.
+
+```powershell
+..\.venv-integration\Scripts\python.exe -B -m tools.backup_stores backup
+```
+
+- This creates `..\store-backups\stores-<UTC time>\`, a consistent copy of every store taken with SQLite's backup API (safe while the app runs), plus `manifest.json` with each file's SHA-256 and integrity check. It then verifies the copy. Backups are git-ignored and contain no credentials.
+- Check an older backup: `... -m tools.backup_stores verify ..\store-backups\stores-<time>`.
+- **Restore:** stop the app. Restore into an empty folder, e.g. `... -m tools.backup_stores restore ..\store-backups\stores-<time> --into ..\restored-data`. Then rename the current `data` folder (keep it), rename `restored-data` to `data`, and start the app. The tool never writes into a folder that has content, so it cannot overwrite the live stores.
+- A restored store must match the VM's current state: after a VM snapshot restore, use the backup taken with that snapshot. The app refuses approvals from another registration epoch.
+- Drill, 2026-11-07: all 7 live stores backed up, verified and restored into an empty folder, with identical row counts in every table.
+
 ## Troubleshooting
 
 | Message or symptom | Meaning and action |

@@ -1054,3 +1054,9 @@ The execution gate was a hard-coded "closed". It now opens only on evidence.
   - Result (`docs/evaluation/FAULT_SCENARIOS.md`): **35 of 35** pass. These are fixture results, not live evidence.
   - **Gap filled:** no Ubuntu test exercised the host's registration-epoch refusal, which is the only guard after a snapshot restore (the VM keeps its machine ID and hostname, so its runner cannot tell). Added `test_an_approval_from_an_earlier_registration_epoch_is_refused_before_any_dispatch`; it fails when the epoch is removed from the executor check (mutation run, then restored).
   - A guard test keeps the matrix naming real tests. Full suite **591 tests, all passed**; baseline: no protected changes.
+- **Handover documents (task 17):**
+  - `tools/backup_stores.py`: a consistent SQLite backup of every store under `data/`, with a manifest of hashes and integrity checks, a verify command, and a restore that writes only into an empty folder. 6 tests, written first.
+  - Drill on the real stores: 7 stores backed up, verified and restored, with identical row counts in every table. This closes task 7's outstanding backup/restore drill.
+  - New `docs/UNIFIED_ARCHITECTURE.md` (layers, the `WorkspaceBackend` interface, the Ubuntu round end to end, stores, evidence tools).
+  - Updates: OPERATIONS "Back up and restore the stores"; an update section in the report change log (live evidence kept separate from fixture evidence); a root README pointer to the unified system (metadata file); `.gitignore` covers backups.
+  - Full suite **597 tests, all passed**; baseline: no protected changes (metadata: `PROGRESS.md`, `README.md`).
