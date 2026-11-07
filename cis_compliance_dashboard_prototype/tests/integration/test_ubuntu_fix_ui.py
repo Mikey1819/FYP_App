@@ -61,7 +61,7 @@ class FixUiTests(StoreFixture):
         ledger = CoordinationLedger(self.root / 'integration.sqlite3')
 
         def backend_factory(session):
-            fix = {'control_id': '1.5.1', 'decision': 'fix', 'action_id': spec.action_id, 'reason_code': 'high_risk'}
+            fix = {'control_id': '1.5.1', 'decision': 'fix', 'action_id': spec.action_id, 'reason_code': 'highest_risk'}
             clients = team([call('delegate_scanner'), call('delegate_analysis'), plan_call([fix])],
                            scanner_ok(), RankingAware())
             for client in clients.values():

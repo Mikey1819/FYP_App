@@ -29,18 +29,18 @@ class PlanFormatTests(unittest.TestCase):
 
     def test_separate_lists_store_the_same_plan_as_before(self):
         result, _ = self.round_with({'fixes': [{'control_id': '1.5.1', 'action_id': ELIGIBLE['1.5.1'],
-                                                'reason_code': 'high_risk'}],
+                                                'reason_code': 'highest_risk'}],
                                      'defers': [{'control_id': '5.1.20', 'reason_code': 'no_registered_action'}]})
         plan = result['plan']
         self.assertEqual(plan['fixes'], [{'control_id': '1.5.1', 'decision': 'fix', 'action_id': ELIGIBLE['1.5.1'],
-                                          'reason_code': 'high_risk'}])
+                                          'reason_code': 'highest_risk'}])
         self.assertEqual(plan['decisions'], [{'control_id': '5.1.20', 'decision': 'defer',
                                               'reason_code': 'no_registered_action'}])
         self.assertEqual(plan['outcome'], 'fix_proposed')
 
     def test_a_plan_must_decide_every_failure_that_has_a_registered_action(self):
         # Live 04:11 and 04:21: the model fixed the two flagged controls and silently left 20 undecided.
-        fix = {'control_id': '1.5.1', 'action_id': ELIGIBLE['1.5.1'], 'reason_code': 'high_risk'}
+        fix = {'control_id': '1.5.1', 'action_id': ELIGIBLE['1.5.1'], 'reason_code': 'highest_risk'}
         partial = {'defers': [{'control_id': '5.1.20', 'reason_code': 'no_registered_action'}]}
         result, events = self.round_with(partial, dict(partial, fixes=[fix]))
         rejected = [e['data']['error'] for e in events if e['kind'] == 'tool_rejected']
@@ -95,13 +95,30 @@ class PlanFormatTests(unittest.TestCase):
                                      'defers': [{'control_id': '5.1.20', 'reason_code': 'no_registered_action'}]})
         rejected = [e['data']['error'] for e in events if e['kind'] == 'tool_rejected']
         self.assertTrue(rejected)
-        self.assertIn('high_risk', rejected[0])
+        self.assertIn('highest_risk', rejected[0])
 
     def test_a_control_in_both_lists_is_refused(self):
         result, _ = self.round_with({'fixes': [{'control_id': '1.5.1', 'action_id': ELIGIBLE['1.5.1'],
-                                                'reason_code': 'high_risk'}],
+                                                'reason_code': 'highest_risk'}],
                                      'defers': [{'control_id': '1.5.1', 'reason_code': 'needs_manual_review'}]})
         self.assertIsNone(result['plan'])
+
+    def test_the_risk_fix_reason_uses_the_analysis_flag_name(self):
+        # Live 04:59: 21 fixes, but 4.1.4 and 5.1.20 carried the analysis flag 'highest_risk' instead of the
+        # fix reason 'highest_risk'; the plan was refused and the identical retry blocked.
+        from backends.ubuntu.agents import FIX_REASONS
+        self.assertIn('highest_risk', FIX_REASONS)
+        self.assertNotIn('high_risk', FIX_REASONS)
+        result, _ = self.round_with({'fixes': [{'control_id': '1.5.1', 'action_id': ELIGIBLE['1.5.1'],
+                                                'reason_code': 'highest_risk'}]})
+        self.assertEqual(result['plan']['fixes'][0]['reason_code'], 'highest_risk')
+
+    def test_a_refusal_names_the_control_and_the_bad_value(self):
+        _, events = self.round_with({'fixes': [{'control_id': '1.5.1', 'action_id': ELIGIBLE['1.5.1'],
+                                                'reason_code': 'urgent'}]})
+        error = [e['data']['error'] for e in events if e['kind'] == 'tool_rejected'][0]
+        self.assertIn('1.5.1', error)
+        self.assertIn('urgent', error)
 
     def tools_offered(self):
         """The tool schemas the orchestrator was sent at its last request (recorded by the scripted client)."""

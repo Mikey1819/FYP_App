@@ -37,7 +37,7 @@ class PlanHonestyTests(unittest.TestCase):
 
     def test_no_registered_action_stays_valid_for_a_control_without_one(self):
         true = [{'control_id': '5.1.20', 'decision': 'defer', 'reason_code': 'no_registered_action'}]
-        fix = [{'control_id': '1.5.1', 'decision': 'fix', 'action_id': ELIGIBLE['1.5.1'], 'reason_code': 'high_risk'}]
+        fix = [{'control_id': '1.5.1', 'decision': 'fix', 'action_id': ELIGIBLE['1.5.1'], 'reason_code': 'highest_risk'}]
         result, _ = self.round_with(fix + true)
         self.assertEqual(result['plan']['decisions'], true)
 
@@ -89,7 +89,7 @@ class PlanTableTests(unittest.TestCase):
         failing = sorted(c.control_id for c in snap.controls if c.status.value == 'Non-Compliant')
         self.assertEqual(sorted(r.control_id for r in snap.plan), failing)
         row = next(r for r in snap.plan if r.control_id == '1.5.1')
-        self.assertEqual((row.decision, row.reason), ('Fix proposed', 'High-priority confirmed failure'))
+        self.assertEqual((row.decision, row.reason), ('Fix proposed', 'Among the highest deterministic risk'))
         self.assertTrue(row.title)
 
     def test_a_deferral_shows_its_reason_in_words(self):
@@ -101,6 +101,15 @@ class PlanTableTests(unittest.TestCase):
         snap = self.snapshot([])  # an empty plan leaves the failure undecided, so it is refused: no plan
         row = next(r for r in snap.plan if r.control_id == '1.5.1')
         self.assertEqual(row.decision, 'No plan')
+
+    def test_rounds_stored_with_the_old_risk_reason_still_read_in_words(self):
+        from backends.ubuntu.adapter import _plan_rows, _controls
+        from types import SimpleNamespace as N
+        from system.contracts import ComplianceStatus
+        evidence = N(assessments=[N(control_id='5.1.20', status=ComplianceStatus.NON_COMPLIANT)])
+        details = {'plan': {'fixes': [{'control_id': '5.1.20', 'decision': 'fix', 'action_id': 'ubuntu.5.1.20.v1',
+                                       'reason_code': 'high_risk'}], 'decisions': [], 'deferred_by_code': []}}
+        self.assertEqual(_plan_rows(details, evidence, _controls())[0].reason, 'High-priority confirmed failure')
 
     def test_a_deferral_recorded_by_code_says_so(self):
         from backends.ubuntu.adapter import _plan_rows, _controls

@@ -136,7 +136,7 @@ class EligibleFixTests(unittest.TestCase):
                 return run_agentic_round(client_factory=clients.__getitem__, collect=case.collect_with(), log_store=case.log,
                                          target_id='ubuntu:fixture', titles={c: x.title for c, x in _controls().items()},
                                          rank=lambda r, e: None, eligible={'1.5.1': 'fixture.file_value.v1'})
-            fix = {'control_id': '1.5.1', 'decision': 'fix', 'action_id': 'fixture.file_value.v1', 'reason_code': 'high_risk'}
+            fix = {'control_id': '1.5.1', 'decision': 'fix', 'action_id': 'fixture.file_value.v1', 'reason_code': 'highest_risk'}
             self.assertEqual(round_with([fix])['plan']['fixes'], [fix])
             for bad in (dict(fix, action_id='ubuntu.1.5.1.v1'), dict(fix, control_id='5.1.20'),
                         dict(fix, reason_code='no_registered_action')):
@@ -146,7 +146,7 @@ class EligibleFixTests(unittest.TestCase):
 
 
 class BackendRemediationTests(StoreFixture):
-    FIX = [{'control_id': '1.5.1', 'decision': 'fix', 'action_id': 'fixture.file_value.v1', 'reason_code': 'high_risk'}]
+    FIX = [{'control_id': '1.5.1', 'decision': 'fix', 'action_id': 'fixture.file_value.v1', 'reason_code': 'highest_risk'}]
 
     def backend(self, orchestrator_decisions):
         from backends.ubuntu.actions import ActionSpec

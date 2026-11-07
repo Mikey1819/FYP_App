@@ -634,3 +634,7 @@ The VM evidence showed that the SSH job never wrote a file. The combined target 
 ## 7 November 2026 — plans with all registered fixes accepted (integration)
 
 Acceptance passed on runner `b1b17b633dfd`. The orchestrator then proposed 21 correct fixes but left out 6.3.1.2, which has no applicable action until auditd is installed, and the plan was refused. Failures without an action are now deferred by code; the AI must still decide every fixable one. The live plan replays as accepted. Full suite: **546 passed**.
+
+## 7 November 2026 — Ubuntu fix reason matches the analysis flag (integration)
+
+A complete 21-fix plan was refused because the model wrote the analysis flag `highest_risk` where the fix reason was `high_risk`. The fix reason now uses the flag's name, and refusals name the control and value. Both recent live plans replay as accepted. Full suite: **549 passed**.

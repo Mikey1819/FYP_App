@@ -117,9 +117,10 @@ def _risk_policy():
 
 def _plan_rows(details, evidence, catalogue):
     """One row per Non-Compliant control: what the orchestrator decided and why, from its fixed reason codes."""
-    from .agents import DEFER_REASONS, FIX_REASONS, FLAGS
+    from .agents import DEFER_REASONS, FIX_REASONS, FLAGS, LEGACY_FIX_REASONS
     plan = details.get('plan') or {}
-    decided = {e['control_id']: ('Fix proposed', FIX_REASONS.get(e['reason_code'], e['reason_code']))
+    words = {**LEGACY_FIX_REASONS, **FIX_REASONS}
+    decided = {e['control_id']: ('Fix proposed', words.get(e['reason_code'], e['reason_code']))
                for e in plan.get('fixes', ())}
     decided.update({e['control_id']: ('Deferred', DEFER_REASONS.get(e['reason_code'], e['reason_code']))
                     for e in plan.get('decisions', ())})

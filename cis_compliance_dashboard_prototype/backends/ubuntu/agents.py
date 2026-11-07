@@ -35,8 +35,10 @@ DEFER_REASONS = {'no_registered_action': 'No registered fix applies in the curre
                  'outside_goal': 'Outside the administrator goal',
                  'needs_manual_review': 'Needs human review before any change'}
 FIX_REASONS = {'confirmed_failure': 'Confirmed CIS failure with a registered fix',
-               'high_risk': 'High-priority confirmed failure', 'serves_goal': 'Serves the administrator goal',
+               # Same code as the analysis flag (live: the model wrote 'highest_risk' where 'high_risk' was expected).
+               'highest_risk': 'Among the highest deterministic risk', 'serves_goal': 'Serves the administrator goal',
                'unblocks_other': 'Prerequisite for another finding'}
+LEGACY_FIX_REASONS = {'high_risk': 'High-priority confirmed failure'}  # stored rounds before 2026-11-07 05:00 UTC
 FLAGS = {'highest_risk': 'Among the highest deterministic risk', 'affects_remote_access': 'Affects remote administration',
          'persistent_failure': 'Failing in an earlier comparable assessment'}
 TRIAGE = {'manual_review': 'Requires bound human review', 'collection_error': 'Collection failed; inspect target prerequisites',
@@ -347,8 +349,8 @@ class OrchestratorTools(_RoleTools):
                 raise ValueError(str(entry['control_id'])[:20] + ' has no registered action ' + str(entry['action_id'])[:60]
                                  + '; use the action listed in registered_actions')
             if entry['reason_code'] not in fix_codes:
-                raise ValueError('A fix reason_code must be one of: ' + ', '.join(sorted(fix_codes))
-                                 + ' (defer reasons belong in defers)')
+                raise ValueError('%s: %r is not a fix reason_code; use one of: %s (defer reasons belong in defers)'
+                                 % (str(entry['control_id'])[:20], str(entry['reason_code'])[:40], ', '.join(sorted(fix_codes))))
             seen.add(entry['control_id'])
             fixes.append({'control_id': entry['control_id'], 'decision': 'fix', 'action_id': entry['action_id'],
                           'reason_code': entry['reason_code']})
@@ -358,7 +360,8 @@ class OrchestratorTools(_RoleTools):
             if entry['control_id'] not in self.rounds.failing() or entry['control_id'] in seen:
                 raise ValueError('Unknown or duplicate control in the plan')
             if entry['reason_code'] not in defer_codes:
-                raise ValueError('A defer reason_code must be one of: ' + ', '.join(sorted(defer_codes)))
+                raise ValueError('%s: %r is not a defer reason_code; use one of: %s'
+                                 % (str(entry['control_id'])[:20], str(entry['reason_code'])[:40], ', '.join(sorted(defer_codes))))
             if entry['reason_code'] == 'no_registered_action' and entry['control_id'] in eligible:
                 # A deferral reason must be true (live: qwen3:8b claimed this for 20 offered actions).
                 raise ValueError(entry['control_id'] + ' has registered action ' + eligible[entry['control_id']]

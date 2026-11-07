@@ -955,3 +955,13 @@ The execution gate was a hard-coded "closed". It now opens only on evidence.
 - **Replay:** the exact rejected 04:52 arguments are accepted under the new rule (21 fixes, 6.3.1.2 deferred by code).
 - **Tests:** 4 new tests plus 1 rewritten, written first. Mutations caught: requiring eligible-less failures again, and dropping the eligible check.
 - Full suite **546 tests, all passed**; baseline: no protected changes. Host only: collector digest unchanged (`b1b17b633dfd`).
+
+## 7 November 2026 — fix reason renamed to match the analysis flag (live finding)
+- **Live round 04:59 UTC:** a complete plan: 21 fixes, with 6.3.1.2 deferred by the model itself. 4.1.4 and 5.1.20 carried the analysis flag code `highest_risk` where the fix reason was `high_risk`, so the plan was refused, the identical retry was blocked, and no plan was stored.
+- **Changes:**
+  - The fix reason is now `highest_risk` ("Among the highest deterministic risk"), the same code as the analysis flag.
+  - Stored rounds that use `high_risk` still read in words (`LEGACY_FIX_REASONS`).
+  - Reason-code refusals now name the control and the rejected value.
+- **Replay:** the exact arguments of the 04:52 and 04:59 rounds are both accepted (21 fixes each; 6.3.1.2 deferred).
+- **Tests:** 3 new tests, written first; Ubuntu tests use the new code (Windows tests untouched). Mutation caught: a refusal without the control and value.
+- Full suite **549 tests, all passed**; baseline: no protected changes. Host only: collector digest unchanged (`b1b17b633dfd`).
