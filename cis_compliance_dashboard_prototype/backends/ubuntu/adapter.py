@@ -124,8 +124,13 @@ class UbuntuBackend(BoundBackend):
         self.registered_firewall_manager = registered_firewall_manager
         if model_client_factory is None:
             from hardening.ollama_client import OllamaClient
-            client = OllamaClient()
-            model_client_factory = lambda role: client  # noqa: E731 - one loopback client for every role
+            from .agents import ANALYSIS, ORCHESTRATOR
+            # Output budgets per role. A plan deciding all 30 controls is ~1,400 tokens: the old shared 384-token
+            # client truncated qwen3:8b's submit_plan live (empty reply, round "Unavailable", no proposals).
+            # 2048 output plus a ~1,600-token prompt still fits the client's fixed 4,096-token context.
+            clients = {role: OllamaClient(budget) for role, budget in ((ORCHESTRATOR, 2048), (ANALYSIS, 768))}
+            default = OllamaClient(512)
+            model_client_factory = lambda role: clients.get(role, default)  # noqa: E731 - loopback clients only
         if model_probe is None:
             from hardening.ollama_client import model_available as model_probe
         self.model_client_factory, self.model_probe = model_client_factory, model_probe

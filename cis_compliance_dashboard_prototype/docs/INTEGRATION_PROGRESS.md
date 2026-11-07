@@ -886,3 +886,12 @@ The execution gate was a hard-coded "closed". It now opens only on evidence.
 - The administrator reinstalled the helper and runner stage built from 4b404c8 (collector digest `3df47649b229`, matching this checkout).
 - Ledger acceptance records for that digest: confirm → `confirmed` (settled 03:05:56 UTC); rollback → `rolled_back` (settled 03:07:38 UTC).
 - The evidence-based execution gate is therefore open for this runner version. No CIS fix has run live yet; the next step is one low-risk fix (3.3.2) with a snapshot taken first.
+
+## 7 November 2026 — agent output budgets (live finding)
+- **Live symptom:** the first agentic round on the accepted runner (03:16 UTC) stored no fix proposals; the Fixes tab showed only "Prepare package-list refresh".
+- **Cause, from the stored run logs:** scanner and analysis completed (30/30 decided, 22 Non-Compliant). At the plan step, qwen3:8b returned an empty reply twice (once after the nudge); the round ended "Unavailable" with `plan: null`.
+  - The Ubuntu backend shared one client with the default 384-token output limit across all roles.
+  - A plan deciding the 22 failures with registered actions is about 2,450 characters, roughly 800–1,000 tokens, so the tool call was truncated.
+- **Fix (host only):** per-role clients, with orchestrator 2048, analysis 768 and scanner 512 tokens; the Windows engine uses 1024/768/512. 2048 output plus a prompt of about 1,600 tokens fits the client's fixed 4,096-token context. The protected `ollama_client.py` is unchanged.
+- **Tests:** 2 new tests, written first: the orchestrator budget covers a plan fixing all 30 controls, and role budgets match or exceed the Windows engine. Mutations caught: orchestrator 1024, and one shared client.
+- Full suite **523 tests, all passed**; baseline: no protected changes. The collector digest is unchanged (`3df47649b229`): no reinstall, and the acceptance results still apply.
