@@ -79,9 +79,12 @@ class ServiceFamily:
 
 
 class AvahiMaskFamily:
-    """2.1.2 with the package retained: `systemctl stop` the socket then the service, then `systemctl mask` both.
-    Refused when a unit is not installed or is changing state. Restore unmasks, then returns each unit's recorded
-    enablement and activity. The package itself is never touched."""
+    """2.1.2 with the package retained: `systemctl mask` both units, then `systemctl stop` the service and its socket.
+    CIS lists stop before mask; the end state is the same, but live (2026-11-08 01:20:44) cups-browsed asked for
+    org.freedesktop.Avahi over D-Bus the instant the service stopped, D-Bus started it again and systemd cancelled the
+    stop. A masked unit cannot be started by anything, D-Bus activation included, so masking first makes the stop
+    stick. Refused when a unit is not installed or is changing state. Restore unmasks, then returns each unit's
+    recorded enablement and activity. The package itself is never touched."""
     version = 1
     implementation_sha256 = IMPLEMENTATION_SHA256
     max_seconds = 60
@@ -111,17 +114,20 @@ class AvahiMaskFamily:
                 raise ValueError('The unit is changing state; try again')
 
     def summary(self, params, before):
-        return {'current': json.loads(before), 'steps': ['stop ' + u for u in self.units] + ['mask ' + u for u in self.units],
+        return {'current': json.loads(before),
+                'steps': ['mask ' + u for u in self.units] + ['stop ' + u for u in reversed(self.units)],
                 'package': 'avahi-daemon stays installed (site decision); only its socket and service are stopped and masked',
+                'impact': 'mDNS/DNS-SD (.local names, service discovery) stops; cups-browsed can no longer discover '
+                          'network printers through Avahi',
                 'recovery': 'Unmask, then the recorded enablement and activity of each unit'}
 
     def apply(self, params):
-        for unit in self.units:  # the socket first, so it cannot start the service again
-            if self.system.unit_state(unit)['active'] != 'inactive':
-                self.system.systemctl('stop', unit)
-        for unit in self.units:
+        for unit in self.units:  # mask first: nothing (socket, D-Bus, another unit) can start it again
             if self.system.unit_state(unit)['enabled'] != 'masked':
                 self.system.systemctl('mask', unit)
+        for unit in reversed(self.units):  # then the service, then its socket
+            if self.system.unit_state(unit)['active'] != 'inactive':
+                self.system.systemctl('stop', unit)
 
     def restore(self, params, before):
         recorded = json.loads(before)

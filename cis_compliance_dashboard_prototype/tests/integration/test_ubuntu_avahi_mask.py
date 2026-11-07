@@ -17,7 +17,10 @@ class FakeSystemd:
     """systemctl show semantics: a masked unit reads LoadState=masked, UnitFileState=masked; unmask brings back the
     enablement its symlinks still give it."""
 
-    def __init__(self, enabled='enabled', active='active', installed=True):
+    def __init__(self, enabled='enabled', active='active', installed=True, dbus_reactivates=False):
+        # dbus_reactivates: live 2026-11-08 01:20:44 - cups-browsed asked for org.freedesktop.Avahi the instant the
+        # service stopped, D-Bus started it again, and systemd cancelled the stop (systemctl failed).
+        self.dbus_reactivates = dbus_reactivates
         self.units = {u: {'load': 'loaded' if installed else 'not-found', 'enabled': enabled if installed else 'not-found',
                           'active': active if installed else 'inactive', 'links': enabled == 'enabled'} for u in UNITS}
         self.calls = []
@@ -30,6 +33,10 @@ class FakeSystemd:
         self.calls.append((verb, unit))
         u = self.units[unit]
         if verb == 'stop':
+            service = self.units['avahi-daemon.service']
+            if self.dbus_reactivates and service['enabled'] != 'masked':
+                service['active'] = self.units['avahi-daemon.socket']['active'] = 'active'
+                raise OSError('systemctl stop failed')  # the stop job was cancelled by the D-Bus activation
             u['active'] = 'inactive'
         elif verb == 'start':
             u['active'] = 'active'
@@ -56,11 +63,20 @@ class AvahiMaskFamilyTests(unittest.TestCase):
         before = family.read_state(PARAMS)
         expected = family.expected_after(PARAMS, before)
         family.apply(PARAMS)
-        self.assertEqual(system.calls[:2], [('stop', 'avahi-daemon.socket'), ('stop', 'avahi-daemon.service')])
-        self.assertEqual(set(system.calls[2:]), {('mask', u) for u in UNITS})
+        # Mask first, so nothing (D-Bus activation included) can start the units between the stops.
+        self.assertEqual(set(system.calls[:2]), {('mask', u) for u in UNITS})
+        self.assertEqual(set(system.calls[2:]), {('stop', u) for u in UNITS})
         self.assertEqual(family.read_state(PARAMS), expected)
         family.restore(PARAMS, before)
         self.assertEqual(family.read_state(PARAMS), before)
+
+    def test_a_service_that_d_bus_restarts_on_demand_is_still_stopped_and_masked(self):
+        # The live failure: stop-then-mask lost the race against cups-browsed's D-Bus activation.
+        system = FakeSystemd(dbus_reactivates=True)
+        family = self.family(system)
+        before = family.read_state(PARAMS)
+        family.apply(PARAMS)
+        self.assertEqual(family.read_state(PARAMS), family.expected_after(PARAMS, before))
 
     def test_only_the_registered_units_and_mask_are_managed(self):
         family = self.family(FakeSystemd())
@@ -77,8 +93,9 @@ class AvahiMaskFamilyTests(unittest.TestCase):
     def test_the_summary_lists_the_steps_and_says_the_package_stays(self):
         family = self.family(FakeSystemd())
         summary = family.summary(PARAMS, family.read_state(PARAMS))
-        self.assertEqual(summary['steps'], ['stop avahi-daemon.socket', 'stop avahi-daemon.service',
-                                            'mask avahi-daemon.socket', 'mask avahi-daemon.service'])
+        self.assertEqual(summary['steps'], ['mask avahi-daemon.socket', 'mask avahi-daemon.service',
+                                            'stop avahi-daemon.service', 'stop avahi-daemon.socket'])
+        self.assertIn('cups-browsed', summary['impact'])
         self.assertIn('stays installed', summary['package'])
 
 

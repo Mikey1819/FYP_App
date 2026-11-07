@@ -1171,3 +1171,12 @@ The execution gate was a hard-coded "closed". It now opens only on evidence.
   - Tests: `test_ubuntu_patch_preview` (3); the patch family test was updated.
 - Full suite **649 tests, all passed**; baseline: no protected changes.
 - **Helper change:** collector digest is now **`a94748e922d3`**; `dist/ubuntu-helper` has been rebuilt. Reinstall plus both acceptance scenarios are needed before scans and fixes are accepted.
+
+## 8 November 2026 — 2.1.2 live: stop lost a race with D-Bus activation (helper change)
+- **Helper `a94748e922d3` reinstalled; 2.1.2 approved 17:20:32 UTC.** The receipt was `unresolved / apply_failed` at 17:20:44, 69 ms after starting. Check status then reconciled it `not_applied / before_state`: both avahi units were exactly as before (`loaded / enabled / active`).
+- **System journal (administrator, with sudo), 01:20:44 VM time:** systemd stopped avahi-daemon. In the same second, `dbus-daemon` logged "Activating via systemd: service name='org.freedesktop.Avahi' … requested by … cups-browsed", and avahi started again. systemd cancelled the pending stop, `systemctl` failed, and the family raised. Nothing stayed changed.
+- **Fix (`vm/ubuntu/family_service.py`):** mask both units first, then stop the service and its socket. A masked unit cannot be started by anything, D-Bus activation included. CIS lists stop before mask; the end state is identical.
+  - The preview now declares the impact: mDNS/.local discovery stops, and cups-browsed can no longer discover network printers through Avahi.
+  - If anything still restarted it, the runner's after-state check would catch it (`unexpected_after_state`).
+- **Tests:** the fake systemd gained the live race (the service restarts on demand while unmasked and the stop fails). The new race test failed with exactly the live error before the change. Order and summary assertions were updated. Full suite **650 tests, all passed**.
+- **Helper change:** collector digest is now **`0e991756fe49`**; `dist/ubuntu-helper` has been rebuilt. Reinstall plus both acceptance scenarios are needed.
