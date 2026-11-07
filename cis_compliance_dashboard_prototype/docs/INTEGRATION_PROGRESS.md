@@ -1060,3 +1060,9 @@ The execution gate was a hard-coded "closed". It now opens only on evidence.
   - New `docs/UNIFIED_ARCHITECTURE.md` (layers, the `WorkspaceBackend` interface, the Ubuntu round end to end, stores, evidence tools).
   - Updates: OPERATIONS "Back up and restore the stores"; an update section in the report change log (live evidence kept separate from fixture evidence); a root README pointer to the unified system (metadata file); `.gitignore` covers backups.
   - Full suite **597 tests, all passed**; baseline: no protected changes (metadata: `PROGRESS.md`, `README.md`).
+
+## 7 November 2026 — second live CIS fix: 5.4.1.1 (administrator-approved)
+- Round 09:54 UTC (17 planned fixes, 15 stored fix plans; both 6.3.1.1 and 5.4.1.1 were offered). The administrator approved **5.4.1.1** (approved 09:55:41), not 6.3.1.1; 6.3.1.1 has no approval and auditd is still absent.
+- 5.4.1.1 applied at 09:55:48 (`applied` / `expected_after_state`). The automatic verification scan at 09:56:08 read **5.4.1.1 Compliant**: `/etc/login.defs` PASS_MAX_DAYS went from 99999 to 365. The password-bearing accounts (root, vboxuser) were already at 365, and the system accounts at 99999 have no password, so CIS excludes them.
+- **Independent check:** OpenSCAP's `accounts_maximum_age_login_defs` went from fail to pass; direct probes and OpenSCAP agree before and after.
+- Register refreshed (`docs/evaluation/LIVE_VALIDATION.md`): **2 validated live** (3.3.2, 5.4.1.1), 1 attempted and not applied (5.1.20), 27 not run live.
