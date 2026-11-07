@@ -34,7 +34,7 @@ class FakeSsh:
                 values[parts[0].lower()] = {'prohibit-password': 'without-password'}.get(parts[1], parts[1].lower())
         return values
 
-    def write_managed(self, content):
+    def write_sshd_dropin(self, content):
         if not self.syntax_ok:
             raise OSError('sshd -t rejected the configuration; the previous file was put back')
         self.calls.append('write' if content is not None else 'remove')

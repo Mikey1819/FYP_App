@@ -927,3 +927,20 @@ The execution gate was a hard-coded "closed". It now opens only on evidence.
   - SSH configuration is unchanged.
 - **Tests:** 2 new tests, written first; older tests now send complete plans. Mutations caught: completeness check removed; the plan table listing only decided controls.
 - Full suite **539 tests, all passed**; baseline: no protected changes. Host only: collector digest unchanged (`3df47649b229`).
+
+## 7 November 2026 — target IO name collisions (root cause of the 5.1.20 rollback)
+- **VM evidence (administrator, read-only):**
+  - The request directory holds `job_started`, `decision` and `receipt.json`, so the job reached `apply`.
+  - The job unit started and "Deactivated successfully" at 12:22:32 local (04:22:32 UTC).
+  - `/etc/ssh/sshd_config.d/` is empty, with its mtime still Oct 9, so no file (not even the temporary file) was ever created there.
+  - The suggested `ssh` journal window used UTC on a MYT clock, so its "No entries" carries no information.
+- **Cause:** `LinuxTargetSystem` mixes every family's IO class. `LinuxAuditIO._put(name, content)` came earlier in the MRO than `LinuxSshIO._put(content)`, so `write_managed` raised TypeError before any write. The job then rolled back with `nothing_to_restore`. `LinuxSshIO.write_managed` also shadowed `LinuxSysctlSystem.write_managed`: sysctl fixes would have entered the SSH write path and failed the same way, before writing.
+  - Family tests use fakes, so the real composed class was never exercised.
+- **Fix:** the SSH IO methods are now `write_sshd_dropin`, `_put_sshd_dropin` and `_sshd_ok`.
+- **New guards (3 tests, written first):**
+  - every attribute of every IO class (methods, static methods, constants) is the one `LinuxTargetSystem` resolves;
+  - the sysctl write resolves to its own IO;
+  - every `self.system.<name>` a family calls exists on the real class.
+  - Mutations caught: the collision reintroduced, and a misspelled system call.
+- Full suite **542 tests, all passed**; baseline: no protected changes; source check passes; bundle rebuilt.
+- **Helper changed (collector digest `b1b17b633dfd`):** reinstall, rerun `install-runner.sh` and repeat both acceptance scenarios before any live fix.

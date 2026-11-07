@@ -130,7 +130,7 @@ class SshFamily:
                                'is rolled back automatically.'}
 
     def _write(self, entries):
-        self.system.write_managed(render(entries))
+        self.system.write_sshd_dropin(render(entries))
 
     def apply(self, params):
         entries = self._managed()
@@ -169,10 +169,10 @@ class LinuxSshIO:
                 values.setdefault(parts[0].lower(), parts[1].strip().lower())
         return values
 
-    def _ok(self, argv, seconds):
+    def _sshd_ok(self, argv, seconds):
         return self.io._run(argv, seconds).returncode == 0
 
-    def _put(self, content):
+    def _put_sshd_dropin(self, content):
         target = Path(MANAGED)
         if target.is_symlink() or target.parent.is_symlink():
             raise ValueError('Managed files must not be symlinks')
@@ -190,14 +190,14 @@ class LinuxSshIO:
             os.close(fd)
         os.replace(tmp, target)
 
-    def write_managed(self, content):
+    def write_sshd_dropin(self, content):
         target = Path(MANAGED)
         previous = target.read_bytes() if target.exists() and not target.is_symlink() else None
-        self._put(content)
-        if not self._ok(('/usr/sbin/sshd', '-t'), 20):
-            self._put(previous)
+        self._put_sshd_dropin(content)
+        if not self._sshd_ok(('/usr/sbin/sshd', '-t'), 20):
+            self._put_sshd_dropin(previous)
             raise OSError('sshd -t rejected the configuration; the previous file was put back')
-        if not self._ok(('/usr/bin/systemctl', 'reload', 'ssh.service'), 30):
-            self._put(previous)
-            self._ok(('/usr/bin/systemctl', 'reload', 'ssh.service'), 30)
+        if not self._sshd_ok(('/usr/bin/systemctl', 'reload', 'ssh.service'), 30):
+            self._put_sshd_dropin(previous)
+            self._sshd_ok(('/usr/bin/systemctl', 'reload', 'ssh.service'), 30)
             raise OSError('sshd reload failed; the previous file was put back')

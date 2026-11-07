@@ -626,3 +626,7 @@ In the next live round, the orchestrator offered fixes for all 22 failures but g
 ## 7 November 2026 — complete Ubuntu plans; first live SSH attempt (integration)
 
 The orchestrator listed only the two highest-risk fixes because ordinary failures had no true fix reason. It now has `confirmed_failure`, and every plan must decide every confirmed failure. The first live fix (5.1.20) failed inside its job and rolled itself back without changing SSH; read-only VM logs are needed to find the failing step. Full suite: **539 passed**.
+
+## 7 November 2026 — 5.1.20 root cause: IO method collisions (integration)
+
+The VM evidence showed that the SSH job never wrote a file. The combined target IO class had two name collisions: the audit `_put` shadowed the SSH one, and the SSH `write_managed` shadowed the sysctl one. The SSH job failed before writing and rolled back; sysctl fixes would have failed the same way. The SSH methods are renamed, and three guard tests check the real composed class. Full suite: **542 passed**. Helper changed: reinstall and repeat both acceptance scenarios.
