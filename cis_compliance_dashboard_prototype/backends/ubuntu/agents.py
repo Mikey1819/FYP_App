@@ -285,6 +285,9 @@ class AnalysisTools(_RoleTools):
 
 class OrchestratorTools(_RoleTools):
     names = ('delegate_scanner', 'delegate_analysis', 'submit_plan')
+    # A refused plan may be resubmitted unchanged (live 06:52-07:11); it is validated and refused again, the
+    # Coordinator's invalid-call limit bounds it, and an accepted plan ends the round.
+    repeatable = ('submit_plan',)
 
     def __init__(self, rounds):
         super().__init__(rounds, ORCHESTRATOR)
@@ -335,6 +338,16 @@ class OrchestratorTools(_RoleTools):
 
     @staticmethod
     def _entries(value, label):
+        """The list the model meant, from the two unambiguous shapes qwen3:8b sends: one object for a one-item list
+        (offline trial, 10 of 10) and one object of equal-length parallel lists (live 07:11). Then validated as usual."""
+        if type(value) is dict:
+            columns = list(value.values())
+            if columns and all(type(c) is list for c in columns):
+                if len({len(c) for c in columns}) != 1:
+                    raise ValueError(label + ': parallel lists of different lengths; send a list of objects')
+                value = [dict(zip(value, row)) for row in zip(*columns)]
+            elif not any(type(c) in (list, dict) for c in columns):
+                value = [value]
         if type(value) is not list or len(value) > 40 or any(type(e) is not dict for e in value):
             raise ValueError(label + ' must be a list of at most 40 objects')
         return value
@@ -357,9 +370,13 @@ class OrchestratorTools(_RoleTools):
             seen.add(entry['control_id'])
             fixes.append({'control_id': entry['control_id'], 'decision': 'fix', 'action_id': entry['action_id'],
                           'reason_code': entry['reason_code']})
+        fixed = {f['control_id'] for f in fixes}
         for entry in self._entries(arguments.get('defers', []), 'defers'):
             if set(entry) != {'control_id', 'reason_code'}:
                 raise ValueError('defers entries take exactly: control_id, reason_code')
+            if entry['control_id'] in fixed:  # live 07:11: the fixes were repeated in defers with their fix reasons
+                raise ValueError(str(entry['control_id'])[:20] + ' is in fixes; defers is only for failures you do not '
+                                 'fix, so leave it out of defers')
             if entry['control_id'] not in self.rounds.failing() or entry['control_id'] in seen:
                 raise ValueError('Unknown or duplicate control in the plan')
             if entry['reason_code'] not in defer_codes:

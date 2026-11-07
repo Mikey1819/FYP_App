@@ -650,3 +650,7 @@ After 3.3.2 was fixed, two rounds stored no plan. The model's first plan was inc
 ## 7 November 2026 — Ubuntu orchestrator decides by deferring (integration)
 
 In five live rounds, the model's first plan held only the two flagged fixes, and every retry ended inside the protected Coordinator (an identical repeat, or three refusals) with no plan stored. Every registered fix the orchestrator does not defer is now proposed, with a reason that says so; the administrator still approves each one. All the live first attempts now replay as accepted (20 fixes). Full suite: **561 passed**.
+
+## 7 November 2026 — Ubuntu plan accepts the list shapes the model sends (integration)
+
+The 07:11 live round failed because the model sent `defers` as one object rather than a list. An offline trial with the real local model showed the same thing in 10 of 10 rounds. Unambiguous single-object and parallel-list shapes are now read as the list they mean, and still validated. A refused plan can be resubmitted within the Coordinator's limit. After the change, 10 of 10 offline rounds produced a plan on the first call. Full suite: **567 passed**.

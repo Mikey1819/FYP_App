@@ -1002,3 +1002,14 @@ The execution gate was a hard-coded "closed". It now opens only on evidence.
 - **Replay:** every refused live first attempt from 06:39 to 06:59 is now accepted on the first call (20 fixes; 6.3.1.2 deferred).
 - **Tests:** 5 new tests (`test_ubuntu_plan_defaults`), written first; 3 failed before the change with the live refusal. Two tests that encoded the old refusal were rewritten (`plan_format`, `plan_honesty`), and the "No plan" row is still covered. The undecided-list tests were removed with that refusal; the guard that every remaining refusal fits 200 characters stays.
 - Full suite **561 tests, all passed**; baseline: no protected changes. Host only: collector digest unchanged (`b1b17b633dfd`).
+
+## 7 November 2026 — plan list shapes the model actually sends (live finding, offline trial)
+- **Live round 07:11 UTC** (with the deferral default in place) stored no plan. `defers` came as one object of parallel lists (`{"control_id": ["5.1.20","4.1.4"], "reason_code": ["highest_risk","highest_risk"]}`), restating the two fixes. It was refused ("defers must be a list…"), the identical call was resubmitted, and the Coordinator ended the round ("Repeated call blocked").
+- **Offline trial with the real local qwen3:8b** (no VM): orchestrator live, scanner and analysis scripted to the live 07:11 results. Harness: scratchpad `live_plan_trial.py`, synthetic evidence. In 10 of 10 rounds the model sent its single deferral as **one object instead of a list**, and every first call was refused.
+- **Changes (`backends/ubuntu/agents.py`):**
+  - `fixes` and `defers` accept the two unambiguous shapes: a single object means a one-item list, and an object of equal-length parallel lists means one entry per position. Every entry is then validated as before; lists of different lengths are refused.
+  - A control that is in `fixes` and also in `defers` is refused with a refusal that names it and says why (the live 07:11 contradiction).
+  - `submit_plan` is declared `repeatable`, the Coordinator's own extension point. An identical resubmission is validated and refused again instead of ending the round, and the Coordinator's limit of 3 invalid calls still bounds it. An accepted plan ends the round.
+- **Offline trial after the change:** 10 of 10 rounds were accepted on the first `submit_plan` (6.3.1.2 deferred, every registered fix proposed; the fixture marks 2.1.2 compliant, hence 19).
+- **Tests:** 6 new tests (`test_ubuntu_plan_shapes`), written first; 5 failed before the change.
+- Full suite **567 tests, all passed**; baseline: no protected changes. Host only: collector digest unchanged (`b1b17b633dfd`).
