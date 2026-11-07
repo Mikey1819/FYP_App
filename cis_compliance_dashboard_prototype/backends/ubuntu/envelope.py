@@ -55,7 +55,7 @@ def _time(value):
     return result
 
 
-def parse_bundle(raw, expected, *, now=None, ssh_effective_authority=True, cis_audit_authority=True):
+def parse_bundle(raw, expected, *, now=None, ssh_effective_authority=True, cis_audit_authority=True, audit_wording=None):
     if type(raw) is not bytes or not 1 <= len(raw) <= 10*1024*1024:
         raise ValueError('Evidence envelope size limit')
     try:
@@ -109,7 +109,7 @@ def parse_bundle(raw, expected, *, now=None, ssh_effective_authority=True, cis_a
                     or type(artifact['bytes']) is not int or not 0 <= artifact['bytes'] <= 10*1024*1024):
                 raise ValueError('Invalid sanitized artifact metadata')
         assessments = tuple(evaluate(cid,doc['observations'][cid],ssh_effective_authority=ssh_effective_authority,
-                                     cis_audit_authority=cis_audit_authority)
+                                     cis_audit_authority=cis_audit_authority, audit_wording=audit_wording)
                             for cid in sorted(EXPECTED_IDS))
         return EvidenceBundle(raw,hashlib.sha256(raw).hexdigest(),expected,doc['started_at'],doc['completed_at'],assessments)
     except (TypeError,KeyError,UnicodeError,RecursionError,json.JSONDecodeError):

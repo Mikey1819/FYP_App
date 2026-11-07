@@ -23,6 +23,9 @@ SCHEMA = 'fyp-ubuntu-crosscheck-v1'
 STALE_MINUTES = 60
 UNIT_FACTS = {'avahi-daemon.service': ('2.1.2', 'avahi-daemon.service'), 'avahi-daemon.socket': ('2.1.2', 'avahi-daemon.socket'),
               'ufw.service': ('4.1.3', 'ufw.service'), 'auditd.service': ('6.3.1.2', 'auditd')}
+# Documented equivalences (live 2026-11-07 11:24): sshd_config(5) calls without-password a deprecated alias of
+# prohibit-password; useradd(8) uses INACTIVE -1 when /etc/default/useradd does not set it.
+SSH_ALIASES = {'without-password': 'prohibit-password'}
 AUDIT_CONTROLS = {'time-change': '6.3.3.4', 'privileged': '6.3.3.6', 'identity': '6.3.3.8'}
 
 
@@ -82,14 +85,19 @@ def compare(scan, second, machine_id, hostname):
                 continue
             for option, value in context.items():
                 if option != 'context_id':
-                    add(cid, 'sshd -T ' + option, value, None if ssh is None else ssh.get(option),
-                        'sshd -T -C connection spec (same tool as the collector)')
+                    checked = None if ssh is None else ssh.get(option)
+                    method = 'sshd -T -C connection spec (same tool as the collector)'
+                    if checked in SSH_ALIASES:
+                        checked, method = SSH_ALIASES[checked], method + '; %s is the OpenSSH alias' % ssh.get(option)
+                    add(cid, 'sshd -T ' + option, value, checked, method)
     defs = values.get('login_defs')
     for cid, fact, key in (('5.4.1.1', 'default.maximum', 'maximum'), ('5.4.1.1', 'default.minimum', 'minimum'),
                            ('5.4.1.3', 'default.warning', 'warning'), ('5.4.1.5', 'default.inactive', 'inactive')):
         if fact in scan.get(cid, {}):
-            add(cid, fact, _value(scan[cid][fact]), None if defs is None else defs.get(key),
-                'own parser of /etc/login.defs, /etc/default/useradd')
+            checked, method = None if defs is None else defs.get(key), 'own parser of /etc/login.defs, /etc/default/useradd'
+            if key == 'inactive' and checked == 'unset':
+                checked, method = -1, method + ' (not set there: the useradd default -1)'
+            add(cid, fact, _value(scan[cid][fact]), checked, method)
     accounts = values.get('accounts')
     for cid, fields in (('5.4.1.1', ('maximum', 'minimum')), ('5.4.1.3', ('warning',)), ('5.4.1.5', ('inactive',))):
         for account in _value(scan.get(cid, {}).get('accounts')) or ():

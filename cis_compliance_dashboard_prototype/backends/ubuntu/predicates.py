@@ -104,7 +104,7 @@ def _rules_cover(rules, *, paths=(), syscalls=(), arch=None, privileged=None, ui
 
 
 def evaluate(control_id, observations, *, reviewed_avahi_retention=False, ssh_effective_authority=True,
-             cis_audit_authority=True):
+             cis_audit_authority=True, audit_wording=None):
     """Validated observations only; errors never interpolate raw evidence into diagnostics."""
     from .evidence import validate_observations
     observations = validate_observations(control_id, observations)
@@ -245,18 +245,23 @@ def evaluate(control_id, observations, *, reviewed_avahi_retention=False, ssh_ef
                     f.checks.append(Check('ssh.'+context['context_id']+'.'+option,'pass' if good else 'fail'))
     else:
         raise ValueError('Unregistered Ubuntu control')
-    _scap(f, control_id, reviewed_avahi_retention, ssh_effective_authority, cis_audit_authority)
+    _scap(f, control_id, reviewed_avahi_retention, ssh_effective_authority, cis_audit_authority, audit_wording)
     return combine(control_id, f.checks)
 
 
 # Reviewed SCAP rules whose wording is narrower than the CIS rule (administrator decision 2026-11-07, "Follow CIS"):
 # when the persistent and loaded CIS audit rules both pass, such a rule's failure is advisory, not a conflict.
-CIS_AUDIT_WORDING = {'6.3.3.4': {'audit_rules_time_clock_settime': (
+# Versions are kept so evidence stored under an earlier list still verifies (storage.EARLIER_RULES).
+CIS_AUDIT_WORDING_V1 = {'6.3.3.4': {'audit_rules_time_clock_settime': (
     'CIS v2.0.0 audits every clock_settime call (-S adjtimex,settimeofday,clock_settime), which the persistent and '
     'loaded rules contain; this SCAP rule only accepts its narrower form -S clock_settime -F a0=0x0')}}
+CIS_AUDIT_WORDING = {**CIS_AUDIT_WORDING_V1, '6.3.3.8': {'audit_rules_usergroup_modification_pamd': (
+    'CIS v2.0.0 watches /etc/pam.d (-w /etc/pam.d -p wa -k identity), which the persistent and loaded rules contain; '
+    'this SCAP rule matches the path only with a trailing slash, /etc/pam.d/')}}  # live 11:20, same decision
 
 
-def _scap(f, control_id, reviewed_avahi_retention, ssh_effective_authority=True, cis_audit_authority=True):
+def _scap(f, control_id, reviewed_avahi_retention, ssh_effective_authority=True, cis_audit_authority=True,
+          audit_wording=None):
     """Selected SCAP rule results are corroborating subchecks; direct effective-state probes stay authoritative.
 
     A SCAP pass never cancels a direct failure. A SCAP failure without a direct failure is a conflict
@@ -278,7 +283,8 @@ def _scap(f, control_id, reviewed_avahi_retention, ssh_effective_authority=True,
     ssh_decided = (ssh_effective_authority and control_id in SSH and bool(ssh_direct)
                    and all(c.state == 'pass' for c in ssh_direct)
                    and any(c.name == 'ssh_context_resolution' and c.state == 'pass' for c in f.checks))
-    wording = CIS_AUDIT_WORDING.get(control_id, {}) if cis_audit_authority else {}
+    reviewed = CIS_AUDIT_WORDING if audit_wording is None else audit_wording
+    wording = reviewed.get(control_id, {}) if cis_audit_authority else {}
     audit_decided = bool(wording) and not direct_failed and all(
         any(c.name == source and c.state == 'pass' for c in f.checks)
         for source in ('persistent_audit_rules', 'loaded_audit_rules'))

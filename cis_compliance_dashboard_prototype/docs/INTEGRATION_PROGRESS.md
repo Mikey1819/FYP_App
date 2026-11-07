@@ -1116,3 +1116,16 @@ The execution gate was a hard-coded "closed". It now opens only on evidence.
 - **Tests:** 5 comparator tests and 3 static tests on the script (fixed read-only tools and actions only, no write, delete or shell, parses as Python 3.10), written first. A local smoke run produced valid JSON with no reader errors, and the comparator refused it as another machine's reading.
   - Full suite **614 tests, all passed**. The helper digest is unchanged (the script is outside the helper bundle).
 - **Not yet run on the VM** (needs the administrator).
+
+## 7 November 2026 — fifth and sixth live CIS fixes (6.3.3.6, 6.3.3.8); first value cross-check on the VM
+- **6.3.3.6** (approved 11:16:07 UTC) and **6.3.3.8** (11:16:12) both **applied** at 11:16:19. Verification scan 11:20: 6.3.3.6 Compliant (its SCAP rule passes); 6.3.3.8 Unknown.
+- **6.3.3.8, as predicted:** both direct checks passed, and 7 of 8 SCAP rules passed. `audit_rules_usergroup_modification_pamd` failed: CIS (PDF p. 801) writes `-w /etc/pam.d -p wa -k identity`, and the SCAP watch pattern matches `/etc/pam.d/` literally.
+  - Under the administrator's "Follow CIS" decision it was added to the reviewed list.
+  - The list is now versioned (`CIS_AUDIT_WORDING_V1` holds 6.3.3.4 only), and `storage.EARLIER_RULES` gained that version, so the 11:20 scan (stored under V1) still loads.
+  - All 42 stored scans load; the latest reads 6.3.3.4, 6.3.3.6 and 6.3.3.8 Compliant, with 15 Non-Compliant left. Host-only change, digest unchanged.
+- **First independent value cross-check** (`scripts/vm/ubuntu_cross_check_values.py`, run as root at 11:24, 4 minutes after the scan): **68 agree, 1 disagree, 1 not readable**. Both exceptions were documented equivalences, not wrong values:
+  - `permitrootlogin`: `sshd -T -C` printed `without-password`, OpenSSH's deprecated alias of `prohibit-password` (`sshd_config(5)`). The comparator now treats the alias as equal and says so.
+  - `default.inactive`: `/etc/default/useradd` sets no `INACTIVE` on Ubuntu, so useradd uses -1. The script now reports `unset` (readable, not set) apart from unreadable, and the comparator reads `unset` as -1. The existing reading still shows "Not readable" for that row until the script is run again.
+  - Re-compared: **69 agree, 0 disagree, 1 not readable** (`docs/evaluation/VALUE_CROSS_CHECK.md`).
+- **Tests:** 6 new tests (3 for 6.3.3.8 and the stored-V1 scan, 3 for the cross-check equivalences), written first. Full suite **620 tests, all passed**.
+- **Register:** **6 validated live** (3.3.2, 5.4.1.1, 6.3.1.1, 6.3.3.4, 6.3.3.6, 6.3.3.8); 1 attempted and not applied; 23 not run live. OpenSCAP cross-check: 24 agree, 2 CIS wording, 3 SSH explicit line, 1 not comparable; no unexplained disagreement in any scan.

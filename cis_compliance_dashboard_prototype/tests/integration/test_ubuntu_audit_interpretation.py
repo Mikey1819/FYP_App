@@ -84,3 +84,51 @@ class StoredAuditEvidenceTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+PAMD_SCAP = {'audit_rules_usergroup_modification_' + n: 'pass' for n in
+             ('group', 'gshadow', 'nsswitch_conf', 'opasswd', 'pam_conf', 'passwd', 'shadow')}
+PAMD_SCAP['audit_rules_usergroup_modification_pamd'] = 'fail'  # live 11:20: CIS writes /etc/pam.d, SCAP wants /etc/pam.d/
+
+
+def identity_facts(scap=None):
+    obs = cases()['6.3.3.8']
+    obs['scap_rules'] = observation({PREFIX + rule: result for rule, result in (scap or PAMD_SCAP).items()})
+    return obs
+
+
+class IdentityWordingTests(unittest.TestCase):
+    """Live 11:20: 6.3.3.8 applied, both direct checks passed, and only audit_rules_usergroup_modification_pamd failed.
+    CIS v2.0.0 (PDF p. 801) writes `-w /etc/pam.d -p wa -k identity`; the SCAP watch pattern matches `/etc/pam.d/`
+    literally. Same administrator decision (Follow CIS)."""
+
+    def test_the_live_scan_reads_compliant(self):
+        from backends.ubuntu.predicates import evaluate
+        self.assertEqual(evaluate('6.3.3.8', identity_facts()).status.value, 'Compliant')
+
+    def test_another_failing_identity_rule_is_still_a_conflict(self):
+        from backends.ubuntu.predicates import evaluate
+        scap = dict(PAMD_SCAP, audit_rules_usergroup_modification_shadow='fail')
+        self.assertEqual(evaluate('6.3.3.8', identity_facts(scap)).status.value, 'Unknown')
+
+    def test_scans_stored_under_the_first_wording_list_still_load(self):
+        # The 11:20 scan was stored with 6.3.3.4 advisory but 6.3.3.8 not yet: it must load and read 6.3.3.8 Compliant.
+        from backends.ubuntu import predicates
+        from backends.ubuntu.envelope import ExpectedEvidence
+        from backends.ubuntu.storage import UbuntuStore
+        from tests.integration.test_ubuntu_evidence import envelope
+        doc = envelope()
+        doc['observations']['6.3.3.4'] = facts()
+        doc['observations']['6.3.3.8'] = identity_facts()
+        raw = json.dumps(doc).encode()
+        expected = ExpectedEvidence(*[doc[f] for f in ExpectedEvidence.__dataclass_fields__])
+        earlier = predicates.evaluate
+        with tempfile.TemporaryDirectory() as folder:
+            store = UbuntuStore(Path(folder) / 'ubuntu.sqlite3')
+            with mock.patch('backends.ubuntu.envelope.evaluate', lambda cid, obs, **kw: earlier(
+                    cid, obs, **{**kw, 'audit_wording': predicates.CIS_AUDIT_WORDING_V1})):
+                old = store.save_evidence(raw, expected, now=datetime(2026, 11, 6, 0, 0, 2, tzinfo=timezone.utc))
+            statuses = {a.control_id: a.status.value for a in old.assessments}
+            self.assertEqual((statuses['6.3.3.4'], statuses['6.3.3.8']), ('Compliant', 'Unknown'))
+            loaded = store.get_evidence(old.raw_sha256, expected.target_id, expected.registration_epoch)
+            self.assertEqual(next(a for a in loaded.assessments if a.control_id == '6.3.3.8').status.value, 'Compliant')

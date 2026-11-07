@@ -79,3 +79,34 @@ class ValueCrossCheckTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class LiveFindingTests(unittest.TestCase):
+    """First live run, 2026-11-07 11:24 (68 agree): two rows needed a documented equivalence, not a different verdict."""
+
+    def test_openssh_alias_without_password_equals_prohibit_password(self):
+        from tools.ubuntu_value_cross_check import compare
+        doc = second(ssh__permitrootlogin='without-password')
+        row = {(r['control_id'], r['item']): r for r in compare(SCAN, doc, MACHINE, HOST)}[('5.1.20', 'sshd -T permitrootlogin')]
+        self.assertEqual(row['verdict'], 'Agree')
+        self.assertIn('alias', row['method'])
+
+    def test_an_unset_useradd_inactive_means_the_useradd_default(self):
+        from tools.ubuntu_value_cross_check import compare
+        scan = {'5.4.1.5': {'default.inactive': ok(-1)}}
+        rows = compare(scan, second(login_defs__inactive='unset'), MACHINE, HOST)
+        self.assertEqual([(r['item'], r['verdict']) for r in rows], [('default.inactive', 'Agree')])
+
+    def test_the_script_reports_unset_apart_from_unreadable(self):
+        import importlib.util
+        from pathlib import Path
+        from unittest import mock
+        path = Path(__file__).resolve().parents[3] / 'scripts' / 'vm' / 'ubuntu_cross_check_values.py'
+        spec = importlib.util.spec_from_file_location('crosscheck_script', path)
+        script = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(script)
+        files = {'/etc/login.defs': 'PASS_MAX_DAYS\t365\n', '/etc/default/useradd': '# INACTIVE=-1\n'}
+        with mock.patch.object(script, 'read', files.get):
+            self.assertEqual(script.login_defs()['inactive'], 'unset')
+        with mock.patch.object(script, 'read', {'/etc/login.defs': ''}.get):
+            self.assertIsNone(script.login_defs()['inactive'])

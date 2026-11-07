@@ -143,8 +143,12 @@ def login_defs():
     def value(source, name):
         match = re.search(r'^\s*%s\s+(-?\d+)' % name, source, re.M) or re.search(r'^\s*%s=(-?\d+)' % name, source, re.M)
         return int(match.group(1)) if match else None
+    raw_useradd = read('/etc/default/useradd')
+    inactive = None if raw_useradd is None else value(raw_useradd, 'INACTIVE')
     return {'maximum': value(text, 'PASS_MAX_DAYS'), 'minimum': value(text, 'PASS_MIN_DAYS'),
-            'warning': value(text, 'PASS_WARN_AGE'), 'inactive': value(useradd, 'INACTIVE')}
+            'warning': value(text, 'PASS_WARN_AGE'),
+            # 'unset': the file is readable but sets no INACTIVE (useradd then uses -1); None: unreadable.
+            'inactive': 'unset' if raw_useradd is not None and inactive is None else inactive}
 
 
 def accounts():
