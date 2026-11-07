@@ -1087,3 +1087,14 @@ The execution gate was a hard-coded "closed". It now opens only on evidence.
 - **Tests:** 3 new tests (stock `audit.rules` eligible; a scan keeps earlier files' rules; fix then collect reads Compliant beside the stock file), written first, all 3 failing before the change. The case that expected a bare `-D` to be refused was corrected to `-D -k time-change`.
   - Full suite **600 tests, all passed**.
 - **Helper change:** collector digest is now **`a0a1c666395c`**. `dist/ubuntu-helper` has been rebuilt. The VM must reinstall the helper and runner, and both acceptance scenarios must run again before scans and fixes are accepted. This needs the administrator's approval; nothing has been done on the VM.
+
+## 7 November 2026 — fourth live CIS fix: 6.3.3.4, and the CIS-wording decision
+- **Helper reinstalled** by the administrator (digest `a0a1c666395c`). The 6.3.3.4 fix plan was then offered and approved at 10:59:57 UTC, and **applied** at 11:00:04 (rules file written, `augenrules --load`).
+- **The verification scans (11:01, 11:03) read Unknown**, although the persistent and loaded rules both contained the three CIS rules. One OpenSCAP rule failed: `audit_rules_time_clock_settime`, which only accepts `-S clock_settime -F a0=0x0`. CIS v2.0.0 (PDF pp. 784–786) requires `-S adjtimex,settimeofday,clock_settime -k time-change`, which already covers it. A SCAP failure without a direct failure is a conflict (Unknown) by design.
+- **Administrator decision (2026-11-07): Follow CIS (advisory).** `predicates.CIS_AUDIT_WORDING` lists reviewed SCAP rules whose wording is narrower than the CIS rule. Such a rule's failure is advisory only when the persistent and loaded CIS rules both pass and there is no direct failure. Any other failing SCAP rule is still a conflict.
+  - Stored scans keep loading: `storage.EARLIER_RULES` lists the documented earlier rule sets (before both decisions; after the SSH decision only). All 39 stored scans load, and the latest reads 6.3.3.4 Compliant.
+  - The cross-check labels this case "Expected disagreement (CIS wording)".
+  - Host-only change; collector digest unchanged, so no reinstall.
+- **Tests:** 6 new tests (`test_ubuntu_audit_interpretation`), written first. Full suite **606 tests, all passed**.
+- **Register:** **4 validated live** (3.3.2, 5.4.1.1, 6.3.1.1, 6.3.3.4); 1 attempted and not applied; 25 not run live. Cross-check: no unexplained disagreement in any scan.
+- **Looking ahead:** the 6.3.3.6 lines match OpenSCAP's form. For 6.3.3.8, CIS (PDF p. 801) writes `-w /etc/pam.d` without a trailing slash, while OpenSCAP's watch patterns match directory paths literally (e.g. `/etc/network/`), so its `pamd` rule may disagree in the same way. This is not added to the list until a live scan shows it.

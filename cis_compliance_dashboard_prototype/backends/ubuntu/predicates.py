@@ -103,7 +103,8 @@ def _rules_cover(rules, *, paths=(), syscalls=(), arch=None, privileged=None, ui
     return set(syscalls) <= covered
 
 
-def evaluate(control_id, observations, *, reviewed_avahi_retention=False, ssh_effective_authority=True):
+def evaluate(control_id, observations, *, reviewed_avahi_retention=False, ssh_effective_authority=True,
+             cis_audit_authority=True):
     """Validated observations only; errors never interpolate raw evidence into diagnostics."""
     from .evidence import validate_observations
     observations = validate_observations(control_id, observations)
@@ -244,11 +245,18 @@ def evaluate(control_id, observations, *, reviewed_avahi_retention=False, ssh_ef
                     f.checks.append(Check('ssh.'+context['context_id']+'.'+option,'pass' if good else 'fail'))
     else:
         raise ValueError('Unregistered Ubuntu control')
-    _scap(f, control_id, reviewed_avahi_retention, ssh_effective_authority)
+    _scap(f, control_id, reviewed_avahi_retention, ssh_effective_authority, cis_audit_authority)
     return combine(control_id, f.checks)
 
 
-def _scap(f, control_id, reviewed_avahi_retention, ssh_effective_authority=True):
+# Reviewed SCAP rules whose wording is narrower than the CIS rule (administrator decision 2026-11-07, "Follow CIS"):
+# when the persistent and loaded CIS audit rules both pass, such a rule's failure is advisory, not a conflict.
+CIS_AUDIT_WORDING = {'6.3.3.4': {'audit_rules_time_clock_settime': (
+    'CIS v2.0.0 audits every clock_settime call (-S adjtimex,settimeofday,clock_settime), which the persistent and '
+    'loaded rules contain; this SCAP rule only accepts its narrower form -S clock_settime -F a0=0x0')}}
+
+
+def _scap(f, control_id, reviewed_avahi_retention, ssh_effective_authority=True, cis_audit_authority=True):
     """Selected SCAP rule results are corroborating subchecks; direct effective-state probes stay authoritative.
 
     A SCAP pass never cancels a direct failure. A SCAP failure without a direct failure is a conflict
@@ -270,6 +278,10 @@ def _scap(f, control_id, reviewed_avahi_retention, ssh_effective_authority=True)
     ssh_decided = (ssh_effective_authority and control_id in SSH and bool(ssh_direct)
                    and all(c.state == 'pass' for c in ssh_direct)
                    and any(c.name == 'ssh_context_resolution' and c.state == 'pass' for c in f.checks))
+    wording = CIS_AUDIT_WORDING.get(control_id, {}) if cis_audit_authority else {}
+    audit_decided = bool(wording) and not direct_failed and all(
+        any(c.name == source and c.state == 'pass' for c in f.checks)
+        for source in ('persistent_audit_rules', 'loaded_audit_rules'))
     for rule in SCAP_RULES[control_id]:
         name, result = 'scap.' + rule[len(SCAP_RULE_PREFIX):], observation['value'][rule]
         if result == 'pass':
@@ -277,6 +289,8 @@ def _scap(f, control_id, reviewed_avahi_retention, ssh_effective_authority=True)
         elif result == 'fail':
             if direct_failed:
                 f.checks.append(Check(name, 'fail', 'Agrees with a direct failure'))
+            elif audit_decided and rule[len(SCAP_RULE_PREFIX):] in wording:
+                f.checks.append(Check(name, 'advisory', wording[rule[len(SCAP_RULE_PREFIX):]]))
             elif ssh_decided:
                 f.checks.append(Check(name, 'advisory', 'CIS audits the effective sshd -T value, which complies in every '
                                       'audited context; this SCAP rule also requires an explicit configuration line'))

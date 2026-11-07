@@ -18,6 +18,10 @@ from uuid import NAMESPACE_URL, uuid5
 
 from system.contracts import WorkflowBinding, encode_record
 from .envelope import ExpectedEvidence, parse_bundle
+
+# Documented interpretation decisions, newest last; a stored scan may match the rules in force when it was stored.
+EARLIER_RULES = (dict(ssh_effective_authority=False, cis_audit_authority=False),  # before both decisions
+                 dict(cis_audit_authority=False))  # after the SSH decision, before the 6.3.3.4 wording decision
 from .predicates import Assessment
 
 PAYLOAD_VERSION = 1
@@ -272,10 +276,10 @@ class UbuntuStore:
         if bundle.completed_at != row['collected_at']:
             raise ValueError('Stored assessment differs from current predicate evaluation; reassessment required')
         if _snapshot(bundle.assessments) != row['snapshot']:
-            # Only a documented interpretation change may explain a difference: the stored snapshot must match
-            # the earlier SSH rule exactly; the evidence is then shown under the current rule.
-            earlier = parse_bundle(raw, expected, now=imported, ssh_effective_authority=False)
-            if _snapshot(earlier.assessments) != row['snapshot']:
+            # Only a documented interpretation change may explain a difference: the stored snapshot must match an
+            # earlier rule set exactly; the evidence is then shown under the current rules.
+            if not any(_snapshot(parse_bundle(raw, expected, now=imported, **rules).assessments) == row['snapshot']
+                       for rules in EARLIER_RULES):
                 raise ValueError('Stored assessment differs from current predicate evaluation; reassessment required')
         return StoredEvidence(raw, digest, expected, bundle.started_at, bundle.completed_at,
                               row['imported_at'], bundle.assessments)

@@ -1,0 +1,86 @@
+"""6.3.3.4 OpenSCAP wording (administrator decision 2026-11-07, "Follow CIS"): CIS v2.0.0 (PDF pp. 784-786) requires
+`-S adjtimex,settimeofday,clock_settime -k time-change` for b64 and b32 plus the /etc/localtime watch; the pinned
+ComplianceAsCode rule audit_rules_time_clock_settime only accepts `-S clock_settime -F a0=0x0`, a narrower form the CIS
+rule already covers. When the persistent and loaded CIS rules both pass, that one SCAP failure is advisory, not a
+conflict. Live 11:01 and 11:03: the fix applied, both direct checks passed, and the control read Unknown.
+Stored evidence evaluated under the earlier rule still loads. Fixture data; no VM."""
+from datetime import datetime, timezone
+import json
+from pathlib import Path
+import tempfile
+import unittest
+from unittest import mock
+
+from tests.integration.ubuntu_fixtures import FAILURES, cases, observation
+
+PREFIX = 'xccdf_org.ssgproject.content_rule_'
+LIVE_SCAP = {'audit_rules_time_adjtimex': 'pass', 'audit_rules_time_clock_settime': 'fail',
+             'audit_rules_time_settimeofday': 'pass', 'audit_rules_time_watch_localtime': 'pass'}
+
+
+def facts(scap=None, *, failing=False):
+    obs = cases()['6.3.3.4']
+    if failing:
+        key, value = FAILURES['6.3.3.4']
+        obs[key] = observation(value)
+    obs['scap_rules'] = observation({PREFIX + rule: result for rule, result in (scap or LIVE_SCAP).items()})
+    return obs
+
+
+class AuditInterpretationTests(unittest.TestCase):
+    def status(self, obs, **kwargs):
+        from backends.ubuntu.predicates import evaluate
+        return evaluate('6.3.3.4', obs, **kwargs).status.value
+
+    def test_the_live_scan_reads_compliant_with_the_narrower_scap_rule_advisory(self):
+        from backends.ubuntu.predicates import evaluate
+        result = evaluate('6.3.3.4', facts())
+        self.assertEqual(result.status.value, 'Compliant')
+        advisory = [c for c in result.checks if c.name == 'scap.audit_rules_time_clock_settime']
+        self.assertEqual([c.state for c in advisory], ['advisory'])
+
+    def test_the_earlier_rule_still_reads_the_conflict(self):
+        self.assertEqual(self.status(facts(), cis_audit_authority=False), 'Unknown')
+
+    def test_any_other_failing_scap_rule_is_still_a_conflict(self):
+        self.assertEqual(self.status(facts(dict(LIVE_SCAP, audit_rules_time_adjtimex='fail'))), 'Unknown')
+
+    def test_a_direct_failure_is_still_non_compliant(self):
+        self.assertEqual(self.status(facts(failing=True)), 'Non-Compliant')
+
+    def test_the_cross_check_labels_it_as_a_documented_difference(self):
+        from tools.scap_cross_check import compare
+        row = compare('6.3.3.4', facts())
+        self.assertEqual((row['direct'], row['scap'], row['verdict']),
+                         ('Compliant', 'Non-Compliant', 'Expected disagreement (CIS wording)'))
+        other = compare('6.3.3.4', facts(dict(LIVE_SCAP, audit_rules_time_adjtimex='fail')))
+        self.assertEqual(other['verdict'], 'Disagree')
+
+
+class StoredAuditEvidenceTests(unittest.TestCase):
+    def test_scans_stored_before_the_decision_load_and_show_the_current_reading(self):
+        # The live 11:01/11:03 scans were stored under the SSH decision but before this one.
+        from backends.ubuntu import predicates
+        from backends.ubuntu.envelope import ExpectedEvidence
+        from backends.ubuntu.storage import UbuntuStore
+        from tests.integration.test_ubuntu_evidence import envelope
+        doc = envelope()
+        doc['observations']['6.3.3.4'] = facts()
+        raw = json.dumps(doc).encode()
+        expected = ExpectedEvidence(*[doc[f] for f in ExpectedEvidence.__dataclass_fields__])
+        earlier = predicates.evaluate
+        with tempfile.TemporaryDirectory() as folder:
+            store = UbuntuStore(Path(folder) / 'ubuntu.sqlite3')
+            with mock.patch('backends.ubuntu.envelope.evaluate',
+                            lambda cid, obs, **kw: earlier(cid, obs, **{**kw, 'cis_audit_authority': False})):
+                old = store.save_evidence(raw, expected, now=datetime(2026, 11, 6, 0, 0, 2, tzinfo=timezone.utc))
+            self.assertEqual(next(a for a in old.assessments if a.control_id == '6.3.3.4').status.value, 'Unknown')
+            loaded = store.get_evidence(old.raw_sha256, expected.target_id, expected.registration_epoch)
+            self.assertEqual(next(a for a in loaded.assessments if a.control_id == '6.3.3.4').status.value, 'Compliant')
+            with mock.patch('backends.ubuntu.storage._snapshot', lambda assessments: 'tampered'):
+                with self.assertRaises(ValueError):
+                    store.get_evidence(old.raw_sha256, expected.target_id, expected.registration_epoch)
+
+
+if __name__ == '__main__':
+    unittest.main()

@@ -22,6 +22,7 @@ import tempfile
 APP = Path(__file__).resolve().parents[1]
 DETERMINATE = ('Compliant', 'Non-Compliant')
 SSH_EXPECTED = 'Expected disagreement (SSH explicit line)'
+CIS_WORDING = 'Expected disagreement (CIS wording)'
 
 
 def scap_verdict(results):
@@ -48,9 +49,18 @@ def compare(cid, observations):
         verdict = 'Agree'
     elif cid in SSH and direct == 'Compliant' and scap == 'Non-Compliant':
         verdict = SSH_EXPECTED
+    elif direct == 'Compliant' and scap == 'Non-Compliant' and _only_reviewed_failures(cid, scap_obs['value']):
+        verdict = CIS_WORDING
     else:
         verdict = 'Disagree'
     return {'control_id': cid, 'direct': direct, 'scap': scap, 'verdict': verdict}
+
+
+def _only_reviewed_failures(cid, results):
+    from backends.ubuntu.predicates import CIS_AUDIT_WORDING
+    from vm.ubuntu.spec import SCAP_RULE_PREFIX
+    failed = {rule[len(SCAP_RULE_PREFIX):] for rule, result in results.items() if result == 'fail'}
+    return bool(failed) and failed <= set(CIS_AUDIT_WORDING.get(cid, {}))
 
 
 def live_scans():
@@ -92,11 +102,11 @@ def markdown(scans):
                                         '**Disagree**' if r['verdict'] == 'Disagree' else r['verdict']) for r in rows]
     lines += ['', '## All %d stored live scans' % len(scans), '',
               'Controls that disagreed in any scan: ' + (', '.join(disagreements) or 'none'), '',
-              '| Control | ' + ' | '.join(['Agree', SSH_EXPECTED, 'Disagree', 'Not comparable']) + ' |',
-              '| --- | --- | --- | --- | --- |']
+              '| Control | ' + ' | '.join(['Agree', SSH_EXPECTED, CIS_WORDING, 'Disagree', 'Not comparable']) + ' |',
+              '| --- | --- | --- | --- | --- | --- |']
     for cid in sorted({c for c, _ in history}, key=order):
         lines.append('| %s | %s |' % (cid, ' | '.join(str(history[(cid, v)]) for v in
-                                                      ('Agree', SSH_EXPECTED, 'Disagree', 'Not comparable'))))
+                                                      ('Agree', SSH_EXPECTED, CIS_WORDING, 'Disagree', 'Not comparable'))))
     return '\n'.join(lines) + '\n'
 
 
