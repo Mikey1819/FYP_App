@@ -197,8 +197,33 @@ def _ubuntu_states(snapshot):
     return executed, applied, restoring
 
 
-def _ubuntu_fix_header(snapshot):
-    """Operator name and comment, above the per-control cards whose decision buttons use them."""
+def _ubuntu_fix_header(backend, connection, snapshot):
+    """Refresh and pending verification, then the operator name and comment the per-control cards use."""
+    error, notice = st.session_state.pop('ubuntu_verify_error', None), st.session_state.pop('ubuntu_verify_notice', None)
+    if error:
+        st.error(md_escape(error))
+    if notice:
+        st.success(md_escape(notice))
+    workflow = st.session_state.get(WORKFLOW_KEY)
+    unverified = backend.unverified_applied(connection, workflow) if workflow else ()
+
+    def verify():
+        try:
+            handle = backend.verify_applied(connection, workflow, snapshot.current_round_reference, uuid4().hex)
+            st.session_state['ubuntu_verify_notice'] = 'Verification scan: ' + handle.state.replace('_', ' ') + '.'
+        except (ValueError, OSError) as failure:
+            st.session_state['ubuntu_verify_error'] = str(failure)[:300]
+    with st.container(horizontal=True):
+        # A browser reload starts a new session and ends the connection (credentials live only in this session).
+        st.button('Refresh status', key='ubuntu_refresh', icon=':material/refresh:',
+                  help='Reload this page from the stored records; the VM connection stays open.')
+        if unverified:
+            st.button('Run verification scan', key='ubuntu_verify_applied', icon=':material/fact_check:', type='primary',
+                      on_click=verify, help='Read-only re-scan for applied changes that have none yet; never re-runs a fix.')
+    if unverified:
+        st.warning('%d applied change%s still need%s the verification scan, so the card%s cannot show the result yet.'
+                   % (len(unverified), '' if len(unverified) == 1 else 's', 's' if len(unverified) == 1 else '',
+                      '' if len(unverified) == 1 else 's'))
     if any(p.eligible_commands for p in snapshot.proposals):
         st.text_input('Your name (recorded with each decision)', key='agentic_operator')
         st.text_input('Comment (optional)', key='agentic_comment')
@@ -208,8 +233,11 @@ def _ubuntu_decision_buttons(backend, connection, workflow, p):
     operator = st.session_state.get('agentic_operator') or ''
     comment = st.session_state.get('agentic_comment') or ''
     label = p.control_id or p.title
+    if 'approve' not in p.eligible_commands:  # e.g. it shares a file with an approved fix not executed yet
+        st.warning(md_escape(p.reason))
     left, right = st.columns(2)
-    if left.button('Approve ' + label, key='ubuntu_approve_' + p.reference.record_id, disabled=not operator.strip()):
+    if left.button('Approve ' + label, key='ubuntu_approve_' + p.reference.record_id,
+                   disabled=not operator.strip() or 'approve' not in p.eligible_commands):
         backend.decide(connection, workflow, p.reference, True, operator, comment, uuid4().hex)
         st.rerun()
     if right.button('Reject ' + label, key='ubuntu_reject_' + p.reference.record_id, disabled=not operator.strip()):
@@ -241,7 +269,7 @@ def _ubuntu_fix_actions(backend, connection, snapshot, capabilities):
     executed, applied, restoring = _ubuntu_states(snapshot)
     if undecided:
         if not snapshot.plan:  # without cards the name and comment fields are rendered here
-            _ubuntu_fix_header(snapshot)
+            _ubuntu_fix_header(backend, connection, snapshot)
         for p in undecided:
             _ubuntu_decision_buttons(backend, connection, workflow, p)
     if approved:
@@ -798,7 +826,7 @@ def render_agentic(database_path: Path):
                         _run_round(None, None, None, AssessmentMode.DETERMINISTIC)
                 render_snapshot_tabs(snapshot, fix_actions=lambda: _ubuntu_fix_actions(backend, connection, snapshot,
                                                                                       capabilities),
-                                     fix_header=lambda: _ubuntu_fix_header(snapshot),
+                                     fix_header=lambda: _ubuntu_fix_header(backend, connection, snapshot),
                                      control_actions=lambda card: _ubuntu_card_actions(backend, connection, snapshot,
                                                                                        capabilities, card))
                 return

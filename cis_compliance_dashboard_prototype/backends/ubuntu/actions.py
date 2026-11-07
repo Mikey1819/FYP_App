@@ -188,7 +188,6 @@ def _package_specs():
     from vm.ubuntu.family_package import IMPLEMENTATION_SHA256, SPECS
     titles = {'1.3.1.1': 'Install AppArmor and its utilities (supervised apt job)',
               '1.5.4': 'Undo prelinking, then purge prelink (supervised apt job)',
-              '2.1.2': 'Stop and purge avahi-daemon when nothing depends on it (supervised apt job)',
               '6.3.1.1': 'Install auditd and audispd-plugins (supervised apt job)'}
     specs = {}
     for control_id, spec in SPECS.items():
@@ -308,13 +307,10 @@ def _patch_spec():
     from vm.ubuntu.family_patch import IMPLEMENTATION_SHA256, PARAMS
 
     def propose(cid, evidence):
-        result = next((a for a in evidence.assessments if a.control_id == cid), None)
-        if result is None or result.status is not ComplianceStatus.NON_COMPLIANT:
-            return None
-        facts = json.loads(evidence.raw)['observations'][cid]
-        if facts.get('metadata_fresh', {}).get('state') != 'ok' or (facts.get('pending_updates', {}).get('value') or 0) < 1:
-            return None
-        return dict(PARAMS)
+        # Deferred by the administrator (2026-11-08): this job refreshes metadata itself and upgrades without exact
+        # versions, while the plan requires a separately approved metadata refresh and exact package/version approval,
+        # a recovery snapshot and human review afterwards. Not proposed until the family is redesigned.
+        return None
 
     def validate(candidate):
         if type(candidate) is not dict or candidate != PARAMS:
@@ -413,7 +409,39 @@ def _service_specs():
     return specs
 
 
-FAMILIES = dict(_sysctl_specs(), **_core_spec(), **_auth_specs(), **_aging_specs(), **_package_specs(),
+def _avahi_mask_spec():
+    """Host spec for 2.1.2 with avahi-daemon kept: proposed only on a machine whose retention decision is registered
+    (system.config.UBUNTU_AVAHI_RETENTION), with the package installed and both units read."""
+    import json
+    from system.config import UBUNTU_AVAHI_RETENTION
+    from system.contracts import ComplianceStatus
+    from vm.ubuntu.family_service import IMPLEMENTATION_SHA256, MASK_SPECS
+    units = MASK_SPECS['2.1.2']
+    params = {'units': list(units), 'masked': True}
+
+    def propose(cid, evidence):
+        result = next((a for a in evidence.assessments if a.control_id == cid), None)
+        if result is None or result.status is not ComplianceStatus.NON_COMPLIANT:
+            return None
+        doc = json.loads(evidence.raw)
+        if UBUNTU_AVAHI_RETENTION.get(doc.get('machine_id')) != 'mask':
+            return None
+        facts = doc['observations'][cid]
+        if facts.get('package.avahi-daemon', {}).get('value') != 'installed' or any(
+                facts.get('%s.%s' % (u, f), {}).get('state') != 'ok' for u in units for f in ('active', 'enabled')):
+            return None
+        return json.loads(json.dumps(params))
+
+    def validate(candidate):
+        if type(candidate) is not dict or json.dumps(candidate, sort_keys=True) != json.dumps(params, sort_keys=True):
+            raise ValueError('Only stopping and masking the registered units is managed')
+    return {'ubuntu.2.1.2.v1': ActionSpec('ubuntu.2.1.2.v1', 1, IMPLEMENTATION_SHA256, ('2.1.2',), validate, 60,
+                                          propose=propose, title='Keep avahi-daemon installed; stop and mask its socket '
+                                          'and service (site decision)',
+                                          recovery={'kind': 'restore_backup', 'scope': ['systemd:' + u for u in units]})}
+
+
+FAMILIES = dict(_sysctl_specs(), **_core_spec(), **_auth_specs(), **_aging_specs(), **_package_specs(), **_avahi_mask_spec(),
                 **_ssh_specs(), **_ufw_spec(), **_service_specs(), **_audit_specs(),
                 **_grub_spec(), **_patch_spec())
 

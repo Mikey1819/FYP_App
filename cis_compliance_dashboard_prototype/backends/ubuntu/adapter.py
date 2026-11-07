@@ -39,6 +39,28 @@ REFUSAL_DETAIL = {
                        'round to re-plan it, then approve and execute it on its own.')}
 
 
+def _files(payload):
+    return {s for s in payload['fields']['recovery']['scope'] if not s.startswith('runtime:')}
+
+
+def shared_file_conflict(payload, proposals):
+    """The control of an approved, not yet executed fix that restores a file this proposal also restores, or None.
+    Such fixes cannot run in one execution: the second is refused stale once the first changes the file (live
+    2026-11-07 13:44). Restores and maintenance are not counted."""
+    files = _files(payload)
+    for other in proposals:
+        action = other.payload['action']['action_id']
+        if (other.payload['proposal_id'] != payload['proposal_id'] and other.decision == 'approved' and not other.receipts
+                and action.startswith('ubuntu.') and files & _files(other.payload)):
+            return other.payload['fields']['control_id']
+    return None
+
+
+def shared_file_message(control_id, other):
+    return ('%s changes the same file as %s, which is approved and not executed yet, so they cannot run together. '
+            'execute %s first, then start a new round to re-plan %s.' % (control_id, other, other, control_id))
+
+
 def refusal_detail(code):
     return REFUSAL_DETAIL.get(code, 'Not applied (' + code + ').')
 
@@ -339,9 +361,12 @@ class UbuntuBackend(BoundBackend):
         checks = [r for r in all_rounds if r.kind == 'verification' and (r.details or {}).get('verifies_round') == row.round_id]
         verified = self._evidence(store, checks[-1].evidence_sha256) if checks else None
         fresh = {a.control_id: a.status for a in verified.assessments} if verified else {}
-        for p in store.proposals(binding, row.round_id):
+        round_proposals = store.proposals(binding, row.round_id)
+        for p in round_proposals:
             approved = json.loads(p.approved_raw) if p.approved_raw else None
             recovery = p.payload['fields']['recovery']
+            blocked = (shared_file_conflict(p.payload, round_proposals)
+                       if latest and p.decision is None and p.payload['action']['action_id'].startswith('ubuntu.') else None)
             action_id = p.payload['action']['action_id']
             kind = {'recovery.restore.v1': 'recovery', 'maintenance.apt_refresh.v1': 'metadata_refresh',
                     'maintenance.reboot.v1': 'reboot'}.get(action_id, 'control_remediation')
@@ -349,8 +374,9 @@ class UbuntuBackend(BoundBackend):
                 p.payload['action']['action_id'], p.payload['title'], 'v%d' % p.payload['action']['version'],
                 preview_text(p.payload['preview']), (), recovery['kind'] + ': ' + ', '.join(recovery['scope']),
                 (), p.decision, approved['expires_at'] if approved else None,
+                shared_file_message(p.payload['fields']['control_id'], blocked) if blocked else
                 'Deterministic plan from the registered family; the target preview supplied the before/after digests.',
-                ('approve', 'reject') if latest and p.decision is None else (),
+                (('reject',) if blocked else ('approve', 'reject')) if latest and p.decision is None else (),
                 approved['request_id'] if approved else None, approved['before_state_sha256'] if approved else None))
             if p.receipts:
                 last = p.receipts[-1]
@@ -547,6 +573,10 @@ class UbuntuBackend(BoundBackend):
         try:
             if approved:
                 from .actions import AUXILIARY
+                if payload['action']['action_id'].startswith('ubuntu.'):
+                    other = shared_file_conflict(payload, store.proposals(binding, latest.round_id))
+                    if other:
+                        raise ValueError(shared_file_message(payload['fields']['control_id'], other))
                 spec = dict(self.families, **AUXILIARY).get(payload['action']['action_id'])
                 if spec is None or (spec.version, spec.implementation_sha256) != (
                         payload['action']['version'], payload['action']['implementation_sha256']):
@@ -872,6 +902,39 @@ class UbuntuBackend(BoundBackend):
         self._record_status(store, binding, proposal, result)
         applied = [request_id] if result.state == 'completed' else []
         return RoundHandle(operation_id, binding, round_ref, self._verify(store, binding, latest, applied, result.state))
+
+    def _unverified(self, store, binding, latest):
+        """Request IDs of applied fixes and maintenance in this round that no verification scan has covered."""
+        covered = {rid for r in store.rounds(binding) if r.kind == 'verification'
+                   and (r.details or {}).get('verifies_round') == latest.round_id
+                   for rid in (r.details or {}).get('request_ids', ())}
+        found = []
+        for p in store.proposals(binding, latest.round_id):
+            if (p.decision == 'approved' and p.receipts and not p.payload['action']['action_id'].startswith('recovery.')
+                    and p.receipts[-1]['outcome'] in ('applied', 'reconciled_applied')
+                    and p.receipts[-1]['request_id'] not in covered):
+                found.append(p.receipts[-1]['request_id'])
+        return found
+
+    def unverified_applied(self, connection_session_id, workflow_session_id):
+        """Applied changes of the latest round still waiting for their verification scan (read only)."""
+        binding = self.check(connection_session_id, workflow_session_id)
+        store = self._store()
+        if store is None or binding is None:
+            return ()
+        rounds = [r for r in store.rounds(binding) if r.kind == 'assessment']
+        return tuple(self._unverified(store, binding, rounds[-1])) if rounds else ()
+
+    def verify_applied(self, connection_session_id, workflow_session_id, round_ref, operation_id):
+        """Run the read-only verification scan for applied changes that have none (e.g. the scan failed after a
+        job settled). Never dispatches a change again (administrator request 2026-11-08)."""
+        binding = self.check(connection_session_id, workflow_session_id, round_ref)
+        store = self._store()
+        latest = self._latest(store, binding, round_ref)
+        applied = self._unverified(store, binding, latest)
+        if not applied:
+            return RoundHandle(operation_id, binding, round_ref, 'nothing_to_verify')
+        return RoundHandle(operation_id, binding, round_ref, self._verify(store, binding, latest, applied, 'completed'))
 
     def _verify(self, store, binding, latest, applied, state):
         if applied:

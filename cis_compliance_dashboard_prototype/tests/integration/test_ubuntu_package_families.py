@@ -1,4 +1,4 @@
-"""Package families: 1.3.1.1 / 6.3.1.1 install, 1.5.4 / 2.1.2 purge (CIS pp.136, 160, 221-222, 752). IN-MEMORY apt fake."""
+"""Package families: 1.3.1.1 / 6.3.1.1 install, 1.5.4 purge (CIS pp.136, 160, 752). IN-MEMORY apt fake."""
 import json
 import unittest
 
@@ -138,23 +138,8 @@ class AppArmorInstallTests(PackageCase):
         self.assertEqual(set(system.installed), {'apparmor'})
 
 
-class AvahiPurgeTests(PackageCase):
-    CONTROL, PARAMS = '2.1.2', {'packages': ['avahi-daemon']}
-
-    def test_stop_units_then_purge_and_restore_reinstalls_the_recorded_version(self):
-        system = FakeApt(installed={'avahi-daemon': '0.8-5ubuntu5.2'})
-        family, before = self.cycle(system)
-        self.assertEqual([c[0] for c in system.calls], ['run', 'purge'])
-        self.assertEqual(system.calls[0], ('run', ('/usr/bin/systemctl', 'stop', '--', 'avahi-daemon.socket',
-                                                   'avahi-daemon.service')))
-        family.restore(self.PARAMS, before)
-        self.assertEqual(system.installed, {'avahi-daemon': '0.8-5ubuntu5.2'})
-        self.assertIn(('install', ('avahi-daemon=0.8-5ubuntu5.2',)), system.calls)
-
-    def test_a_purge_that_would_remove_dependent_packages_is_refused(self):
-        self.refused(FakeApt(installed={'avahi-daemon': '0.8', 'ubuntu-desktop-minimal': '1.481'},
-                             rdepends={'avahi-daemon': ['ubuntu-desktop-minimal']}))
-        self.refused(FakeApt())  # nothing installed: nothing to purge
+# 2.1.2 no longer purges avahi-daemon: it keeps the package and masks its units (administrator decision
+# 2026-11-08; test_ubuntu_avahi_mask.py).
 
 
 class PrelinkPurgeTests(PackageCase):
@@ -174,8 +159,8 @@ class PackageRegistryTests(unittest.TestCase):
         from tests.integration.ubuntu_fixtures import cases, observation
         from tests.integration.test_ubuntu_core_family import FakeCoreSystem
         target = build(FakeCoreSystem())
-        expected = {'6.3.1.1': {'packages': ['auditd', 'audispd-plugins']}, '2.1.2': {'packages': ['avahi-daemon']}}
-        for cid in ('1.3.1.1', '1.5.4', '6.3.1.1', '2.1.2'):
+        expected = {'6.3.1.1': {'packages': ['auditd', 'audispd-plugins']}}
+        for cid in ('1.3.1.1', '1.5.4', '6.3.1.1'):
             action = 'ubuntu.%s.v1' % cid
             self.assertEqual((FAMILIES[action].version, FAMILIES[action].implementation_sha256),
                              (target[action].version, target[action].implementation_sha256))

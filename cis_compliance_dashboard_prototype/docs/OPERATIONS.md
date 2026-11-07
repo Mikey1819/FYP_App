@@ -24,6 +24,11 @@ Hot reload is deliberately off (`.streamlit/config.toml`). Restart the app after
    - Supervised jobs (packages, GRUB, patches) appear above the tabs with **Check status**.
    - **SSH and UFW changes:** when the panel says "waiting for confirmation", **disconnect, reconnect, then press Confirm change** within 10 minutes. Without that, the VM restores the change by itself.
 5. **Verify:** after a change completes, a fresh scan runs automatically. A control counts as fixed only when that scan says so; nothing is retried automatically.
+   - **Refresh status** (top of Fixes) redraws the page from the stored records and keeps the VM connection. A browser reload starts a new session and ends the connection, because the password lives only in that session.
+   - **Run verification scan** appears when a change applied but has no re-scan yet, for example because the scan failed after Check status settled a job. It runs the read-only scan for exactly those changes and never re-runs a fix.
+   - **Fixes that change the same file cannot be approved together.** While one fix of a group is approved and not executed, the others' Approve button is disabled and the card says why. The groups are: the kernel-settings file (1.5.1, 1.5.3, 3.3.1, 3.3.2, 3.3.8), the sudoers drop-in (5.2.2, 5.2.3), `/etc/shadow` (5.4.1.x), the UFW files (4.1.x) and the SSH drop-in (5.1.x). Execute the approved one, then start a new round for the next.
+   - **2.1.2** keeps avahi-daemon installed and stops and masks its socket and service (site decision, recorded per machine in `system/config.py`).
+   - **1.2.2.1** is not proposed: installing updates is deferred until the family uses a separately approved metadata refresh and exact package versions.
 
 ## Helper and runner updates
 

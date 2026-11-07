@@ -1,4 +1,5 @@
-"""Package families: install 1.3.1.1 (apparmor) and 6.3.1.1 (auditd); purge 1.5.4 (prelink) and 2.1.2 (avahi-daemon).
+"""Package families: install 1.3.1.1 (apparmor) and 6.3.1.1 (auditd); purge 1.5.4 (prelink). 2.1.2 keeps avahi-daemon
+and masks its units instead (family_service.AvahiMaskFamily; administrator decision 2026-11-08).
 
 Python 3.10, stdlib only. Each runs as a systemd-supervised job (supervision.py), never in the SSH session.
 Eligibility is apt's own read-only simulation (`apt-get -s`) of exactly this change:
@@ -19,8 +20,6 @@ import subprocess
 SPECS = {
     '1.3.1.1': dict(mode='install', packages=('apparmor', 'apparmor-utils'), before=()),
     '1.5.4': dict(mode='purge', packages=('prelink',), before=(('/usr/sbin/prelink', '-ua'),)),
-    '2.1.2': dict(mode='purge', packages=('avahi-daemon',),
-                  before=(('/usr/bin/systemctl', 'stop', '--', 'avahi-daemon.socket', 'avahi-daemon.service'),)),
     '6.3.1.1': dict(mode='install', packages=('auditd', 'audispd-plugins'), before=()),
 }
 _NAME = r'[a-z0-9][a-z0-9+.-]{0,127}'
@@ -36,7 +35,10 @@ def parse_simulation(text):
         if not line.startswith(('Inst ', 'Remv ', 'Purg ')):
             continue
         if line.startswith('Inst '):
-            match = re.fullmatch(r'Inst (%s)(?::[a-z0-9]+)? (?:\[(%s)\] )?\((%s) .*\)' % (_NAME, _VERSION, _VERSION), line)
+            # apt may append a related-package list, e.g. ") [python3.10:amd64 ]" or ") []" (live 2026-11-07:
+            # every 1.2.2.1 preview was refused on such lines).
+            match = re.fullmatch(r'Inst (%s)(?::[a-z0-9]+)? (?:\[(%s)\] )?\((%s) [^()]*\)(?: \[[^\[\]]*\])?'
+                                 % (_NAME, _VERSION, _VERSION), line)
             if not match:
                 raise ValueError('Unrecognised apt simulation line')
             plan.append(('Inst', match.group(1), match.group(3), match.group(2)))

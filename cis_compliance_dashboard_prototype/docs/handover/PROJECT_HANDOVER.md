@@ -29,8 +29,8 @@ The detailed, dated record is `docs/INTEGRATION_PROGRESS.md`; this section summa
   - Demonstrate Windows → disconnect → Ubuntu → disconnect → Windows in the same running app with the real Windows VM (definition of done). Fixture-tested only so far.
   - Optionally, repeat representative agentic rounds live (the evaluation so far simulates the collection).
 - **Outstanding, needs an administrator decision:**
-  - 2.1.2: purge avahi-daemon or the mask-and-retain branch (site decision). Its preview is refused; diagnose with `apt-get -s purge avahi-daemon`.
-  - 1.2.2.1: preview refused; diagnose with `apt-get -s upgrade` and `dpkg --audit`.
+  - ~~2.1.2 decision~~ Decided 2026-11-08: keep avahi-daemon, stop and mask its socket and service (implemented; needs the helper reinstall, then a live run).
+  - 1.2.2.1: likely preview cause found and fixed (apt simulation lines with a trailing package list). Installing updates is **deferred** until the family uses a separately approved metadata refresh and exact package/version approval, with a recovery snapshot and human review.
   - Runner refusal categories instead of one generic refusal (a helper change, so a reinstall).
   - Whether to remove the goal field from the Windows page too (removed for Ubuntu).
   - **Pending (administrator, 2026-11-07): batch shared-file fixes.** Narrow the sysctl family's read set to its own keys' lines in `/etc/sysctl.d/60-fyp-hardening-cis.conf` (1.5.3 reuses it), so 1.5.1/3.3.1/3.3.8/1.5.3 can run in one execution, and a restore reverts only its own lines. Helper change: reinstall, both acceptance scenarios, and the family re-validated live. Until then, shared-file fixes run one per round.

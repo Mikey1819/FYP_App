@@ -1149,3 +1149,25 @@ The execution gate was a hard-coded "closed". It now opens only on evidence.
 - **Tests:** 4 new tests, written first. Full suite **627 tests, all passed**.
 - **Register:** **13 validated live**, 1 attempted and not applied (5.1.20), 16 not run live. 8 controls remain Non-Compliant: 1.2.2.1, 2.1.2, 4.1.4, 4.1.7, 5.1.7, 5.1.16, 5.1.20, 6.3.1.3. OpenSCAP cross-check: no unexplained disagreement (3 CIS wording, 3 SSH explicit line).
 - **Pending (administrator):** batching shared-file fixes by narrowing the sysctl family's read set (handover, outstanding decisions).
+
+## 8 November 2026 — Refresh and re-verification, shared-file approval guard, 2.1.2 mask-and-retain, 1.2.2.1 diagnosis
+- **Refresh and re-verification (administrator request):**
+  - A card could stay "Applied, re-scan pending". Check status does run the verification scan after a job settles (`refresh_execution` calls `_verify`; 6.3.1.1 settled 10:00:37 and was verified at 10:01:51). But a failed scan left no way to retry it, and a browser reload ends the connection, since credentials live only in that session.
+  - New `unverified_applied` and `verify_applied` run the read-only scan for applied changes that have none and never re-dispatch.
+  - The Fixes tab has **Refresh status** (keeps the connection) and **Run verification scan** (shown only when needed).
+  - Tests: `test_ubuntu_verify_applied` (2) and page assertions in `test_ubuntu_fix_ui`.
+- **Shared-file approval guard (administrator request):** `shared_file_conflict` compares the proposals' recovery scopes (files only; runtime keys and restores ignored).
+  - While one fix of a group is approved and not executed, the snapshot offers only Reject for the others, the card explains why and disables Approve, and `decide` refuses the approval with the same message.
+  - Tests: `test_ubuntu_shared_file_approval` (5). `docs/authorized-ui-changes.patch` was regenerated against `af43fbc`.
+- **2.1.2: administrator decision.** Keep avahi-daemon installed; stop, disable and mask its socket and service (catalogue U-2.1.2; CIS v2.0.0 pp. 222–223).
+  - New `AvahiMaskFamily` (`vm/ubuntu/family_service.py`, direct, 60 s): stop the socket then the service, then mask both. Restore unmasks and returns the recorded enablement and activity. The package-purge spec for 2.1.2 is removed (1.5.4's prelink purge stays).
+  - The decision is registered per machine in `system/config.UBUNTU_AVAHI_RETENTION`, and the envelope passes it to the predicate as the required retention review. Masked units read Compliant only on the registered machine; elsewhere the retention stays Unknown (manual).
+  - The host spec proposes the mask only there, with the package installed and both units read.
+  - Stored scans still load: every earlier rule set is also tried without the review. All 67 load; the latest still reads 2.1.2 Non-Compliant (units active), and the mask is now proposed.
+  - Tests: `test_ubuntu_avahi_mask` (8). The purge tests were replaced.
+- **1.2.2.1: diagnosis.** The apt simulation parser required each `Inst` line to end at its closing bracket. `apt-get -s` often appends a related-package list (`... [amd64]) [python3.10:amd64 ]` or `) []`), which raised "Unrecognised apt simulation line", the likely reason every live preview was refused. Not yet confirmed on the VM; `apt-get -s upgrade | grep '^Inst'` there would show it.
+  - The parser now accepts that optional list (also used by the package families). Anything after it is still refused.
+  - **Installing updates stays deferred** (administrator decision): the current job refreshes metadata itself and upgrades without exact versions, whereas the plan requires a separately approved metadata refresh, exact package/version approval, a recovery snapshot and human review. The host spec proposes nothing until the family is redesigned.
+  - Tests: `test_ubuntu_patch_preview` (3); the patch family test was updated.
+- Full suite **649 tests, all passed**; baseline: no protected changes.
+- **Helper change:** collector digest is now **`a94748e922d3`**; `dist/ubuntu-helper` has been rebuilt. Reinstall plus both acceptance scenarios are needed before scans and fixes are accepted.

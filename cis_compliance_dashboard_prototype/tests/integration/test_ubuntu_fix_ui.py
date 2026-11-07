@@ -97,6 +97,10 @@ class FixUiTests(StoreFixture):
             self.assertFalse(list(app.error), [e.value for e in app.error])
             approve = [b for b in app.button if b.key and b.key.startswith('ubuntu_approve_')]
             self.assertEqual(len(approve), 1)
+            # Refresh redraws from the stored records and keeps the connection (a browser reload would not).
+            app.button(key='ubuntu_refresh').click().run()
+            self.assertEqual([t for t in app.text_input if t.key == 'agentic_password'], [])  # still connected
+            self.assertEqual([b for b in app.button if b.key == 'ubuntu_verify_applied'], [])  # nothing applied yet
             # One expandable card per Non-Compliant control; the decision buttons live inside the control's card.
             card = self.card(app, '1.5.1')
             self.assertIn('Awaiting your decision', card.label.replace(chr(92), ''))

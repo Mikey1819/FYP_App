@@ -53,7 +53,7 @@ index 483e086..cb52529 100644
                             st.Page(agentic_page, title="Agentic hardening", icon=":material/security:",
                                     url_path="agentic"),
 diff --git a/cis_compliance_dashboard_prototype/hardening/agentic_view.py b/cis_compliance_dashboard_prototype/hardening/agentic_view.py
-index 502536e..10f971d 100644
+index 502536e..3d2af29 100644
 --- a/cis_compliance_dashboard_prototype/hardening/agentic_view.py
 +++ b/cis_compliance_dashboard_prototype/hardening/agentic_view.py
 @@ -17,6 +17,10 @@ from .remediation import RemediationStore
@@ -132,7 +132,7 @@ index 502536e..10f971d 100644
  
  
  def _reset_view():
-@@ -136,17 +172,263 @@ def _goal_input():
+@@ -136,17 +172,291 @@ def _goal_input():
                                'You see how it was read before you approve anything.')
  
  
@@ -163,8 +163,33 @@ index 502536e..10f971d 100644
 +    return executed, applied, restoring
 +
 +
-+def _ubuntu_fix_header(snapshot):
-+    """Operator name and comment, above the per-control cards whose decision buttons use them."""
++def _ubuntu_fix_header(backend, connection, snapshot):
++    """Refresh and pending verification, then the operator name and comment the per-control cards use."""
++    error, notice = st.session_state.pop('ubuntu_verify_error', None), st.session_state.pop('ubuntu_verify_notice', None)
++    if error:
++        st.error(md_escape(error))
++    if notice:
++        st.success(md_escape(notice))
++    workflow = st.session_state.get(WORKFLOW_KEY)
++    unverified = backend.unverified_applied(connection, workflow) if workflow else ()
++
++    def verify():
++        try:
++            handle = backend.verify_applied(connection, workflow, snapshot.current_round_reference, uuid4().hex)
++            st.session_state['ubuntu_verify_notice'] = 'Verification scan: ' + handle.state.replace('_', ' ') + '.'
++        except (ValueError, OSError) as failure:
++            st.session_state['ubuntu_verify_error'] = str(failure)[:300]
++    with st.container(horizontal=True):
++        # A browser reload starts a new session and ends the connection (credentials live only in this session).
++        st.button('Refresh status', key='ubuntu_refresh', icon=':material/refresh:',
++                  help='Reload this page from the stored records; the VM connection stays open.')
++        if unverified:
++            st.button('Run verification scan', key='ubuntu_verify_applied', icon=':material/fact_check:', type='primary',
++                      on_click=verify, help='Read-only re-scan for applied changes that have none yet; never re-runs a fix.')
++    if unverified:
++        st.warning('%d applied change%s still need%s the verification scan, so the card%s cannot show the result yet.'
++                   % (len(unverified), '' if len(unverified) == 1 else 's', 's' if len(unverified) == 1 else '',
++                      '' if len(unverified) == 1 else 's'))
 +    if any(p.eligible_commands for p in snapshot.proposals):
 +        st.text_input('Your name (recorded with each decision)', key='agentic_operator')
 +        st.text_input('Comment (optional)', key='agentic_comment')
@@ -174,8 +199,11 @@ index 502536e..10f971d 100644
 +    operator = st.session_state.get('agentic_operator') or ''
 +    comment = st.session_state.get('agentic_comment') or ''
 +    label = p.control_id or p.title
++    if 'approve' not in p.eligible_commands:  # e.g. it shares a file with an approved fix not executed yet
++        st.warning(md_escape(p.reason))
 +    left, right = st.columns(2)
-+    if left.button('Approve ' + label, key='ubuntu_approve_' + p.reference.record_id, disabled=not operator.strip()):
++    if left.button('Approve ' + label, key='ubuntu_approve_' + p.reference.record_id,
++                   disabled=not operator.strip() or 'approve' not in p.eligible_commands):
 +        backend.decide(connection, workflow, p.reference, True, operator, comment, uuid4().hex)
 +        st.rerun()
 +    if right.button('Reject ' + label, key='ubuntu_reject_' + p.reference.record_id, disabled=not operator.strip()):
@@ -207,7 +235,7 @@ index 502536e..10f971d 100644
 +    executed, applied, restoring = _ubuntu_states(snapshot)
 +    if undecided:
 +        if not snapshot.plan:  # without cards the name and comment fields are rendered here
-+            _ubuntu_fix_header(snapshot)
++            _ubuntu_fix_header(backend, connection, snapshot)
 +        for p in undecided:
 +            _ubuntu_decision_buttons(backend, connection, workflow, p)
 +    if approved:
@@ -398,7 +426,7 @@ index 502536e..10f971d 100644
  def _show_start(hardening, store, runtime, target):
      st.markdown('No round in this session yet. A round scans the VM, ranks the findings and proposes fixes. '
                  'Nothing changes on the VM until you approve and execute.')
-@@ -160,7 +442,17 @@ def _show_start(hardening, store, runtime, target):
+@@ -160,7 +470,17 @@ def _show_start(hardening, store, runtime, target):
      with st.container(horizontal=True):
          if st.button('Start agentic round', type='primary', key='agentic_run'):
              _run_round(hardening, None, goal)
@@ -416,7 +444,7 @@ index 502536e..10f971d 100644
              st.session_state[SESSION] = previous['session_id']
              _reset_view()
              st.rerun()
-@@ -189,17 +481,21 @@ def _action_bar(hardening, session_id, latest, state, rounds, target):
+@@ -189,17 +509,21 @@ def _action_bar(hardening, session_id, latest, state, rounds, target):
              if st.button('Run next round', type='primary', key='agentic_run', icon=':material/refresh:',
                           help='Rescan the VM, re-rank the findings and propose again'):
                  _run_round(hardening, session_id, goal)
@@ -439,7 +467,7 @@ index 502536e..10f971d 100644
                  _reset_view()
                  st.rerun()
          if state['undecided']:
-@@ -210,6 +506,7 @@ def _action_bar(hardening, session_id, latest, state, rounds, target):
+@@ -210,6 +534,7 @@ def _action_bar(hardening, session_id, latest, state, rounds, target):
                             help='Self-contained HTML record of this round. Open it in a browser to print to PDF.')
          if st.button('New session', key='agentic_reset', type='tertiary'):
              del st.session_state[SESSION]
@@ -447,7 +475,7 @@ index 502536e..10f971d 100644
              _reset_view()
              st.rerun()
  
-@@ -234,7 +531,7 @@ def _confirm_execution(hardening, session_id, state, target):
+@@ -234,7 +559,7 @@ def _confirm_execution(hardening, session_id, state, target):
              if st.button('Confirm and execute', type='primary', key='agentic_execute'):
                  st.session_state.pop(CONFIRM, None)
                  with st.spinner('Remediation Agent executing, then Scanner verifying. This can take up to 10 minutes.'):
@@ -456,7 +484,7 @@ index 502536e..10f971d 100644
                  _reset_view()
                  st.rerun()
              if st.button('Cancel', key='agentic_execute_cancel'):
-@@ -266,11 +563,11 @@ def _decision_cell(store, record, operator, comment, editable):
+@@ -266,11 +591,11 @@ def _decision_cell(store, record, operator, comment, editable):
              ready = bool(operator.strip())
              hint = None if ready else 'Enter your name above first'
              if st.button('Approve', key='agentic_approve_' + p['request_id'], disabled=not ready, help=hint):
@@ -470,7 +498,7 @@ index 502536e..10f971d 100644
                  st.session_state.pop(COMMENT, None)
                  st.rerun()
      if record['comment']:
-@@ -286,7 +583,9 @@ def _show_fixes(store, assessment_round, state, analysis, *, editable):
+@@ -286,7 +611,9 @@ def _show_fixes(store, assessment_round, state, analysis, *, editable):
                          f"{md_escape(goal['read_as'])}")
              st.caption('Code enforces this reading on the plan. If it is wrong, reject the fixes and run the next '
                         'round with a clearer goal.')
@@ -481,7 +509,7 @@ index 502536e..10f971d 100644
          st.caption('Orchestrator summary: ' + md_escape(outcome['reason']))
      if not state['records']:
          st.info('The Orchestrator proposed no fixes in this round.')
-@@ -302,7 +601,7 @@ def _show_fixes(store, assessment_round, state, analysis, *, editable):
+@@ -302,7 +629,7 @@ def _show_fixes(store, assessment_round, state, analysis, *, editable):
                                  placeholder='e.g. Approved for the Saturday maintenance window')
          if approve_all or reject_all:
              for record in state['undecided']:
@@ -490,7 +518,7 @@ index 502536e..10f971d 100644
              st.session_state.pop(COMMENT, None)
              st.rerun()
          st.caption('Each approval is bound to that exact request on this VM and expires after one hour.')
-@@ -446,6 +745,9 @@ def _trace_rows(trace):
+@@ -446,6 +773,9 @@ def _trace_rows(trace):
  
  
  def _show_agent_log(hardening, phases):
@@ -500,7 +528,7 @@ index 502536e..10f971d 100644
      for title, agent_round in phases:
          traces = sorted(hardening.traces(agent_round['round_id']), key=lambda t: AGENT_ORDER.get(t['agent_role'], 9))
          if not traces:
-@@ -476,6 +778,30 @@ def render_agentic(database_path: Path):
+@@ -476,6 +806,30 @@ def render_agentic(database_path: Path):
          st.info('Connect to the VM to start an agentic round.')
          return
      try:
@@ -524,14 +552,14 @@ index 502536e..10f971d 100644
 +                        _run_round(None, None, None, AssessmentMode.DETERMINISTIC)
 +                render_snapshot_tabs(snapshot, fix_actions=lambda: _ubuntu_fix_actions(backend, connection, snapshot,
 +                                                                                      capabilities),
-+                                     fix_header=lambda: _ubuntu_fix_header(snapshot),
++                                     fix_header=lambda: _ubuntu_fix_header(backend, connection, snapshot),
 +                                     control_actions=lambda card: _ubuntu_card_actions(backend, connection, snapshot,
 +                                                                                       capabilities, card))
 +                return
          runtime, store, hardening = _services(database_path, target)
          session_id = st.session_state.get(SESSION)
          rounds = store.rounds(session_id) if session_id else []
-@@ -512,7 +838,11 @@ def render_agentic(database_path: Path):
+@@ -512,7 +866,11 @@ def render_agentic(database_path: Path):
              _show_risk(analysis, viewing['round_id'], viewing.get('analysis_outcome'))
          with controls:
              if viewing['framework_run_id']:

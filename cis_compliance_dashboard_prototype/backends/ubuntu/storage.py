@@ -286,8 +286,10 @@ class UbuntuStore:
         if _snapshot(bundle.assessments) != row['snapshot']:
             # Only a documented interpretation change may explain a difference: the stored snapshot must match an
             # earlier rule set exactly; the evidence is then shown under the current rules.
+            # Every scan stored before the 2.1.2 retention registration was evaluated without that review.
+            candidates = [dict(r, reviewed_avahi_retention=False) for r in ({},) + EARLIER_RULES] + list(EARLIER_RULES)
             if not any(_snapshot(parse_bundle(raw, expected, now=imported, **_rules(rules)).assessments) == row['snapshot']
-                       for rules in EARLIER_RULES):
+                       for rules in candidates):
                 raise ValueError('Stored assessment differs from current predicate evaluation; reassessment required')
         return StoredEvidence(raw, digest, expected, bundle.started_at, bundle.completed_at,
                               row['imported_at'], bundle.assessments)

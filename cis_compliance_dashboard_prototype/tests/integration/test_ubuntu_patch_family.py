@@ -113,7 +113,7 @@ class PatchFamilyTests(unittest.TestCase):
         key, value = FAILURES['1.2.2.1']
         obs['1.2.2.1'][key] = observation(value)
         ev.raw = json.dumps({'observations': obs}).encode()
-        self.assertEqual(spec.propose('1.2.2.1', ev), self.PARAMS)
+        self.assertIsNone(spec.propose('1.2.2.1', ev))  # deferred by the administrator (test_ubuntu_patch_preview)
         obs['1.2.2.1']['metadata_fresh'] = {'state': 'error', 'value': None}
         ev.raw = json.dumps({'observations': obs}).encode()
         self.assertIsNone(spec.propose('1.2.2.1', ev))

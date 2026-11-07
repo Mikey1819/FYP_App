@@ -30,3 +30,8 @@ PATHS = IntegrationPaths.for_app(APP)
 # FYP-Ubuntu2204: user-reported 2026-11-06 - UFW active and enabled, nftables disabled, netfilter-persistent
 # absent; registration approved by the user in chat. The collector still checks competing managers per scan.
 UBUNTU_FIREWALL_REGISTRATIONS = {'f1d16ae7e6bc4d2488f9410fcd858e36': 'ufw'}
+# CIS 2.1.2 avahi-daemon retention, keyed by verified machine identity. FYP-Ubuntu2204: administrator decision in
+# chat 2026-11-08 - keep the package (a purge would remove dependent packages) and stop and mask its socket and
+# service, as CIS v2.0.0 pp. 222-223 allow and the catalogue's U-2.1.2 prefers. This is the review the 2.1.2
+# predicate requires.
+UBUNTU_AVAHI_RETENTION = {'f1d16ae7e6bc4d2488f9410fcd858e36': 'mask'}
