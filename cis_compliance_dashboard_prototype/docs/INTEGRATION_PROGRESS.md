@@ -881,3 +881,8 @@ The execution gate was a hard-coded "closed". It now opens only on evidence.
   - **Mutation checks, all caught:** a same-boot reboot counting as done, settling without a new boot, stamping before a successful update, a reboot naming unapplied IDs, an unchecked digest, and maintenance joining the CIS execution set.
   - The acceptance harnesses now register the maintenance operations, as a real runner does.
 - Full suite **517 tests, all passed**; baseline: no protected changes; UI patch regenerated; bundle rebuilt. **The runner changed:** reinstall, re-run `install-runner.sh` and repeat both acceptance scenarios before live use.
+
+## 7 November 2026 — live execution acceptance passed (current runner)
+- The administrator reinstalled the helper and runner stage built from 4b404c8 (collector digest `3df47649b229`, matching this checkout).
+- Ledger acceptance records for that digest: confirm → `confirmed` (settled 03:05:56 UTC); rollback → `rolled_back` (settled 03:07:38 UTC).
+- The evidence-based execution gate is therefore open for this runner version. No CIS fix has run live yet; the next step is one low-risk fix (3.3.2) with a snapshot taken first.

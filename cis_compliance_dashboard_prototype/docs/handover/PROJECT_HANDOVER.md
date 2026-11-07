@@ -18,7 +18,7 @@ The detailed, dated record is `docs/INTEGRATION_PROGRESS.md`; this section summa
 - **Auxiliary operations:** approved restore, package-list refresh and reboot (boot-ID verified). They are never counted as CIS fixes.
 - **Execution gate:** evidence-based. It opens only when the deployed runner matches this application and both live acceptance scenarios have passed on the VM for that runner version.
   - The runner stage (`install-runner.sh`) was deployed with the administrator's approval on 2026-11-07, and the confirm scenario passed.
-  - The rollback scenario was pending at the last handover. The runner changed again afterwards (maintenance operations), so it needs a reinstall and both scenarios again.
+  - After the maintenance-operations runner change, the administrator reinstalled the helper and runner. Both scenarios passed live on 2026-11-07 for runner digest `3df47649b229`: confirm → confirmed (03:05 UTC), rollback → rolled_back (03:07 UTC). The execution gate is open for that version.
 - **Operations guide:** `docs/OPERATIONS.md`. Runner deployment preview: `docs/RUNNER_DEPLOYMENT.md`.
 - **Outstanding:**
   - live validation of every family (task 17);
@@ -217,7 +217,7 @@ Additional handover documentation will appear in Git status. Check fresh status 
 | M2, task 7 | Done (fixture-tested; live scans stored) | Backup/restore drills of the store files |
 | M2, task 8 | Done; manifest approved (blanket basis) | Independent cross-check in task 17 |
 | M3, task 9 | Done (bounded roles, honest no-AI path) | Repeated agentic runs versus the deterministic baseline (task 17) |
-| M3, task 10 | Done; runner deployed live, execution gate evidence-based | Rollback acceptance scenario on the current runner version |
+| M3, task 10 | Done; runner deployed live, execution gate evidence-based | None (both scenarios passed for runner `3df47649b229`) |
 | M4, task 11 | Done (fixture-tested) | Live validation |
 | M4, task 12 | Done (fixture-tested) | Live validation |
 | M4, task 13 | Done (commit-confirm; fixture-tested) | Live validation, including a console recovery trial |
