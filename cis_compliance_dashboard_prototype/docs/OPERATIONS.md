@@ -73,6 +73,17 @@ The stores under `data/` hold every scan, round, approval, receipt and the coord
 - A restored store must match the VM's current state: after a VM snapshot restore, use the backup taken with that snapshot. The app refuses approvals from another registration epoch.
 - Drill, 2026-11-07: all 7 live stores backed up, verified and restored into an empty folder, with identical row counts in every table.
 
+## Independent value cross-check (second reading)
+
+Reads the same settings a second way on the VM, then compares them with the latest stored scan. Run it right after an assessment.
+
+1. Copy `scripts\vm\ubuntu_cross_check_values.py` to the VM. It is read-only (checked by `test_ubuntu_cross_check_script`) and does not need the helper.
+2. On the VM: `sudo python3 ubuntu_cross_check_values.py > crosscheck.json`. Root is needed only to read `/etc/shadow`, the audit rules and the account ages.
+3. Copy `crosscheck.json` back to the laptop, then from the app directory: `..\.venv-integration\Scripts\python.exe -B -m tools.ubuntu_value_cross_check crosscheck.json --write`. The result goes to `docs/evaluation/VALUE_CROSS_CHECK.md`.
+
+- A reading from another machine is refused. A gap of more than 60 minutes between the scan and the reading is flagged.
+- Rows marked "same tool" (`sshd -T`, `auditctl -l`) share the collector's tool and are not independent.
+
 ## Troubleshooting
 
 | Message or symptom | Meaning and action |

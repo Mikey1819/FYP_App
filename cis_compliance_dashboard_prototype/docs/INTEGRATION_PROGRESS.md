@@ -1098,3 +1098,21 @@ The execution gate was a hard-coded "closed". It now opens only on evidence.
 - **Tests:** 6 new tests (`test_ubuntu_audit_interpretation`), written first. Full suite **606 tests, all passed**.
 - **Register:** **4 validated live** (3.3.2, 5.4.1.1, 6.3.1.1, 6.3.3.4); 1 attempted and not applied; 25 not run live. Cross-check: no unexplained disagreement in any scan.
 - **Looking ahead:** the 6.3.3.6 lines match OpenSCAP's form. For 6.3.3.8, CIS (PDF p. 801) writes `-w /etc/pam.d` without a trailing slash, while OpenSCAP's watch patterns match directory paths literally (e.g. `/etc/network/`), so its `pamd` rule may disagree in the same way. This is not added to the list until a live scan shows it.
+
+## 7 November 2026 — independent value cross-check on the VM (task 17)
+- **`scripts/vm/ubuntu_cross_check_values.py`** (run on the VM by the administrator, read-only, Python 3.10 standard library) reads the CIS values a second way:
+  - `/proc/sys` files instead of `sysctl -n`;
+  - its own `sysctl.d` precedence parser instead of systemd-sysctl's output;
+  - `apt-cache policy` instead of `dpkg-query`;
+  - `systemctl is-enabled`/`is-active` instead of `systemctl show`;
+  - `/etc/ufw/ufw.conf` and `/etc/default/ufw` instead of `ufw status verbose`;
+  - its own `login.defs` and `useradd` parser, and `chage -l` per password-bearing account;
+  - the generated `/etc/audit/audit.rules` instead of the `rules.d` files;
+  - `/proc/cmdline` and the `grub.cfg` linux lines;
+  - `apt list --upgradable` and dpkg selections;
+  - its own sudoers `Defaults` and PAM `minlen` readers.
+  - `sshd -T` and `auditctl -l` are the same tools as the collector, and are labelled so.
+- **`tools/ubuntu_value_cross_check.py`** compares the reading with the latest stored scan. Each row is Agree, Disagree or Not readable (never counted as agreement), and names the method. A reading from another machine or with another schema is refused; a gap of more than 60 minutes is flagged.
+- **Tests:** 5 comparator tests and 3 static tests on the script (fixed read-only tools and actions only, no write, delete or shell, parses as Python 3.10), written first. A local smoke run produced valid JSON with no reader errors, and the comparator refused it as another machine's reading.
+  - Full suite **614 tests, all passed**. The helper digest is unchanged (the script is outside the helper bundle).
+- **Not yet run on the VM** (needs the administrator).

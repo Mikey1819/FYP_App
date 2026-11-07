@@ -34,7 +34,7 @@ The detailed, dated record is `docs/INTEGRATION_PROGRESS.md`; this section summa
   - Runner refusal categories instead of one generic refusal (a helper change, so a reinstall).
   - Whether to remove the goal field from the Windows page too (removed for Ubuntu).
   - 6.3.3.8: if its verification reads Unknown only because OpenSCAP wants `/etc/pam.d/` (CIS writes `/etc/pam.d`), add it to the reviewed CIS-wording list.
-- **Development left that needs the VM to finish:** a read-only Ubuntu script that re-reads the values a second way on the VM, as the Windows cross-check does. It is to be written and then run by the administrator.
+- **Written, needs the administrator to run it:** the independent value cross-check, a read-only second reading on the VM (`scripts/vm/ubuntu_cross_check_values.py`) compared by `tools/ubuntu_value_cross_check.py`. See OPERATIONS, "Independent value cross-check".
 - **Not authorized:** push, merge, deployment, academic report rewrite (`docs/REPORT_CHANGE_LOG.md` lists the changes to make).
 
 ## 1. Executive summary and architecture overview
