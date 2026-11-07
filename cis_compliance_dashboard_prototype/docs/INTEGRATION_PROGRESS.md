@@ -1066,3 +1066,10 @@ The execution gate was a hard-coded "closed". It now opens only on evidence.
 - 5.4.1.1 applied at 09:55:48 (`applied` / `expected_after_state`). The automatic verification scan at 09:56:08 read **5.4.1.1 Compliant**: `/etc/login.defs` PASS_MAX_DAYS went from 99999 to 365. The password-bearing accounts (root, vboxuser) were already at 365, and the system accounts at 99999 have no password, so CIS excludes them.
 - **Independent check:** OpenSCAP's `accounts_maximum_age_login_defs` went from fail to pass; direct probes and OpenSCAP agree before and after.
 - Register refreshed (`docs/evaluation/LIVE_VALIDATION.md`): **2 validated live** (3.3.2, 5.4.1.1), 1 attempted and not applied (5.1.20), 27 not run live.
+
+## 7 November 2026 — third live CIS fix: 6.3.1.1 (administrator-approved)
+- 6.3.1.1 approved 10:00:02 UTC; supervised apt job started 10:00:15 and **applied** at 10:00:30. auditd, audispd-plugins and libauparse0 installed (version 1:3.0.7-1ubuntu0.1).
+- Verification scan: **6.3.1.1 Compliant**. **6.3.1.2 also Compliant**, without a fix of its own: installing the package enabled and started auditd. The register keeps 6.3.1.2 "Not run live", because its service family has not been exercised and can only be while auditd is stopped or disabled.
+- **Independent check:** direct probes and OpenSCAP agree on all six audit controls. The audit-rule controls were "not applicable" to OpenSCAP while auditd was absent; both sides now read them Non-Compliant, with no rules loaded.
+- **Effect on planning:** 18 Non-Compliant controls, all with an applicable registered fix. 6.3.3.4, 6.3.3.6 and 6.3.3.8 are now eligible, because `loaded_audit_rules` is readable.
+- Register: **3 validated live** (3.3.2, 5.4.1.1, 6.3.1.1), 1 attempted and not applied (5.1.20), 26 not run live. OpenSCAP cross-check: latest scan 26 agree, 3 SSH explicit-line, 1 not comparable (1.2.2.1); no unexplained disagreement in any scan.
