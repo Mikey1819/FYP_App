@@ -102,6 +102,10 @@ class AcceptanceUiTests(ConfirmUiTests):
             keyed('ubuntu_acceptance_status_')[0].click().run()  # the operator checks status once the timer fired
             self.assertFalse(list(app.error), [e.value for e in app.error])
             self.assertNotIn('not enabled', gate_text())
+            # Both scenarios passed for this runner: the panel is no longer shown (administrator request 2026-11-08).
+            app.run()
+            self.assertEqual([e for e in app.expander if e.label.startswith('Execution acceptance')], [])
+            self.assertEqual(keyed('ubuntu_acceptance_'), [])
         # The rollback run restored its before-state: the marker the confirmed run left, never its own.
         self.assertTrue(self.marker.content.startswith('confirm:'))
         for database in self.root.rglob('*.sqlite3'):

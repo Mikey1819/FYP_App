@@ -1180,3 +1180,8 @@ The execution gate was a hard-coded "closed". It now opens only on evidence.
   - If anything still restarted it, the runner's after-state check would catch it (`unexpected_after_state`).
 - **Tests:** the fake systemd gained the live race (the service restarts on demand while unmasked and the stop fails). The new race test failed with exactly the live error before the change. Order and summary assertions were updated. Full suite **650 tests, all passed**.
 - **Helper change:** collector digest is now **`0e991756fe49`**; `dist/ubuntu-helper` has been rebuilt. Reinstall plus both acceptance scenarios are needed.
+
+## 8 November 2026 — Execution acceptance shown only when needed (administrator request)
+- New `acceptance_complete`: the deployment matches, the confirm and rollback scenarios both passed for the deployed runner digest, and no acceptance run is open. The Ubuntu page then skips the Execution acceptance panel, keeping only the last scenario's result message.
+- A reinstall of new code changes the runner digest, so the panel returns until both scenarios pass again. The execution gate is unchanged.
+- **Test:** the acceptance page test now checks that the panel and its buttons are gone after both scenarios pass (it failed before the change). Full suite **650 tests, all passed**. Host-only change (collector digest unchanged, `0e991756fe49`). `docs/authorized-ui-changes.patch` regenerated.

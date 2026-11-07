@@ -697,6 +697,17 @@ class UbuntuBackend(BoundBackend):
                            'the timer restores it).')
         return tuple(reasons)
 
+    def acceptance_complete(self, connection_session_id):
+        """Both live scenarios passed for the deployed runner and none is open, so the acceptance panel is not needed.
+        A reinstall changes the runner digest, which makes it needed again (administrator request 2026-11-08)."""
+        self.check(connection_session_id)
+        deployment = self.deployment_status(connection_session_id)
+        if not deployment.ok or any(r['outcome'] is None for r in self._acceptance_runs()):
+            return False
+        passed = {(r['scenario'], r['outcome']) for r in self._acceptance_runs()
+                  if r['runner_digest'] == deployment.runner_digest}
+        return {('confirm', 'confirmed'), ('rollback', 'rolled_back')} <= passed
+
     def _acceptance_view(self, run, receipt=None):
         params = json.loads(run['raw'])['parameters']
         code = receipt['code'] if receipt is not None else (run['outcome'] or 'job_started')

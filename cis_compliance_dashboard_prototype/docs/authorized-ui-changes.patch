@@ -53,7 +53,7 @@ index 483e086..cb52529 100644
                             st.Page(agentic_page, title="Agentic hardening", icon=":material/security:",
                                     url_path="agentic"),
 diff --git a/cis_compliance_dashboard_prototype/hardening/agentic_view.py b/cis_compliance_dashboard_prototype/hardening/agentic_view.py
-index 502536e..3d2af29 100644
+index 502536e..dc729e5 100644
 --- a/cis_compliance_dashboard_prototype/hardening/agentic_view.py
 +++ b/cis_compliance_dashboard_prototype/hardening/agentic_view.py
 @@ -17,6 +17,10 @@ from .remediation import RemediationStore
@@ -132,7 +132,7 @@ index 502536e..3d2af29 100644
  
  
  def _reset_view():
-@@ -136,17 +172,291 @@ def _goal_input():
+@@ -136,17 +172,296 @@ def _goal_input():
                                'You see how it was read before you approve anything.')
  
  
@@ -302,9 +302,14 @@ index 502536e..3d2af29 100644
 +
 +
 +def _ubuntu_acceptance(backend, connection):
-+    """Execution acceptance: two live runs of a harmless marker prove the confirm and rollback paths on this VM."""
++    """Execution acceptance: two live runs of a harmless marker prove the confirm and rollback paths on this VM.
++    Shown only while needed: once both passed for the deployed runner it is hidden until a reinstall needs it again."""
 +    error, notice = (st.session_state.pop('ubuntu_acceptance_error', None),
 +                     st.session_state.pop('ubuntu_acceptance_notice', None))
++    if not error and backend.acceptance_complete(connection):
++        if notice:
++            st.success(md_escape(notice))  # the last scenario's result stays visible once the panel is gone
++        return
 +    with st.expander('Execution acceptance (required before any live fix)', expanded=bool(error or notice)):
 +        if error:
 +            st.error(md_escape(error))
@@ -426,7 +431,7 @@ index 502536e..3d2af29 100644
  def _show_start(hardening, store, runtime, target):
      st.markdown('No round in this session yet. A round scans the VM, ranks the findings and proposes fixes. '
                  'Nothing changes on the VM until you approve and execute.')
-@@ -160,7 +470,17 @@ def _show_start(hardening, store, runtime, target):
+@@ -160,7 +475,17 @@ def _show_start(hardening, store, runtime, target):
      with st.container(horizontal=True):
          if st.button('Start agentic round', type='primary', key='agentic_run'):
              _run_round(hardening, None, goal)
@@ -444,7 +449,7 @@ index 502536e..3d2af29 100644
              st.session_state[SESSION] = previous['session_id']
              _reset_view()
              st.rerun()
-@@ -189,17 +509,21 @@ def _action_bar(hardening, session_id, latest, state, rounds, target):
+@@ -189,17 +514,21 @@ def _action_bar(hardening, session_id, latest, state, rounds, target):
              if st.button('Run next round', type='primary', key='agentic_run', icon=':material/refresh:',
                           help='Rescan the VM, re-rank the findings and propose again'):
                  _run_round(hardening, session_id, goal)
@@ -467,7 +472,7 @@ index 502536e..3d2af29 100644
                  _reset_view()
                  st.rerun()
          if state['undecided']:
-@@ -210,6 +534,7 @@ def _action_bar(hardening, session_id, latest, state, rounds, target):
+@@ -210,6 +539,7 @@ def _action_bar(hardening, session_id, latest, state, rounds, target):
                             help='Self-contained HTML record of this round. Open it in a browser to print to PDF.')
          if st.button('New session', key='agentic_reset', type='tertiary'):
              del st.session_state[SESSION]
@@ -475,7 +480,7 @@ index 502536e..3d2af29 100644
              _reset_view()
              st.rerun()
  
-@@ -234,7 +559,7 @@ def _confirm_execution(hardening, session_id, state, target):
+@@ -234,7 +564,7 @@ def _confirm_execution(hardening, session_id, state, target):
              if st.button('Confirm and execute', type='primary', key='agentic_execute'):
                  st.session_state.pop(CONFIRM, None)
                  with st.spinner('Remediation Agent executing, then Scanner verifying. This can take up to 10 minutes.'):
@@ -484,7 +489,7 @@ index 502536e..3d2af29 100644
                  _reset_view()
                  st.rerun()
              if st.button('Cancel', key='agentic_execute_cancel'):
-@@ -266,11 +591,11 @@ def _decision_cell(store, record, operator, comment, editable):
+@@ -266,11 +596,11 @@ def _decision_cell(store, record, operator, comment, editable):
              ready = bool(operator.strip())
              hint = None if ready else 'Enter your name above first'
              if st.button('Approve', key='agentic_approve_' + p['request_id'], disabled=not ready, help=hint):
@@ -498,7 +503,7 @@ index 502536e..3d2af29 100644
                  st.session_state.pop(COMMENT, None)
                  st.rerun()
      if record['comment']:
-@@ -286,7 +611,9 @@ def _show_fixes(store, assessment_round, state, analysis, *, editable):
+@@ -286,7 +616,9 @@ def _show_fixes(store, assessment_round, state, analysis, *, editable):
                          f"{md_escape(goal['read_as'])}")
              st.caption('Code enforces this reading on the plan. If it is wrong, reject the fixes and run the next '
                         'round with a clearer goal.')
@@ -509,7 +514,7 @@ index 502536e..3d2af29 100644
          st.caption('Orchestrator summary: ' + md_escape(outcome['reason']))
      if not state['records']:
          st.info('The Orchestrator proposed no fixes in this round.')
-@@ -302,7 +629,7 @@ def _show_fixes(store, assessment_round, state, analysis, *, editable):
+@@ -302,7 +634,7 @@ def _show_fixes(store, assessment_round, state, analysis, *, editable):
                                  placeholder='e.g. Approved for the Saturday maintenance window')
          if approve_all or reject_all:
              for record in state['undecided']:
@@ -518,7 +523,7 @@ index 502536e..3d2af29 100644
              st.session_state.pop(COMMENT, None)
              st.rerun()
          st.caption('Each approval is bound to that exact request on this VM and expires after one hour.')
-@@ -446,6 +773,9 @@ def _trace_rows(trace):
+@@ -446,6 +778,9 @@ def _trace_rows(trace):
  
  
  def _show_agent_log(hardening, phases):
@@ -528,7 +533,7 @@ index 502536e..3d2af29 100644
      for title, agent_round in phases:
          traces = sorted(hardening.traces(agent_round['round_id']), key=lambda t: AGENT_ORDER.get(t['agent_role'], 9))
          if not traces:
-@@ -476,6 +806,30 @@ def render_agentic(database_path: Path):
+@@ -476,6 +811,30 @@ def render_agentic(database_path: Path):
          st.info('Connect to the VM to start an agentic round.')
          return
      try:
@@ -559,7 +564,7 @@ index 502536e..3d2af29 100644
          runtime, store, hardening = _services(database_path, target)
          session_id = st.session_state.get(SESSION)
          rounds = store.rounds(session_id) if session_id else []
-@@ -512,7 +866,11 @@ def render_agentic(database_path: Path):
+@@ -512,7 +871,11 @@ def render_agentic(database_path: Path):
              _show_risk(analysis, viewing['round_id'], viewing.get('analysis_outcome'))
          with controls:
              if viewing['framework_run_id']:

@@ -46,7 +46,7 @@ cd ~/ubuntu-helper && sudo bash install.sh && sudo bash install-runner.sh
 
 - `uninstall.sh` also removes the runner stage, and refuses while a change is in progress.
 - **Same code reinstalled:** earlier acceptance results still count.
-- **New code:** run both acceptance scenarios again (**Execution acceptance** on the Ubuntu page):
+- **New code:** run both acceptance scenarios again (**Execution acceptance** on the Ubuntu page). The panel appears only while it is needed: after a reinstall of new code, or while a scenario is still open. Once both have passed for the deployed runner it is hidden.
   - **Confirm scenario:** run it, Check status until it is waiting, disconnect, reconnect, Confirm (about 60 s window).
   - **Rollback scenario:** run it, do not confirm, wait about 90 s, then Check status until it shows `rolled_back`.
 

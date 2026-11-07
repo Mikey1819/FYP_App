@@ -336,9 +336,14 @@ def _ubuntu_maintenance_actions(backend, connection, snapshot, capabilities, wor
 
 
 def _ubuntu_acceptance(backend, connection):
-    """Execution acceptance: two live runs of a harmless marker prove the confirm and rollback paths on this VM."""
+    """Execution acceptance: two live runs of a harmless marker prove the confirm and rollback paths on this VM.
+    Shown only while needed: once both passed for the deployed runner it is hidden until a reinstall needs it again."""
     error, notice = (st.session_state.pop('ubuntu_acceptance_error', None),
                      st.session_state.pop('ubuntu_acceptance_notice', None))
+    if not error and backend.acceptance_complete(connection):
+        if notice:
+            st.success(md_escape(notice))  # the last scenario's result stays visible once the panel is gone
+        return
     with st.expander('Execution acceptance (required before any live fix)', expanded=bool(error or notice)):
         if error:
             st.error(md_escape(error))
