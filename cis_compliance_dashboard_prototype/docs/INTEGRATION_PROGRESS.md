@@ -965,3 +965,19 @@ The execution gate was a hard-coded "closed". It now opens only on evidence.
 - **Replay:** the exact arguments of the 04:52 and 04:59 rounds are both accepted (21 fixes each; 6.3.1.2 deferred).
 - **Tests:** 3 new tests, written first; Ubuntu tests use the new code (Windows tests untouched). Mutation caught: a refusal without the control and value.
 - Full suite **549 tests, all passed**; baseline: no protected changes. Host only: collector digest unchanged (`b1b17b633dfd`).
+
+## 7 November 2026 — first live CIS fix (3.3.2) and the Fixes tab as per-control cards
+- **First live CIS fix (administrator-approved):** 3.3.2 was applied at 05:08:58 UTC (`applied` / `expected_after_state`), and the automatic verification scan at 05:09:19 read **3.3.2 Compliant** (21 Non-Compliant).
+  - An approved restore was then run (applied at 05:12:20); the following verification read 3.3.2 Non-Compliant again (22). The VM is back at its before-state for 3.3.2.
+  - The fix, the verification scan and the approved restore all worked live. The UI did not show the verification on the Fixes tab, so the administrator saw no change.
+- **Fixes tab redesign (administrator request):**
+  - One expander card per Non-Compliant control replaces the plan table. Each card title gives the current state, with an icon: awaiting decision, approved, running, *Fixed, re-scan: Compliant*, *Applied, re-scan: …*, not applied, outcome unknown, restored, rejected or deferred.
+  - Inside a card: the planner decision, reason and flag; each proposal's exact preview, recovery and outcome; and that control's Approve/Reject, Prepare restore and Run restore controls.
+  - A summary line counts controls, proposed, approved and fixed.
+  - Maintenance proposals and the execution controls stay below the cards. Windows keeps its previous Fixes tab (no plan rows).
+- **Code:** `plan_cards` / `plan_summary` / card rendering in `system/ui/components.py`; `render_snapshot_tabs` takes `fix_header` and `control_actions`.
+  - The page (`hardening/agentic_view.py`, authorized scoped edit) splits `_ubuntu_fix_actions` into header, per-card actions and the rest; button keys are unchanged.
+  - `docs/authorized-ui-changes.patch` has been regenerated against `af43fbc`.
+- **Tests:** 5 card-state tests, page assertions in the end-to-end Fixes flow (cards, buttons inside the card, states after execute and restore) and a card test replacing the table test, written first.
+  - Mutations caught: the restore state removed, re-scan status ignored, and the cards rendered without actions.
+- Full suite **554 tests, all passed**; baseline: no protected changes. Host only: collector digest unchanged (`b1b17b633dfd`). Not yet viewed in the real app.

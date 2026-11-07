@@ -190,29 +190,60 @@ def _run_round(hardening, session_id, goal, mode=AssessmentMode.AGENTIC):
     st.rerun()
 
 
-def _ubuntu_fix_actions(backend, connection, snapshot, capabilities):
-    """Ubuntu decisions and execution through the backend's typed commands only."""
-    workflow = st.session_state.get(WORKFLOW_KEY)
-    undecided = [p for p in snapshot.proposals if p.eligible_commands]
-    # The CIS fix set only; approved restores run separately through dispatch_auxiliary.
-    approved = [p for p in snapshot.proposals if p.decision == 'approved' and p.approved_request_id
-                and p.kind == 'control_remediation']
+def _ubuntu_states(snapshot):
     executed = {r.proposal_reference for r in snapshot.results}
     applied = {r.proposal_reference for r in snapshot.results if r.execution_state in ('applied', 'reconciled_applied')}
     restoring = {p.title.split('(undo ')[0] for p in snapshot.proposals if p.kind == 'recovery'}
+    return executed, applied, restoring
+
+
+def _ubuntu_fix_header(snapshot):
+    """Operator name and comment, above the per-control cards whose decision buttons use them."""
+    if any(p.eligible_commands for p in snapshot.proposals):
+        st.text_input('Your name (recorded with each decision)', key='agentic_operator')
+        st.text_input('Comment (optional)', key='agentic_comment')
+
+
+def _ubuntu_decision_buttons(backend, connection, workflow, p):
+    operator = st.session_state.get('agentic_operator') or ''
+    comment = st.session_state.get('agentic_comment') or ''
+    label = p.control_id or p.title
+    left, right = st.columns(2)
+    if left.button('Approve ' + label, key='ubuntu_approve_' + p.reference.record_id, disabled=not operator.strip()):
+        backend.decide(connection, workflow, p.reference, True, operator, comment, uuid4().hex)
+        st.rerun()
+    if right.button('Reject ' + label, key='ubuntu_reject_' + p.reference.record_id, disabled=not operator.strip()):
+        backend.decide(connection, workflow, p.reference, False, operator, comment, uuid4().hex)
+        st.rerun()
+
+
+def _ubuntu_card_actions(backend, connection, snapshot, capabilities, card):
+    """Inside one control's card: approve/reject its proposals, prepare and run an approved restore."""
+    workflow = st.session_state.get(WORKFLOW_KEY)
+    executed, applied, restoring = _ubuntu_states(snapshot)
+    for p in card['proposals']:
+        if p.eligible_commands:
+            _ubuntu_decision_buttons(backend, connection, workflow, p)
+    _ubuntu_restore_actions(backend, connection, card['proposals'], capabilities, workflow, applied, executed, restoring)
+
+
+def _ubuntu_fix_actions(backend, connection, snapshot, capabilities):
+    """Ubuntu decisions and execution through the backend's typed commands only. With a plan, per-control decisions
+    and restores sit inside each control's card; this renders the rest (execution, maintenance)."""
+    from system.ui.components import plan_cards
+    workflow = st.session_state.get(WORKFLOW_KEY)
+    carded = {p.reference for c in plan_cards(snapshot) for p in c['proposals']}
+    rest = [p for p in snapshot.proposals if p.reference not in carded]
+    undecided = [p for p in rest if p.eligible_commands]
+    # The CIS fix set only; approved restores run separately through dispatch_auxiliary.
+    approved = [p for p in snapshot.proposals if p.decision == 'approved' and p.approved_request_id
+                and p.kind == 'control_remediation']
+    executed, applied, restoring = _ubuntu_states(snapshot)
     if undecided:
-        operator = st.text_input('Your name (recorded with each decision)', key='agentic_operator')
-        comment = st.text_input('Comment (optional)', key='agentic_comment')
+        if not snapshot.plan:  # without cards the name and comment fields are rendered here
+            _ubuntu_fix_header(snapshot)
         for p in undecided:
-            left, right = st.columns(2)
-            if left.button('Approve ' + p.control_id, key='ubuntu_approve_' + p.reference.record_id,
-                           disabled=not operator.strip()):
-                backend.decide(connection, workflow, p.reference, True, operator, comment, uuid4().hex)
-                st.rerun()
-            if right.button('Reject ' + p.control_id, key='ubuntu_reject_' + p.reference.record_id,
-                            disabled=not operator.strip()):
-                backend.decide(connection, workflow, p.reference, False, operator, comment, uuid4().hex)
-                st.rerun()
+            _ubuntu_decision_buttons(backend, connection, workflow, p)
     if approved:
         pending = [p for p in approved if p.reference not in executed]
         ids = tuple(p.approved_request_id for p in approved)
@@ -233,7 +264,7 @@ def _ubuntu_fix_actions(backend, connection, snapshot, capabilities):
                 st.session_state['ubuntu_execute_error'] = str(failure)[:300]
         st.button('Execute approved fixes', key='ubuntu_execute', on_click=execute,
                   disabled=not (capabilities.can_remediate and confirmed and pending))
-    _ubuntu_restore_actions(backend, connection, snapshot, capabilities, workflow, applied, executed, restoring)
+    _ubuntu_restore_actions(backend, connection, rest, capabilities, workflow, applied, executed, restoring)
     _ubuntu_maintenance_actions(backend, connection, snapshot, capabilities, workflow, applied, executed)
 
 
@@ -369,10 +400,10 @@ def _ubuntu_pending_changes(backend, connection):
                           on_click=act, kwargs={'confirm': True})
 
 
-def _ubuntu_restore_actions(backend, connection, snapshot, capabilities, workflow, applied, executed, restoring):
-    """Approved recovery: prepare a restore of an applied fix, approve it above, then confirm and run it once."""
+def _ubuntu_restore_actions(backend, connection, proposals, capabilities, workflow, applied, executed, restoring):
+    """Approved recovery: prepare a restore of an applied fix, approve it, then confirm and run it once."""
     from system.contracts import AuxiliaryKind, RecoveryInput
-    for p in snapshot.proposals:
+    for p in proposals:
         if (p.kind == 'control_remediation' and p.reference in applied
                 and 'Restore before-state of ' + p.control_id + ' ' not in restoring):
             if st.button('Prepare restore of ' + p.control_id, key='ubuntu_prepare_restore_' + p.reference.record_id,
@@ -381,7 +412,7 @@ def _ubuntu_restore_actions(backend, connection, snapshot, capabilities, workflo
                                           RecoveryInput(p.approved_request_id, p.before_state_sha256,
                                                         'restore_before_state'), uuid4().hex)
                 st.rerun()
-    for p in snapshot.proposals:
+    for p in proposals:
         if p.kind != 'recovery' or p.decision != 'approved' or p.reference in executed:
             continue
         key = p.reference.record_id
@@ -766,7 +797,10 @@ def render_agentic(database_path: Path):
                         # Read-only deterministic scan through the backend; the helper gate is checked again there.
                         _run_round(None, None, None, AssessmentMode.DETERMINISTIC)
                 render_snapshot_tabs(snapshot, fix_actions=lambda: _ubuntu_fix_actions(backend, connection, snapshot,
-                                                                                      capabilities))
+                                                                                      capabilities),
+                                     fix_header=lambda: _ubuntu_fix_header(snapshot),
+                                     control_actions=lambda card: _ubuntu_card_actions(backend, connection, snapshot,
+                                                                                       capabilities, card))
                 return
         runtime, store, hardening = _services(database_path, target)
         session_id = st.session_state.get(SESSION)

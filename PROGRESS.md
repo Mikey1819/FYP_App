@@ -638,3 +638,7 @@ Acceptance passed on runner `b1b17b633dfd`. The orchestrator then proposed 21 co
 ## 7 November 2026 — Ubuntu fix reason matches the analysis flag (integration)
 
 A complete 21-fix plan was refused because the model wrote the analysis flag `highest_risk` where the fix reason was `high_risk`. The fix reason now uses the flag's name, and refusals name the control and value. Both recent live plans replay as accepted. Full suite: **549 passed**.
+
+## 7 November 2026 — first live fix and per-control Fixes cards (integration)
+
+First live CIS fix: 3.3.2 applied, and the automatic re-scan read Compliant. An approved restore then returned it to the before-state. The Fixes tab now shows one expandable card per Non-Compliant control, with its live state, the AI's decision and reason, the exact change, and its own Approve/Reject/Restore buttons. Full suite: **554 passed**.

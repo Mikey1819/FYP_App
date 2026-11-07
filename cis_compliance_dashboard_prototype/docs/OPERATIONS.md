@@ -17,7 +17,8 @@ Hot reload is deliberately off (`.streamlit/config.toml`). Restart the app after
 1. **Connect:** enter the VM hostname, machine ID, address and user, then the password. The password is kept in memory only. The SSH host fingerprint is checked before login.
 2. **Assess:** **Assess without AI** runs a read-only, deterministic scan. **Start agentic round** also lets the bounded agents rank findings and propose fixes. Fixes are proposed only in agentic rounds, and only for confirmed Non-Compliant controls.
 3. **Decide:** in **Fixes**, name the operator, then approve or reject each proposal. The approval screen shows the exact change, its impact and how to recover.
-   - The **AI plan** table at the top of Fixes lists every Non-Compliant control with the orchestrator's decision (fix proposed, deferred, not decided), its reason and any analysis flag. The **Agent log** tab shows every agent step.
+   - **Fixes** shows one expandable card per Non-Compliant control. The card title gives its current state (awaiting your decision, approved, running, *Fixed, re-scan: Compliant*, not applied, restored, deferred). Open a card to see the AI's decision, the reason, any analysis flag, the exact change and recovery, plus that control's Approve, Reject and Restore buttons. The **Agent log** tab shows every agent step.
+   - After a fix runs, a fresh re-scan runs automatically, and the card shows its result. The Controls tab keeps showing the scan the plan was made from.
    - The orchestrator chooses what to propose (project decision D4); approve only the fixes you want to run now and leave the rest undecided. Round goals are disabled for Ubuntu and due for removal.
 4. **Execute:** tick the confirmation, then **Execute approved fixes**. Each approved change runs at most once.
    - Supervised jobs (packages, GRUB, patches) appear above the tabs with **Check status**.

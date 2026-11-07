@@ -122,13 +122,14 @@ class PlanTableTests(unittest.TestCase):
         self.assertEqual(row.decision, 'Deferred (by the app)')
         self.assertEqual(row.reason, 'No registered fix applies in the current state')
 
-    def test_the_fixes_tab_table_lists_the_plan(self):
+    def test_the_fixes_tab_has_one_card_per_plan_row_with_its_proposal(self):
         from tests.integration.test_ubuntu_proposals import BackendRemediationTests
-        from system.ui.components import plan_table
+        from system.ui.components import plan_cards
         snap = self.snapshot(BackendRemediationTests.FIX)
-        rows = plan_table(snap)
-        self.assertEqual(len(rows), len(snap.plan))
-        self.assertEqual(set(rows[0]), {'Control', 'Title', 'Planner decision', 'Reason', 'Analysis flag'})
+        cards = plan_cards(snap)
+        self.assertEqual([c['control_id'] for c in cards], [r.control_id for r in snap.plan])
+        card = next(c for c in cards if c['control_id'] == '1.5.1')
+        self.assertEqual([p.reference for p in card['proposals']], [snap.proposals[0].reference])
 
 
 if __name__ == '__main__':

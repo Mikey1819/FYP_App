@@ -43,6 +43,12 @@ class FixUiTests(StoreFixture):
         from datetime import datetime, timezone
         return datetime.now(timezone.utc)
 
+    @staticmethod
+    def card(app, control_id):
+        from hardening.ui import md_escape
+        [card] = [e for e in app.expander if e.label.startswith('**' + md_escape(control_id) + '**')]
+        return card
+
     def test_page_approves_then_confirms_and_executes_the_exact_set_once(self):
         from streamlit.testing.v1 import AppTest
         from tests.integration.test_system_acceptance import existing_page
@@ -91,6 +97,11 @@ class FixUiTests(StoreFixture):
             self.assertFalse(list(app.error), [e.value for e in app.error])
             approve = [b for b in app.button if b.key and b.key.startswith('ubuntu_approve_')]
             self.assertEqual(len(approve), 1)
+            # One expandable card per Non-Compliant control; the decision buttons live inside the control's card.
+            card = self.card(app, '1.5.1')
+            self.assertIn('Awaiting your decision', card.label.replace(chr(92), ''))
+            self.assertEqual([b.key for b in card.button if b.key.startswith('ubuntu_approve_')], [approve[0].key])
+            self.assertEqual(list(app.dataframe)[:0], [])
             self.assertTrue(approve[0].disabled)  # no operator name yet
             app.text_input(key='agentic_operator').input('fixture-operator').run()
             [b for b in app.button if b.key.startswith('ubuntu_approve_')][0].click().run()
@@ -108,6 +119,8 @@ class FixUiTests(StoreFixture):
                 app.run()
                 self.assertEqual(self.writes(), ['alpha'])
                 self.assertEqual((self.work / 'alpha').read_bytes(), b'new')
+                self.assertIn('Applied, re-scan: Non-Compliant', self.card(app, '1.5.1').label.replace(chr(92), ''))  # fixture keeps ASLR 0
+                self.assertTrue([b for b in self.card(app, '1.5.1').button if b.key.startswith('ubuntu_prepare_restore_')])
                 # Restore: prepare -> approve -> confirm -> run, through the same page and gates.
                 [prepare] = [b for b in app.button if b.key and b.key.startswith('ubuntu_prepare_restore_')]
                 prepare.click().run()
@@ -123,6 +136,7 @@ class FixUiTests(StoreFixture):
                 [b for b in app.button if b.key and b.key.startswith('ubuntu_run_restore_')][0].click().run()
                 self.assertFalse(list(app.error), [e.value for e in app.error])
                 app.run()
+                self.assertIn('Restored to the before-state', self.card(app, '1.5.1').label.replace(chr(92), ''))
         self.assertEqual((self.work / 'alpha').read_bytes(), b'old')
         self.assertEqual(len([c for c in channel.runner_calls if c.startswith(b'{"op":"execute"}')]), 2)
         for database in self.root.rglob('*.sqlite3'):
