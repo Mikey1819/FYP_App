@@ -12,7 +12,7 @@ The detailed, dated record is `docs/INTEGRATION_PROGRESS.md`; this section summa
 - **Assessment (live):** read-only SSH assessment of FYP-Ubuntu2204 decides all 30 controls. The latest scan reads 22 Non-Compliant and 8 Compliant.
   - SSH explicit-line SCAP disagreements follow CIS's effective `sshd -T` audit.
   - 4.1.4 uses the UFW rule resolver; 1.2.2.1 reports pending updates and stays Manual.
-- **Remediation:** all **30** controls have a registered, fixture-tested fix family; none is validated live yet.
+- **Remediation:** all **30** controls have a registered, fixture-tested fix family. Live validation is tracked in `docs/evaluation/LIVE_VALIDATION.md`, generated from stored records by `tools/live_validation_register.py`: 3.3.2 validated live (2026-11-07), 5.1.20 attempted but not applied, 28 not run live.
   - Families: sysctl, core dump, sudo, password, account aging, packages, SSH, UFW, auditd service, audit rules, GRUB `audit=1` and the patch job.
   - Long and risky changes run as systemd-supervised jobs. SSH and UFW changes are commit-confirm: a fresh login confirms them, or the timer, or the boot-rollback unit after a reboot, restores them.
 - **Auxiliary operations:** approved restore, package-list refresh and reboot (boot-ID verified). They are never counted as CIS fixes.
