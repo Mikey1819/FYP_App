@@ -85,6 +85,21 @@ class _Labelled:
         return self.client.chat(messages, tools, timeout=timeout)
 
 
+ERROR_LIMIT = 200  # the protected Coordinator passes only the first 200 characters of a tool error to the model
+
+
+def _missing_text(missing):
+    """The undecided controls in one refusal that fits ERROR_LIMIT. Live 06:40/06:42: a longer list was cut, the
+    model never saw the last three controls and the round ran out of retries."""
+    head = 'Undecided, add each to fixes or defers: '
+    for shown in range(len(missing), -1, -1):
+        rest = len(missing) - shown
+        text = head + ','.join(missing[:shown]) + (' +%d more (every key of registered_actions)' % rest if rest else '')
+        if len(text) <= ERROR_LIMIT:
+            return text
+    return head[:ERROR_LIMIT]
+
+
 class _Round:
     def __init__(self, *, client_factory, collect, log_store, target_id, titles, rank, goal, clock):
         if goal is not None and (type(goal) is not str or len(goal) > MAX_GOAL_CHARS):
@@ -370,8 +385,7 @@ class OrchestratorTools(_RoleTools):
             defers.append({'control_id': entry['control_id'], 'decision': 'defer', 'reason_code': entry['reason_code']})
         missing = [c for c in self.rounds.failing() if c not in seen and c in eligible]
         if missing:  # live: the model fixed two flagged controls and silently left 20 undecided
-            raise ValueError('Decide every failure that has a registered action, in fixes or defers; missing: '
-                             + ', '.join(missing))
+            raise ValueError(_missing_text(missing))
         return defers, fixes
 
     def call(self, name, arguments):

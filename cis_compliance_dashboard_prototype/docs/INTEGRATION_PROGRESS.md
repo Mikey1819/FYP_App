@@ -981,3 +981,12 @@ The execution gate was a hard-coded "closed". It now opens only on evidence.
 - **Tests:** 5 card-state tests, page assertions in the end-to-end Fixes flow (cards, buttons inside the card, states after execute and restore) and a card test replacing the table test, written first.
   - Mutations caught: the restore state removed, re-scan status ignored, and the cards rendered without actions.
 - Full suite **554 tests, all passed**; baseline: no protected changes. Host only: collector digest unchanged (`b1b17b633dfd`). Not yet viewed in the real app.
+
+## 7 November 2026 — plan refusals fit the Coordinator's error limit (live finding)
+- **After 3.3.2 was fixed (re-scan Compliant):** the rounds at 06:40 and 06:42 UTC stored no plan ("Invalid calls blocked").
+  - Both times the orchestrator first submitted only the two flagged fixes. The refusal listed all 18 undecided controls, but the protected Coordinator passes only the first 200 characters of a tool error to the model, so the list was cut after 6.3.1.3.
+  - The model then fixed the 15 controls it could see and was refused again for 6.3.3.4, 6.3.3.6 and 6.3.3.8. Its third attempt deferred them as `no_registered_action` (refused, since they have registered actions), and the round stopped after 3 invalid calls.
+  - The earlier 06:36 round succeeded only because the model's first plan was already complete.
+- **Change (`backends/ubuntu/agents.py`):** the undecided-controls refusal is now compact (`Undecided, add each to fixes or defers: …`) and always fits 200 characters. When every name cannot fit, it says `+N more (every key of registered_actions)`. The live case now fits in 168 characters with all 18 controls.
+- **Tests:** 3 new tests (`test_ubuntu_plan_errors`), written first: the live partial plan, the worst case (all 30 controls) and every other plan refusal stay within the limit. The first two failed before the change (225 and 319 characters).
+- Full suite **557 tests, all passed**; baseline: no protected changes. Host only: collector digest unchanged (`b1b17b633dfd`).

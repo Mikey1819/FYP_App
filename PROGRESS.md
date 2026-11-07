@@ -642,3 +642,7 @@ A complete 21-fix plan was refused because the model wrote the analysis flag `hi
 ## 7 November 2026 — first live fix and per-control Fixes cards (integration)
 
 First live CIS fix: 3.3.2 applied, and the automatic re-scan read Compliant. An approved restore then returned it to the before-state. The Fixes tab now shows one expandable card per Non-Compliant control, with its live state, the AI's decision and reason, the exact change, and its own Approve/Reject/Restore buttons. Full suite: **554 passed**.
+
+## 7 November 2026 — Ubuntu plan refusals no longer cut off (integration)
+
+After 3.3.2 was fixed, two rounds stored no plan. The model's first plan was incomplete, and the refusal naming the missing controls was longer than the 200 characters the Coordinator passes back, so the model never saw the last three and ran out of retries. The refusal is now compact and always fits. Full suite: **557 passed**.
