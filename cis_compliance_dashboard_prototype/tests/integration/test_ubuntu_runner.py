@@ -256,6 +256,18 @@ class ExecutorTests(Fixture):
             execute(a, ledger=self.ledger, binding=other, operation_id='op-3', dispatch=dispatch, now=NOW)
         self.assertEqual(calls, [])
 
+    def test_an_approval_from_an_earlier_registration_epoch_is_refused_before_any_dispatch(self):
+        # Snapshot restore (task 17): the VM keeps its machine ID and hostname, so its runner cannot tell; after
+        # re-registration only the host's epoch check stops an approval made before the restore.
+        from backends.ubuntu.executor import execute
+        calls = []
+        restored = self.ledger.add_binding(WorkflowBinding('2' * 32, 'ubuntu', 'ubuntu:fixture', 'new-epoch', 'b',
+                                                           '2026-11-06T00:00:00+00:00'))
+        a = self.approved(workflow_session_id=restored.workflow_session_id)  # same workflow; approved under 'epoch'
+        with self.assertRaisesRegex(ValueError, 'registration epoch'):
+            execute(a, ledger=self.ledger, binding=restored, operation_id='op-1', dispatch=calls.append, now=NOW)
+        self.assertEqual(calls, [])
+
     def test_receipt_for_another_request_is_not_trusted(self):
         from backends.ubuntu.executor import execute
         a, b = self.approved(), self.approved(value='other')
