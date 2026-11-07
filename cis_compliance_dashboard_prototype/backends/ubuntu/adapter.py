@@ -33,6 +33,16 @@ def _controls():
     return {c.control_id: c for c in _catalogue().controls}
 
 
+REFUSAL_DETAIL = {
+    'stale_read_set': ('Not applied (stale_read_set): what this plan was approved against has changed since, usually '
+                       'because another fix in this round changed the same file first. Nothing was written. Start a new '
+                       'round to re-plan it, then approve and execute it on its own.')}
+
+
+def refusal_detail(code):
+    return REFUSAL_DETAIL.get(code, 'Not applied (' + code + ').')
+
+
 def assessment_gate():
     """Reasons a live read-only Ubuntu assessment must not run. Empty means the gate is open."""
     try:
@@ -365,7 +375,7 @@ class UbuntuBackend(BoundBackend):
                     detail = ('Rolled back (' + last['code'] + '): not confirmed in time or failed, so the target '
                               'restored the before-state. Not applied.')
                 else:
-                    detail = 'Not applied (' + last['code'] + ').'
+                    detail = refusal_detail(last['code'])
                 results.append(ResultRow(self._ref(p.proposal_id), last['outcome'], status, self._ref(last['request_id']),
                                          self._ref(checks[-1].framework_run_id) if status is not None else None,
                                          'not_requested', detail))
@@ -577,10 +587,14 @@ class UbuntuBackend(BoundBackend):
             if proposal.receipts:
                 continue  # already dispatched once; never again
             result = self._dispatch_one(store, binding, proposal, operation_id)
-            if result.state != 'completed':
-                state = result.state
-                break
-            applied.append(request_id)
+            if result.state == 'completed':
+                applied.append(request_id)
+                continue
+            state = result.state
+            if result.state != 'refused':
+                break  # uncertain (unresolved, running): nothing more until it is settled
+            # A refusal is definite (nothing was written), so the independent fixes still run. Live 13:44: after 1.5.1
+            # changed the shared sysctl file, 1.5.3/3.3.1/3.3.8 were refused stale and 5.2.3 never ran.
         return RoundHandle(operation_id, binding, round_ref, self._verify(store, binding, latest, applied, state))
 
     def _dispatch_one(self, store, binding, proposal, operation_id):

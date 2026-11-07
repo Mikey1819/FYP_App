@@ -1129,3 +1129,14 @@ The execution gate was a hard-coded "closed". It now opens only on evidence.
   - Re-compared: **69 agree, 0 disagree, 1 not readable** (`docs/evaluation/VALUE_CROSS_CHECK.md`).
 - **Tests:** 6 new tests (3 for 6.3.3.8 and the stored-V1 scan, 3 for the cross-check equivalences), written first. Full suite **620 tests, all passed**.
 - **Register:** **6 validated live** (3.3.2, 5.4.1.1, 6.3.1.1, 6.3.3.4, 6.3.3.6, 6.3.3.8); 1 attempted and not applied; 23 not run live. OpenSCAP cross-check: 24 agree, 2 CIS wording, 3 SSH explicit line, 1 not comparable; no unexplained disagreement in any scan.
+
+## 7 November 2026 — stage 1 batch: shared-file refusals and execution that stopped too early (live finding)
+- **Batch approved 13:44 UTC** (1.5.1, 3.3.1, 3.3.8, 1.5.3, 5.2.3) and executed:
+  - **1.5.1 applied** (13:45:03) and verified Compliant: the 7th control validated live.
+  - **1.5.3 refused `stale_read_set`** 0.3 s later. Each later click refused the next one (3.3.1 at 13:46:39, 3.3.8 at 13:47:10). **5.2.3 never ran.**
+- **Why they were refused (correct):** the sysctl and core-dump plans bind the whole managed file `/etc/sysctl.d/60-fyp-hardening-cis.conf` into their before-state and their exact after-content. 1.5.1 changed that file, so the others no longer matched what was approved, and the runner refused before writing. This keeps the exact-approval guarantee. Fixes that share a managed file therefore run one per round, and the rest are re-planned in the next round.
+- **What was wrong, now fixed (`backends/ubuntu/adapter.py`):**
+  1. `execute_approved` stopped at any non-applied result, although its docstring said "first uncertain outcome". A refusal is definite (nothing written), so execution now carries on to the remaining fixes. Only `unresolved` and `running` stop it. 5.2.3 would have run.
+  2. A `stale_read_set` card now explains itself (`refusal_detail`): what the plan was approved against changed, usually another fix in the round changing the same file first; nothing was written; start a new round to re-plan it.
+- **Tests:** 3 new tests (`test_ubuntu_execution_batch`): the live batch continues and verifies 1.5.1 with 5.2.3; uncertain outcomes still stop; the refusal wording. Written first; 2 failed before the change. Full suite **623 tests, all passed**. Host-only change, no reinstall.
+- **Possible improvement (needs a decision; helper change):** narrow the sysctl family's read set to its own keys' lines, so independent sysctl fixes could run in one batch. That would mean a reinstall, both acceptance scenarios again, and re-validating the sysctl family (3.3.2, 1.5.1).
