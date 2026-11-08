@@ -63,7 +63,9 @@ class ConnectionService:
         self._windows_scanner_factory = windows_scanner_factory
         self._sessions, self._backends = {}, {}
 
-    def connect(self, request):
+    def connect(self, request, *, paired=False):
+        """`paired`: the endpoint and expected identity come from a pairing answer proven by its code, so the same
+        machine may have moved to a new address (ledger.register readdress)."""
         channel = None
         credentials = self.vault.take(request.credential_ref)
         try:
@@ -93,7 +95,7 @@ class ConnectionService:
             if (identity.hostname.casefold() != request.expected_hostname.casefold()
                     or identity.machine_identity.lower() != request.expected_machine_identity.lower()):
                 raise ValueError('Authenticated target mismatch')
-            target_id, epoch = self.ledger.register(identity, request.endpoint)
+            target_id, epoch = self.ledger.register(identity, request.endpoint, readdress=paired)
             if self.ledger.owned_elsewhere(target_id, epoch):
                 raise PendingChangeElsewhere('pending change elsewhere')
             session = VerifiedSession(uuid4().hex, identity, target_id, epoch, credentials.username,
@@ -109,10 +111,22 @@ class ConnectionService:
                 channel.close()
             # Never echo authentication/library exceptions: they may include credentials or remote text.
             code = 'verification_failed' if isinstance(exc, ValueError) else 'connection_failed'
-            detail = ('Identity or trust verification failed; check the independently verified fingerprint, '
-                      'expected hostname, machine identity and supported OS. Credentials were cleared.'
+            detail = ('Identity or trust verification failed: the server that accepted the login is not the one '
+                      'that was paired (hostname, machine identity or SSH host key differ), or it is not a supported '
+                      'system. Pair it again with a new code. Credentials were cleared.'
                       if code == 'verification_failed' else
                       'Connection failed; check endpoint, trust and selected authentication. Credentials were cleared.')
+            state = getattr(exc, 'state', None)  # hardening.winrm_channel.ChannelError: a fixed failure category.
+            if state in ('wrong_target', 'unsupported_target', 'not_admin'):
+                code = 'verification_failed'
+                if state == 'not_admin':
+                    detail = ('The account has no administrator token on the server; use the built-in Administrator '
+                              'account. Credentials were cleared.')
+            elif state == 'auth_failed':
+                code, detail = 'auth_failed', 'The server rejected the username or password. Credentials were cleared.'
+            elif state == 'unreachable':
+                code, detail = 'unreachable', ('No WinRM listener answered at the paired address. Credentials were '
+                                               'cleared.')
             if isinstance(exc, PendingChangeElsewhere):
                 code = 'pending_change_elsewhere'
                 detail = ('Another VM has a running or unresolved change. Reconnect to that VM and settle it '

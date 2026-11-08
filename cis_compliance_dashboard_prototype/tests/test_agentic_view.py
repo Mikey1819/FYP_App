@@ -14,7 +14,6 @@ from hardening.winrm_channel import LiveScanner
 from test_agentic import FakeVm, TeamDouble, call, clients, plan
 from test_winrm_channel import MACHINE_UUID, target
 
-APP = Path(__file__).resolve().parents[1] / 'app.py'
 
 
 def agentic_page():
@@ -149,13 +148,7 @@ class AgenticPageTests(unittest.TestCase):
     def test_page_without_connection_asks_to_connect(self):
         app = AppTest.from_function(agentic_page, default_timeout=30).run()
         self.assertEqual(len(app.exception), 0)
-        self.assertTrue(any('Connect to the VM' in i.value for i in app.info))
-
-    def test_app_opens_on_overview_with_empty_state(self):
-        app = AppTest.from_file(str(APP), default_timeout=30).run()
-        self.assertEqual(len(app.exception), 0, [e.value for e in app.exception])
-        self.assertEqual(app.title[0].value, 'Overview')
-        self.assertTrue(any('No assessments yet' in i.value for i in app.info))
+        self.assertTrue(any('Open **Servers** to pair a server' in i.value for i in app.info))
 
 
 if __name__ == '__main__':

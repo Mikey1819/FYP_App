@@ -14,6 +14,7 @@ from system.identity import VerifiedIdentity
 from system.bootstrap import SERVICE_KEY, WORKFLOW_KEY
 from backends.windows.adapter import WindowsBackend
 from backends.ubuntu.adapter import UbuntuBackend
+from tests.integration.pairing_fixture import paired_connect
 
 
 def existing_page():
@@ -43,15 +44,9 @@ class SameUiAcceptanceTests(unittest.TestCase):
             app.run()
             def connect(platform):
                 t=target()
-                app.text_input(key='agentic_hostname').input(t.hostname if platform=='windows' else 'UBUNTU-FIXTURE')
-                app.text_input(key='agentic_uuid').input(t.machine_uuid if platform=='windows' else 'a'*32)
-                app.text_input(key='agentic_host').input('fixture.invalid')
-                app.number_input(key='agentic_port').set_value(55985 if platform=='windows' else 22)
-                app.text_input(key='agentic_user').input('fixture-user')
-                app.text_input(key='agentic_password').input('FIXTURE-SECRET-SENTINEL')
-                app.selectbox(key='agentic_method').select('WinRM' if platform=='windows' else 'SSH')
-                app.run()
-                app.button(key='agentic_connect').click().run()
+                # What a pairing by code hands the connection service (the Servers page; test_servers_page.py).
+                paired_connect(app, platform=platform, hostname=t.hostname if platform=='windows' else 'UBUNTU-FIXTURE',
+                               identity=t.machine_uuid if platform=='windows' else 'a'*32)
                 self.assertEqual(len(app.exception),0,[e.value for e in app.exception])
                 self.assertFalse(list(app.error),[e.value for e in app.error])
             connect('windows')

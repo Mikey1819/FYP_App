@@ -17,6 +17,11 @@ class IntegrationPaths:
         return cls(app, data / 'windows' / 'integration_imports.sqlite3',
                    data / 'ubuntu' / 'integration_imports.sqlite3', data / 'integration.sqlite3')
 
+    @property
+    def servers(self):
+        """Saved servers ("My servers", hardening/servers.py): which machines this laptop pairs with. No passwords."""
+        return self.coordination.with_name('servers.sqlite3')
+
     def prepare(self):
         for path in (self.windows_imports, self.ubuntu_imports, self.coordination):
             path.parent.mkdir(parents=True, exist_ok=True)

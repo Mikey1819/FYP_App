@@ -7,12 +7,13 @@
     python scripts/tools/show_database.py round ID [--log]     one round: plan, decisions, verdicts (--log: agent steps)
     python scripts/tools/show_database.py proposals [--limit N]
     python scripts/tools/show_database.py drift [--limit N]
+    python scripts/tools/show_database.py servers                saved servers ("My servers"); no password is stored
     python scripts/tools/show_database.py table NAME [--limit N]   raw rows of any table, JSON decoded
 
 Every file is opened with SQLite's read-only mode, so this tool cannot create, change or delete anything.
 `--database` takes the imported-evidence file; the framework and agentic files sit next to it with the same
 names the dashboard uses. The default is the unified dashboard's Windows file,
-data/windows/integration_imports.sqlite3. Times are shown in Malaysia time (MYT); storage stays UTC.
+data/windows/integration_imports.sqlite3; the saved servers (both systems) are data/servers.sqlite3. Times are shown in Malaysia time (MYT); storage stays UTC.
 """
 import argparse
 import base64
@@ -28,11 +29,12 @@ from hardening.ui import FULL, myt
 STATUSES = ('Compliant', 'Non-Compliant', 'Unknown', 'Error')
 
 
-def paths(imports):
-    """The three files, named exactly as the dashboard names them (framework.py, agentic_view.py)."""
+def paths(imports, servers=None):
+    """The four files, named exactly as the dashboard names them (framework.py, agentic_view.py, system/config.py)."""
     imports = Path(imports)
     return {'imports': imports, 'framework': imports.with_name(imports.stem + '_framework.sqlite3'),
-            'agentic': imports.with_name(imports.stem + '_agentic.sqlite3')}
+            'agentic': imports.with_name(imports.stem + '_agentic.sqlite3'),
+            'servers': Path(servers) if servers else imports.with_name(imports.stem + '_servers.sqlite3')}
 
 
 def connect(path):
@@ -94,8 +96,8 @@ def counts(snapshot):
 
 
 class Viewer:
-    def __init__(self, imports):
-        self.paths = paths(imports)
+    def __init__(self, imports, servers=None):
+        self.paths = paths(imports, servers)
         self.db = {name: connect(path) for name, path in self.paths.items()}
 
     def close(self):
@@ -127,6 +129,7 @@ class Viewer:
                                                    "AND name NOT LIKE 'sqlite_%' ORDER BY name")]
                 table(('table', 'rows'), [(t, db.execute(f'SELECT COUNT(*) FROM "{t}"').fetchone()[0])
                                           for t in tables])
+        self.servers()
         self.scans(5)
         self.rounds(5)
 
@@ -266,6 +269,14 @@ class Viewer:
                 print(f"  {myt(created, '%H:%M:%S')}  " + text.get(kind, lambda: f'{kind}: {compact(e)}')())
 
     # ------------------------------------------------------------------ other views
+    def servers(self):
+        heading('Saved servers (most recently used first)')
+        table(('server', 'system', 'address', 'account', 'note', 'added (MYT)', 'last connected (MYT)', 'machine identity'),
+              [(h, pl, f'{a}:{p}', u, n, when(added), when(last) if last else 'never', m)
+               for pl, m, h, a, p, u, n, added, last in self.rows(
+                   'servers', 'SELECT platform, machine_identity, hostname, host, port, username, note, added_at, '
+                   'last_connected_at FROM servers ORDER BY COALESCE(last_connected_at, added_at) DESC')])
+
     def proposals(self, limit):
         heading(f'Latest {limit} proposals (newest first)')
         table(('created (MYT)', 'proposal', 'control', 'action', 'change', 'risk', 'decision', 'verdict'),
@@ -328,6 +339,7 @@ def main():
     for name, default in (('scans', 10), ('rounds', 10), ('proposals', 20), ('drift', 20)):
         commands.add_parser(name).add_argument('--limit', type=int, default=default)
     commands.add_parser('scan').add_argument('id')
+    commands.add_parser('servers')
     one = commands.add_parser('round')
     one.add_argument('id')
     one.add_argument('--log', action='store_true', help='show every agent step')
@@ -337,14 +349,15 @@ def main():
     args = parser.parse_args()
     if hasattr(sys.stdout, 'reconfigure'):
         sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-    viewer = Viewer(args.database or PATHS.windows_imports)
+    viewer = Viewer(args.database or PATHS.windows_imports, None if args.database else PATHS.servers)
     try:
         if not any(viewer.db.values()):
             sys.exit(f'No database found next to {viewer.paths["imports"]}.')
         {'scans': lambda: viewer.scans(args.limit), 'rounds': lambda: viewer.rounds(args.limit),
          'proposals': lambda: viewer.proposals(args.limit), 'drift': lambda: viewer.drift(args.limit),
          'scan': lambda: viewer.scan(args.id), 'round': lambda: viewer.round(args.id, args.log),
-         'table': lambda: viewer.raw_table(args.name, args.limit), None: viewer.overview}[args.command]()
+         'table': lambda: viewer.raw_table(args.name, args.limit), 'servers': viewer.servers,
+         None: viewer.overview}[args.command]()
     finally:
         viewer.close()
 

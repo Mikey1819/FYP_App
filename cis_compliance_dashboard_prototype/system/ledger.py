@@ -57,10 +57,14 @@ class CoordinationLedger:
                     machine_identity TEXT NOT NULL, hostname TEXT NOT NULL,
                     endpoint TEXT NOT NULL, fingerprint TEXT, epoch TEXT NOT NULL,
                     UNIQUE(platform, machine_identity));
+                -- A registered machine found at a new address by a pairing code: appended, never rewritten.
+                CREATE TABLE IF NOT EXISTS endpoint_moves (
+                    sequence INTEGER PRIMARY KEY AUTOINCREMENT, target_id TEXT NOT NULL,
+                    endpoint TEXT NOT NULL, moved_at TEXT NOT NULL, proof TEXT NOT NULL);
             ''')
             for table, key in (('workflow_bindings', 'workflow_session_id'), ('operation_events', 'sequence'),
                                ('target_registrations', 'target_id'), ('acceptance_runs', 'request_id'),
-                               ('acceptance_outcomes', 'request_id')):
+                               ('acceptance_outcomes', 'request_id'), ('endpoint_moves', 'sequence')):
                 for operation in ('UPDATE', 'DELETE'):
                     db.execute(f'''CREATE TRIGGER IF NOT EXISTS {table}_no_{operation}
                         BEFORE {operation} ON {table}
@@ -80,17 +84,32 @@ class CoordinationLedger:
         finally:
             db.close()
 
-    def register(self, identity, endpoint):
-        """Persist public facts only. Duplicate identity at another endpoint requires explicit review."""
+    @staticmethod
+    def _current(db, platform):
+        """Each registration of this platform with its current endpoint: the latest pairing move, else the original."""
+        return db.execute('''SELECT r.*, COALESCE((SELECT m.endpoint FROM endpoint_moves m WHERE m.target_id=r.target_id
+                                ORDER BY m.sequence DESC LIMIT 1), r.endpoint) AS current_endpoint
+                              FROM target_registrations r WHERE r.platform=?''', (platform,)).fetchall()
+
+    def register(self, identity, endpoint, *, readdress=False):
+        """Persist public facts only. Duplicate identity at another endpoint requires explicit review: here that
+        review is a pairing code (`readdress`), which may move the same machine (same hostname and, on Ubuntu, the same
+        SSH host key) to its new address. A changed host key is never accepted this way."""
         endpoint_key = f'{endpoint.host}:{endpoint.port}'
         with self._db() as db:
             db.execute('BEGIN IMMEDIATE')
-            old = db.execute('SELECT * FROM target_registrations WHERE platform=? AND machine_identity=?',
-                             (identity.platform, identity.machine_identity)).fetchone()
+            current = self._current(db, identity.platform)
+            old = next((r for r in current if r['machine_identity'] == identity.machine_identity), None)
             if old:
-                if (old['hostname'].casefold(), old['endpoint'], old['fingerprint']) != (
-                        identity.hostname.casefold(), endpoint_key, identity.host_fingerprint):
+                if (old['hostname'].casefold(), old['fingerprint']) != (identity.hostname.casefold(),
+                                                                        identity.host_fingerprint):
                     raise ValueError('Registration conflict or cloned identity; explicit re-enrolment required')
+                if old['current_endpoint'] != endpoint_key:
+                    taken = any(r['current_endpoint'] == endpoint_key for r in current if r is not old)
+                    if not readdress or taken:
+                        raise ValueError('Registration conflict or cloned identity; explicit re-enrolment required')
+                    db.execute('INSERT INTO endpoint_moves (target_id, endpoint, moved_at, proof) VALUES (?,?,?,?)',
+                               (old['target_id'], endpoint_key, now(), 'pairing_code'))
                 return old['target_id'], old['epoch']
             target = ('windows:' + identity.machine_identity.lower() if identity.platform == 'windows'
                       else 'ubuntu:' + str(uuid4()))
@@ -102,11 +121,10 @@ class CoordinationLedger:
 
     def known_fingerprint(self, endpoint):
         with self._db() as db:
-            rows = db.execute('SELECT fingerprint FROM target_registrations WHERE platform=? AND endpoint=?',
-                              ('ubuntu', f'{endpoint.host}:{endpoint.port}')).fetchall()
+            rows = [r for r in self._current(db, 'ubuntu') if r['current_endpoint'] == f'{endpoint.host}:{endpoint.port}']
         if len(rows) > 1:
             raise ValueError('Ambiguous endpoint registration')
-        return rows[0][0] if rows else None
+        return rows[0]['fingerprint'] if rows else None
 
     def add_binding(self, binding):
         with self._db() as db:

@@ -13,6 +13,7 @@ from vm.ubuntu.spec import SCAP_RULES
 from system.connection import VerifiedSession
 from system.identity import VerifiedIdentity
 from system.ledger import CoordinationLedger
+from tests.integration.pairing_fixture import paired_connect
 
 APP = Path(__file__).resolve().parents[2]
 TARGET = ('a'*32, 'UBUNTU-FIXTURE')
@@ -253,13 +254,7 @@ class PageLiveAssessmentTests(unittest.TestCase):
             app.session_state['fixture_database'] = str(path/'windows'/'imports.sqlite3')
             app.session_state[SERVICE_KEY] = service
             app.run()
-            for key, value in (('agentic_hostname', TARGET[1]), ('agentic_uuid', TARGET[0]), ('agentic_host', 'fixture.invalid'),
-                               ('agentic_user', 'fixture-user'), ('agentic_password', 'FIXTURE-SECRET-SENTINEL')):
-                app.text_input(key=key).input(value)
-            app.number_input(key='agentic_port').set_value(22)
-            app.selectbox(key='agentic_method').select('SSH')
-            app.run()
-            app.button(key='agentic_connect').click().run()
+            self.assertEqual(paired_connect(app, platform='ubuntu', hostname=TARGET[1], identity=TARGET[0]).state, 'connected')
             self.assertEqual(channel.calls, 0, 'Connecting must not scan')
             self.assertFalse(app.button(key='agentic_assess_without_ai').disabled)
             app.button(key='agentic_assess_without_ai').click().run()

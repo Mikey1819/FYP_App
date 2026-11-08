@@ -1,8 +1,9 @@
 """Independent cross-check of the dashboard's stored scan against values read another way in the VM.
 
-    python scripts/tools/cross_check_controls.py [--digest SHA256] [--out table.md]
+    python scripts/tools/cross_check_controls.py --host ADDRESS [--port 5985] [--digest SHA256] [--out table.md]
 
-Compares the latest (or the given) stored scan, connecting over WinRM to the VM that scan came from
+ADDRESS is the server's address as the Servers page lists it (found by pairing). Compares the latest (or the given)
+stored Windows scan of the unified dashboard, connecting over WinRM to the VM that scan came from
 (identity and administrator checks first, password typed here and never stored), and runs the
 read-only scripts/vm/Get-CrossCheckValues.ps1 there. Reads the dashboard database only; prints a
 Markdown table.
@@ -15,9 +16,9 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'cis_compliance_dashboard_prototype'))
-from hardening.databases import imports_database
+from system.config import PATHS
 from hardening.import_storage import ImportedEvidenceStore
-from hardening.winrm_channel import DEFAULT_HOST, DEFAULT_PORT, ChannelError, LiveScanner, WinRmTarget
+from hardening.winrm_channel import ChannelError, LiveScanner, WinRmTarget
 
 SCRIPT = Path(__file__).resolve().parents[1] / 'vm' / 'Get-CrossCheckValues.ps1'
 STALE_MINUTES = 60  # A setting may have changed between the scan and the cross-check.
@@ -72,10 +73,10 @@ def show(value):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--digest', help='stored scan to compare (default: the latest)')
-    parser.add_argument('--db', type=Path, default=imports_database())
+    parser.add_argument('--db', type=Path, default=PATHS.windows_imports)
     parser.add_argument('--out', type=Path, help='also write the Markdown table here')
-    parser.add_argument('--host', default=DEFAULT_HOST)
-    parser.add_argument('--port', type=int, default=DEFAULT_PORT)
+    parser.add_argument('--host', required=True, help="the server's address, as the Servers page lists it")
+    parser.add_argument('--port', type=int, default=5985)
     parser.add_argument('--username', default='Administrator')
     args = parser.parse_args()
     store = ImportedEvidenceStore(args.db)

@@ -1,4 +1,4 @@
-"""Scanner Agent's own channel to the registered VM over PowerShell Remoting.
+"""Scanner Agent's own channel to a saved server over PowerShell Remoting.
 
 The agent invokes collection itself; nobody carries scripts or evidence files.
 Only repository-registered scripts are sent, with typed parameters (never
@@ -8,14 +8,16 @@ from dataclasses import dataclass, field
 import hashlib
 import json
 from pathlib import Path
-from uuid import uuid4
+from typing import ClassVar
+from uuid import UUID, uuid4
 
 from .domain import EvidenceMode
 from .evidence_import import load_evidence
 
 COLLECTOR = Path(__file__).resolve().parents[2] / 'scripts' / 'vm' / 'Collect-Server2022Evidence.ps1'
 
-DEFAULT_HOST, DEFAULT_PORT = '127.0.0.1', 55985
+# WinRM over HTTP. Servers are found by pairing (pairing_client.py), which also gives their address and port.
+DEFAULT_PORT = 5985
 IDENTITY_SCRIPT = r'''
 $os = Get-CimInstance Win32_OperatingSystem -OperationTimeoutSec 15
 $cs = Get-CimInstance Win32_ComputerSystem -OperationTimeoutSec 15
@@ -38,21 +40,40 @@ class ChannelError(Exception):
         self.state, self.detail = state, detail
 
 
+def _check_login(login, names):
+    for name in names:
+        if type(getattr(login, name)) is not str or not getattr(login, name).strip():
+            raise ValueError('WinRM connection requires ' + name.replace('_', ' '))
+    if type(login.port) is not int or not 1 <= login.port <= 65535:
+        raise ValueError('Invalid WinRM port')
+
+
+@dataclass(frozen=True)
+class WinRmLogin:
+    """An address and account before the server behind it is known: used only to ask who answers there."""
+    username: str
+    password: str = field(repr=False)
+    host: str = ''
+    port: int = DEFAULT_PORT
+
+    def __post_init__(self):
+        _check_login(self, ('username', 'password', 'host'))
+
+
 @dataclass(frozen=True)
 class WinRmTarget:
+    """A known server: every call checks that the machine answering is this hostname and UUID."""
+    # Which workspace pages open once it is connected (app.py). A future Ubuntu target will say 'ubuntu'.
+    workspace: ClassVar[str] = 'windows'
     hostname: str
     machine_uuid: str
     username: str
     password: str = field(repr=False)
-    host: str = DEFAULT_HOST
+    host: str = ''
     port: int = DEFAULT_PORT
 
     def __post_init__(self):
-        for name in ('hostname', 'machine_uuid', 'username', 'password', 'host'):
-            if type(getattr(self, name)) is not str or not getattr(self, name).strip():
-                raise ValueError('WinRM target requires ' + name.replace('_', ' '))
-        if type(self.port) is not int or not 1 <= self.port <= 65535:
-            raise ValueError('Invalid WinRM port')
+        _check_login(self, ('hostname', 'machine_uuid', 'username', 'password', 'host'))
 
 
 class PsrpSession:
@@ -80,48 +101,86 @@ def _classify(exc):
     name = type(exc).__name__
     text = str(exc)
     if name == 'AuthenticationError' or '401' in text:
-        return ChannelError('auth_failed', 'The VM rejected the username or password.')
+        return ChannelError('auth_failed', 'The server rejected the username or password.')
     if name in ('ConnectionError', 'ConnectTimeout', 'ReadTimeout', 'Timeout') or 'refused' in text.lower():
-        return ChannelError('unreachable', 'No WinRM listener answered. Check the VM is running, '
-                            'Enable-PSRemoting was run inside it and the port forward exists.')
-    return ChannelError('channel_error', name + ' while talking to the VM.')
+        return ChannelError('unreachable', 'No WinRM listener answered. Check the server is on, the address and '
+                            'port are right, and the server access helper has allowed this laptop.')
+    return ChannelError('channel_error', name + ' while talking to the server.')
+
+
+def _run_script(login, session_factory, script, parameters=None):
+    # Looked up at call time, so tests can stand in for the remoting library.
+    try:
+        return (session_factory or PsrpSession)(login).run(script, parameters)
+    except ChannelError:
+        raise
+    except Exception as exc:  # Network/auth libraries raise many unrelated types.
+        raise _classify(exc) from None
+
+
+def _identity(output, had_errors):
+    """The identity probe's answer, type-checked; it is data from the server, not trusted beyond its shape."""
+    if had_errors or len(output) != 1:
+        raise ChannelError('channel_error', 'Identity probe failed on the server.')
+    try:
+        found = json.loads(output[0])
+    except json.JSONDecodeError:
+        raise ChannelError('channel_error', 'Identity probe returned malformed output.') from None
+    texts = ('hostname', 'machine_uuid', 'os_caption', 'build_number')
+    if (type(found) is not dict or any(type(found.get(k)) is not str or not found[k].strip() for k in texts)
+            or len(found['hostname']) > 63 or len(found['os_caption']) > 200 or type(found.get('is_admin')) is not bool
+            or type(found.get('part_of_domain')) is not bool or type(found.get('domain_role')) is not int):
+        raise ChannelError('channel_error', 'Identity probe returned unexpected fields.')
+    try:
+        found['machine_uuid'] = str(UUID(found['machine_uuid']))
+    except ValueError:
+        raise ChannelError('channel_error', 'Identity probe returned an invalid machine UUID.') from None
+    if found['is_admin'] is not True:
+        raise ChannelError('not_admin', 'Connected account lacks an administrator token; '
+                           'use the built-in Administrator account.')
+    return found
+
+
+def supported(found):
+    """The assessed scope: a stand-alone Windows Server 2022 (the collector checks the same before reading)."""
+    return ('Windows Server 2022' in found['os_caption'] and found['build_number'] == '20348'
+            and found['part_of_domain'] is False and found['domain_role'] == 2)
+
+
+def probe_identity(login, *, session_factory=None):
+    """Who answers at this address? Used when a server is added; nothing is collected or changed. Raises
+    ChannelError, including `unsupported_target` for anything other than a stand-alone Server 2022."""
+    output, had_errors, _ = _run_script(login, session_factory, IDENTITY_SCRIPT)
+    found = _identity(output, had_errors)
+    if not supported(found):
+        raise ChannelError('unsupported_target', 'This program assesses stand-alone Windows Server 2022 only. '
+                           'The server reports: ' + found['os_caption'] + (', joined to a domain'
+                           if found['part_of_domain'] else '') + '.')
+    return found
 
 
 class LiveScanner:
     """Collection tool owned by the Scanner Agent; creates a new assessed run per scan."""
     channel = 'winrm'
 
-    def __init__(self, runtime, target, *, session_factory=PsrpSession):
+    def __init__(self, runtime, target, *, session_factory=None):
         self.runtime, self.target = runtime, target
         self.session_factory = session_factory
 
     def _run(self, script, parameters=None):
-        try:
-            return self.session_factory(self.target).run(script, parameters)
-        except ChannelError:
-            raise
-        except Exception as exc:  # Network/auth libraries raise many unrelated types.
-            raise _classify(exc) from None
+        return _run_script(self.target, self.session_factory, script, parameters)
 
     def _same_target(self, hostname, machine_uuid):
         if (hostname.casefold() != self.target.hostname.casefold()
                 or machine_uuid.casefold() != self.target.machine_uuid.casefold()):
-            raise ChannelError('wrong_target', 'Requested target differs from the connected VM registration.')
+            raise ChannelError('wrong_target', 'Requested target differs from the connected server.')
 
     def identity(self):
-        output, had_errors, errors = self._run(IDENTITY_SCRIPT)
-        if had_errors or len(output) != 1:
-            raise ChannelError('channel_error', 'Identity probe failed inside the VM.')
-        try:
-            found = json.loads(output[0])
-        except json.JSONDecodeError:
-            raise ChannelError('channel_error', 'Identity probe returned malformed output.') from None
-        if (type(found) is not dict or str(found.get('hostname', '')).casefold() != self.target.hostname.casefold()
-                or str(found.get('machine_uuid', '')).casefold() != self.target.machine_uuid.casefold()):
-            raise ChannelError('wrong_target', 'The VM answering on this port is not the registered target.')
-        if found.get('is_admin') is not True:
-            raise ChannelError('not_admin', 'Connected account lacks an administrator token; '
-                               'use the built-in Administrator account.')
+        found = _identity(*self._run(IDENTITY_SCRIPT)[:2])
+        if (found['hostname'].casefold() != self.target.hostname.casefold()
+                or found['machine_uuid'].casefold() != self.target.machine_uuid.casefold()):
+            raise ChannelError('wrong_target', 'A different machine answered at ' + self.target.host + ':'
+                               + str(self.target.port) + ' (' + found['hostname'] + '), not the saved server.')
         return found
 
     def worker_status(self, hostname, machine_uuid):

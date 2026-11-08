@@ -7,13 +7,15 @@ import tempfile
 import unittest
 
 APP = Path(__file__).resolve().parents[2]
+# The paired server the bundle is built for (the Servers page shows these for each saved Ubuntu server).
+SERVER = dict(machine_id='0123456789abcdef0123456789abcdef', hostname='ubuntu-web01', user='fyp-admin')
 
 
 class BundleTests(unittest.TestCase):
     def build(self):
         from tools.build_ubuntu_bundle import build
         folder = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, folder)
-        return build(Path(folder) / 'bundle')
+        return build(Path(folder) / 'bundle', **SERVER)
 
     def test_bundle_holds_exact_helper_bytes_datastream_and_correct_sums(self):
         from vm.ubuntu.provenance import HELPER_FILES, collector_digest
@@ -30,7 +32,7 @@ class BundleTests(unittest.TestCase):
             self.assertEqual(hashlib.sha256((out / path).read_bytes()).hexdigest(), digest, path)
         # Only the approved read-only collector; the runner's write path waits for execution acceptance.
         self.assertEqual((out / 'sudoers' / 'fyp-hardening').read_text(),
-                         'vboxuser ALL=(root) NOPASSWD: /usr/local/libexec/fyp-hardening/collect ""\n')
+                         'fyp-admin ALL=(root) NOPASSWD: /usr/local/libexec/fyp-hardening/collect ""\n')
 
     def test_boot_rollback_unit_ships_hash_checked_but_is_not_installed(self):
         out = self.build()
@@ -46,9 +48,9 @@ class BundleTests(unittest.TestCase):
     def test_runner_deployment_is_a_separate_bounded_stage(self):
         out = self.build()
         self.assertEqual((out / 'sudoers' / 'fyp-hardening-runner').read_text(),
-                         'vboxuser ALL=(root) NOPASSWD: /usr/local/libexec/fyp-hardening/runner ""\n')
+                         'fyp-admin ALL=(root) NOPASSWD: /usr/local/libexec/fyp-hardening/runner ""\n')
         script = (out / 'install-runner.sh').read_text()
-        for required in ('f1d16ae7e6bc4d2488f9410fcd858e36', 'FYP-Ubuntu2204', 'sha256sum -c SHA256SUMS', 'cmp -s',
+        for required in (SERVER['machine_id'], SERVER['hostname'], 'sha256sum -c SHA256SUMS', 'cmp -s',
                          'visudo -cf sudoers/fyp-hardening-runner', 'install -o root -g root -m 0440',
                          'systemctl enable fyp-hardening-boot-rollback.service', 'command -v systemd-run'):
             self.assertIn(required, script)
@@ -75,7 +77,7 @@ class BundleTests(unittest.TestCase):
     def test_install_script_is_bounded_to_the_preview(self):
         out = self.build()
         script = (out / 'install.sh').read_text()
-        for required in ('f1d16ae7e6bc4d2488f9410fcd858e36', 'FYP-Ubuntu2204', 'sha256sum -c SHA256SUMS',
+        for required in (SERVER['machine_id'], SERVER['hostname'], 'sha256sum -c SHA256SUMS',
                          'visudo -cf', 'install -o root -g root -m 0440', 'cmp -s', '/var/lib/fyp-hardening/scans',
                          '/var/lib/fyp-hardening/runner', 'Python 3.10'):
             self.assertIn(required, script)
@@ -90,3 +92,19 @@ class BundleTests(unittest.TestCase):
             bash = shutil.which('bash')
             if bash:
                 self.assertEqual(subprocess.run([bash, '-n', str(path)], capture_output=True).returncode, 0, path.name)
+
+    def test_the_bundle_is_built_for_one_named_server_and_refuses_unsafe_values(self):
+        from tools.build_ubuntu_bundle import build, main
+        out = self.build()
+        install = (out / 'install.sh').read_text()
+        self.assertIn('[ "$(cat /etc/machine-id)" = "0123456789abcdef0123456789abcdef" ]', install)
+        self.assertIn('[ "$(hostname)" = "ubuntu-web01" ]', install)
+        self.assertNotIn('@MACHINE_ID@', install)  # Every placeholder was filled.
+        self.assertNotIn('@HOSTNAME@', install)
+        folder = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, folder)
+        for bad in (dict(SERVER, machine_id='F' * 32), dict(SERVER, machine_id='0' * 32),
+                    dict(SERVER, hostname='host; rm -rf /'), dict(SERVER, user='root ALL=(ALL) NOPASSWD: ALL')):
+            with self.assertRaises(ValueError):
+                build(Path(folder) / 'refused', **bad)
+        with self.assertRaises(SystemExit):  # The command line needs the server named: no built-in default VM.
+            main([str(Path(folder) / 'cli')])

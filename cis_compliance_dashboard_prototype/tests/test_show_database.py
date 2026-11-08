@@ -9,7 +9,9 @@ import tempfile
 from hardening.framework import AssessmentRuns
 from hardening.import_storage import ImportedEvidenceStore
 from hardening.remediation import RemediationStore
+from hardening.servers import ServerRegistry
 from test_agentic import AgenticTestCase, FakeVm
+from test_winrm_channel import IDENTITY
 
 SCRIPT = Path(__file__).resolve().parents[2] / 'scripts' / 'tools' / 'show_database.py'
 spec = importlib.util.spec_from_file_location('show_database', SCRIPT)
@@ -25,6 +27,11 @@ class ShowDatabaseTests(AgenticTestCase):
         imports = ImportedEvidenceStore(self.folder / 'preview_imports.sqlite3')
         self.runtime = AssessmentRuns(imports)
         self.store = RemediationStore(self.folder / 'preview_imports_agentic.sqlite3', imports)
+        servers = ServerRegistry(self.folder / 'preview_imports_servers.sqlite3')
+        servers.add('windows', IDENTITY['machine_uuid'], IDENTITY['hostname'], IDENTITY['os_caption'], '192.168.1.50',
+                    5985, 'Administrator', note='Room 3')
+        servers.add('ubuntu', '0123456789abcdef0123456789abcdef', 'ubuntu-web01', 'Ubuntu 22.04.5 LTS', '192.168.56.20',
+                    22, 'fyp-admin')
 
     def output(self, method, *args):
         viewer = show_database.Viewer(self.folder / 'preview_imports.sqlite3')
@@ -50,7 +57,8 @@ class ShowDatabaseTests(AgenticTestCase):
 
         overview = self.output('overview')
         for text in ('imported_assessments', 'framework_runs', 'rem_proposals', 'investigation_events',
-                     'FIXTURE-SERVER', 'assessment', 'verification_scan', 'awaiting_approval'):
+                     'FIXTURE-SERVER', 'assessment', 'verification_scan', 'awaiting_approval',
+                     'Saved servers', '192.168.1.50:5985', 'Room 3', 'ubuntu-web01', '192.168.56.20:22'):
             self.assertIn(text, overview)
 
         plan = self.output('round', result['round_id'][:8], True)

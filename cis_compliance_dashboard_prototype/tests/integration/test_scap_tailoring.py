@@ -43,7 +43,8 @@ class TailoringTests(unittest.TestCase):
         from tools.build_ubuntu_bundle import build
         from backends.ubuntu.scap_tailoring import build_tailoring
         folder = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, folder)
-        out = build(Path(folder) / 'bundle')
+        out = build(Path(folder) / 'bundle', machine_id='0123456789abcdef0123456789abcdef', hostname='ubuntu-web01',
+                    user='fyp-admin')
         self.assertEqual((out / 'share' / 'fyp-selected-tailoring.xml').read_bytes(), build_tailoring())
         self.assertIn('share/fyp-selected-tailoring.xml', (out / 'install.sh').read_text())
 

@@ -453,8 +453,8 @@ def _ubuntu_restore_actions(backend, connection, proposals, capabilities, workfl
 
 
 def _show_start(hardening, store, runtime, target):
-    st.markdown('No round in this session yet. A round scans the VM, ranks the findings and proposes fixes. '
-                'Nothing changes on the VM until you approve and execute.')
+    st.markdown('No round in this session yet. A round scans the server, ranks the findings and proposes fixes. '
+                'Nothing changes on the server until you approve and execute.')
     previous = _previous_session(store, runtime, target)
     if previous:
         state = _round_state(store, store.rounds(previous['session_id']), previous)
@@ -547,7 +547,7 @@ def _confirm_execution(hardening, session_id, state, target):
         st.dataframe(rows, hide_index=True)
         st.caption('The Remediation Agent prechecks each value and skips anything that changed since the scan. '
                    'A fresh Scanner rescan verifies the result. Expired approvals are refused. '
-                   'Take a VM snapshot first if you want a quick way back.')
+                   'If the server is a virtual machine, take a snapshot first for a quick way back.')
         with st.container(horizontal=True):
             if st.button('Confirm and execute', type='primary', key='agentic_execute'):
                 st.session_state.pop(CONFIRM, None)
@@ -618,7 +618,7 @@ def _show_fixes(store, assessment_round, state, analysis, *, editable):
                 _decide(store, record['proposal']['request_id'], approve=approve_all, operator=operator, comment=comment)
             st.session_state.pop(COMMENT, None)
             st.rerun()
-        st.caption('Each approval is bound to that exact request on this VM and expires after one hour.')
+        st.caption('Each approval is bound to that exact request on this server and expires after one hour.')
     levels = {f['control_id']: f['level'] for f in (analysis or {}).get('ranked', [])}
     for record in state['records']:
         p = record['proposal']
@@ -789,8 +789,7 @@ def render_agentic(database_path: Path):
         st.error(md_escape(exc))
         target = None
     if target is None:
-        st.info('Connect to the VM to start an agentic round.')
-        return
+        return  # render_connection already points to the Servers page.
     try:
         backend = active_backend(st.session_state)
         if backend:
@@ -822,7 +821,7 @@ def render_agentic(database_path: Path):
         assessments = [r for r in rounds if r['kind'] == 'assessment']
         scanned = {_round_target(runtime, r) for r in assessments} - {None}
         if scanned and scanned != {_target_id(target)}:
-            # A session belongs to one VM: connecting to another one starts afresh instead of mixing records.
+            # A session belongs to one server: connecting to another one starts afresh instead of mixing records.
             del st.session_state[SESSION]
             _reset_view()
             rounds, assessments = [], []
@@ -865,6 +864,6 @@ def render_agentic(database_path: Path):
             _show_agent_log(hardening, [('Assessment phase', viewing)]
                             + ([('Remediation phase', state['verification'])] if state['verification'] else []))
     except ChannelError as exc:
-        st.error('VM channel (' + exc.state + '): ' + md_escape(exc.detail))
+        st.error('Server channel (' + exc.state + '): ' + md_escape(exc.detail))
     except (ValueError, OSError, sqlite3.Error) as exc:
         st.error('Agentic workflow: ' + md_escape(exc))

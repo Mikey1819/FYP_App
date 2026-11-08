@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 from tests.integration.test_ubuntu_proposals import StoreFixture
+from tests.integration.pairing_fixture import paired_connect
 
 
 class FixUiTests(StoreFixture):
@@ -85,13 +86,7 @@ class FixUiTests(StoreFixture):
         app.session_state[SERVICE_KEY] = service
         with open_gate():
             app.run()
-            for key, value in (('agentic_hostname', LIVE[1]), ('agentic_uuid', LIVE[0]), ('agentic_host', 'fixture.invalid'),
-                               ('agentic_user', 'fixture-user'), ('agentic_password', 'FIXTURE-SECRET-SENTINEL')):
-                app.text_input(key=key).input(value)
-            app.number_input(key='agentic_port').set_value(22)
-            app.selectbox(key='agentic_method').select('SSH')
-            app.run()
-            app.button(key='agentic_connect').click().run()
+            self.assertEqual(paired_connect(app, platform='ubuntu', hostname=LIVE[1], identity=LIVE[0]).state, 'connected')
             self.assertEqual([t for t in app.text_input if t.key == 'agentic_goal'], [])  # round goals are disabled
             app.button(key='agentic_run').click().run()
             self.assertFalse(list(app.error), [e.value for e in app.error])
@@ -99,7 +94,7 @@ class FixUiTests(StoreFixture):
             self.assertEqual(len(approve), 1)
             # Refresh redraws from the stored records and keeps the connection (a browser reload would not).
             app.button(key='ubuntu_refresh').click().run()
-            self.assertEqual([t for t in app.text_input if t.key == 'agentic_password'], [])  # still connected
+            self.assertTrue([b for b in app.button if b.key == 'agentic_disconnect'])  # still connected
             self.assertEqual([b for b in app.button if b.key == 'ubuntu_verify_applied'], [])  # nothing applied yet
             # One expandable card per Non-Compliant control; the decision buttons live inside the control's card.
             card = self.card(app, '1.5.1')

@@ -18,7 +18,7 @@ import sys
 import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'cis_compliance_dashboard_prototype'))
-from hardening.databases import imports_database
+from system.config import PATHS
 from hardening.evidence_import import encode
 
 VM_LEDGER = r'C:\ProgramData\FYP-ApprovedVmActions'
@@ -40,7 +40,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--request', default='', help='request ID prefix to use for steps 2-5 (default: first approved)')
     args = parser.parse_args()
-    imports = imports_database()
+    imports = PATHS.windows_imports  # The unified dashboard's Windows records.
     path = imports.with_name(imports.stem + '_agentic.sqlite3')
     if not path.exists():
         sys.exit(f'No dashboard database at {path}')

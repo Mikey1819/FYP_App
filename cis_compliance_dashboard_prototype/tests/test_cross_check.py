@@ -46,7 +46,7 @@ class CrossCheckTests(unittest.TestCase):
 
     def run_script(self, *arguments):
         output = io.StringIO()
-        with patch('sys.argv', ['cross_check_controls.py', '--db', str(self.store.path), *arguments]), \
+        with patch('sys.argv', ['cross_check_controls.py', '--db', str(self.store.path), '--host', '192.168.56.10', *arguments]), \
                 redirect_stdout(output):
             cross_check.main()
         return output.getvalue()

@@ -12,16 +12,13 @@ def snapshot_panels():
     render_snapshot_tabs(st.session_state['snapshot'])
 
 class SharedUiTests(unittest.TestCase):
-    def test_same_form_has_neutral_fields_and_advanced_transport(self):
+    def test_no_server_details_are_typed_the_page_points_to_pairing(self):
+        # Servers are paired by code on the Servers page: no hostname, machine identity, address or fingerprint form.
         app=AppTest.from_function(connection_form,default_timeout=20).run()
         self.assertEqual(len(app.exception),0)
-        labels=[x.label for x in app.text_input]
-        self.assertIn('VM machine identity',labels)
-        self.assertIn('VM IP address / host',labels)
-        self.assertIn('Username',labels)
-        self.assertEqual(app.selectbox(key='fixture_method').value,'Auto')
-        self.assertTrue(app.button(key='fixture_connect').disabled)
-        self.assertEqual(app.text_input(key='fixture_host').value,'')
+        self.assertEqual(list(app.text_input),[])
+        self.assertEqual(list(app.number_input),[])
+        self.assertIn('Servers',app.info[0].value)
 
     def test_same_tabs_display_platform_specific_counts(self):
         self.assertIsNotNone(importlib.util.find_spec('system.ui.components'))

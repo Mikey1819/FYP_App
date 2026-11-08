@@ -2,6 +2,7 @@
 TEST-ONLY: in-process runner, fake systemd launcher and marker; the VM is never contacted."""
 from tests.integration.test_ubuntu_acceptance_target import FakeMarker, LauncherProbe
 from tests.integration.test_ubuntu_confirm_ui import ConfirmUiTests
+from tests.integration.pairing_fixture import paired_connect
 
 
 class AcceptanceUiTests(ConfirmUiTests):
@@ -49,13 +50,7 @@ class AcceptanceUiTests(ConfirmUiTests):
         app.session_state[SERVICE_KEY] = service
 
         def connect():
-            for key, value in (('agentic_hostname', LIVE[1]), ('agentic_uuid', LIVE[0]), ('agentic_host', 'fixture.invalid'),
-                               ('agentic_user', 'fixture-user'), ('agentic_password', 'FIXTURE-SECRET-SENTINEL')):
-                app.text_input(key=key).input(value)
-            app.number_input(key='agentic_port').set_value(22)
-            app.selectbox(key='agentic_method').select('SSH')
-            app.run()
-            app.button(key='agentic_connect').click().run()
+            self.assertEqual(paired_connect(app, platform='ubuntu', hostname=LIVE[1], identity=LIVE[0]).state, 'connected')
             self.assertFalse(list(app.error), [e.value for e in app.error])
 
         def keyed(prefix):

@@ -1,19 +1,23 @@
 """Build the hash-checked Ubuntu collector provisioning bundle (the approved docs/VM_SETUP.md preview).
 
-Usage (from the application directory): python -B -m tools.build_ubuntu_bundle [output_dir]
+Usage (from the application directory):
+    python -B -m tools.build_ubuntu_bundle --machine-id ID --hostname NAME --user ACCOUNT [output_dir]
+ID and NAME are the paired server's /etc/machine-id and hostname, as the Servers page shows them (it prints this
+command for each saved Ubuntu server); ACCOUNT is the server account the dashboard logs in with. The install scripts
+refuse to run on any other machine, so a bundle is built for one server. Nothing is hardcoded for a particular VM.
 Default output: ../dist/ubuntu-helper (git-ignored). Building runs nothing on any VM. The administrator copies
 the bundle to the VM and runs `sudo bash install.sh` on the console after taking a recovery snapshot.
 """
+import argparse
 import hashlib
 from pathlib import Path
+import re
 import shutil
-import sys
 
 APP = Path(__file__).resolve().parents[1]
 DEFAULT = APP.parent / 'dist' / 'ubuntu-helper'
-MACHINE_ID = 'f1d16ae7e6bc4d2488f9410fcd858e36'
-HOSTNAME = 'FYP-Ubuntu2204'
-USER = 'vboxuser'
+# Placeholders, filled in by build() with the checked values of the server the bundle is for.
+MACHINE_ID, HOSTNAME, USER = '@MACHINE_ID@', '@HOSTNAME@', '@USER@'
 DATASTREAM_SHA256 = 'c8be1aa2bf93284507b8810ea829f8904ab4552865f07d106561d5fd5d06ca67'
 SUDOERS = f'{USER} ALL=(root) NOPASSWD: /usr/local/libexec/fyp-hardening/collect ""\n'
 # Separately approved runner stage: the fixed runner with no arguments (systemd unit operations need argv and an
@@ -129,8 +133,26 @@ echo "Removed."
 '''
 
 
-def build(out=DEFAULT):
+def target_values(machine_id, hostname, user):
+    """The server the bundle is for, checked so that nothing but these exact words reaches the shell and sudo files."""
+    if not re.fullmatch(r'[0-9a-f]{32}', str(machine_id)) or machine_id == '0' * 32:
+        raise ValueError('machine id: the 32 lowercase hexadecimal characters of /etc/machine-id')
+    if not re.fullmatch(r'[A-Za-z0-9](?:[A-Za-z0-9.-]{0,61}[A-Za-z0-9])?', str(hostname)):
+        raise ValueError('hostname: letters, digits, dots and hyphens only')
+    if not re.fullmatch(r'[a-z_][a-z0-9_-]{0,31}', str(user)):
+        raise ValueError('user: a Linux account name (lowercase letters, digits, _ and -)')
+    return {MACHINE_ID: machine_id, HOSTNAME: hostname, USER: user}
+
+
+def _fill(text, values):
+    for placeholder, value in values.items():
+        text = text.replace(placeholder, value)
+    return text
+
+
+def build(out=DEFAULT, *, machine_id, hostname, user):
     from vm.ubuntu.provenance import HELPER_FILES
+    values = target_values(machine_id, hostname, user)
     out = Path(out)
     if out.exists():
         shutil.rmtree(out)
@@ -153,14 +175,14 @@ def build(out=DEFAULT):
         raise ValueError('Generated tailoring differs from the pinned hash; refusing to build')
     (out / 'share' / 'fyp-selected-tailoring.xml').write_bytes(tailoring)
     (out / 'sudoers').mkdir()
-    (out / 'sudoers' / 'fyp-hardening').write_bytes(SUDOERS.encode('ascii'))
-    (out / 'sudoers' / 'fyp-hardening-runner').write_bytes(RUNNER_SUDOERS.encode('ascii'))
+    (out / 'sudoers' / 'fyp-hardening').write_bytes(_fill(SUDOERS, values).encode('ascii'))
+    (out / 'sudoers' / 'fyp-hardening-runner').write_bytes(_fill(RUNNER_SUDOERS, values).encode('ascii'))
     (out / 'systemd').mkdir()
     (out / 'systemd' / 'fyp-hardening-boot-rollback.service').write_bytes(BOOT_ROLLBACK_UNIT.encode('ascii'))
-    (out / 'install.sh').write_bytes(INSTALL.encode('ascii'))
-    (out / 'uninstall.sh').write_bytes(UNINSTALL.encode('ascii'))
-    (out / 'install-runner.sh').write_bytes(INSTALL_RUNNER.encode('ascii'))
-    (out / 'uninstall-runner.sh').write_bytes(UNINSTALL_RUNNER.encode('ascii'))
+    (out / 'install.sh').write_bytes(_fill(INSTALL, values).encode('ascii'))
+    (out / 'uninstall.sh').write_bytes(_fill(UNINSTALL, values).encode('ascii'))
+    (out / 'install-runner.sh').write_bytes(_fill(INSTALL_RUNNER, values).encode('ascii'))
+    (out / 'uninstall-runner.sh').write_bytes(_fill(UNINSTALL_RUNNER, values).encode('ascii'))
     scripts = ('install.sh', 'uninstall.sh', 'install-runner.sh', 'uninstall-runner.sh')
     files = sorted(p for p in out.rglob('*') if p.is_file() and p.name not in scripts)
     sums = ''.join(f'{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.relative_to(out).as_posix()}\n' for p in files)
@@ -168,5 +190,18 @@ def build(out=DEFAULT):
     return out
 
 
+def main(argv=None):
+    parser = argparse.ArgumentParser(description='Build the Ubuntu helper bundle for one paired server.')
+    parser.add_argument('--machine-id', required=True, help="the server's /etc/machine-id (Servers page)")
+    parser.add_argument('--hostname', required=True, help="the server's hostname (Servers page)")
+    parser.add_argument('--user', required=True, help='the server account the dashboard logs in with')
+    parser.add_argument('output', nargs='?', type=Path, default=DEFAULT)
+    args = parser.parse_args(argv)
+    try:
+        print(build(args.output, machine_id=args.machine_id, hostname=args.hostname, user=args.user))
+    except ValueError as exc:
+        parser.exit(2, f'Not built: {exc}' + chr(10))
+
+
 if __name__ == '__main__':
-    print(build(Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT))
+    main()
