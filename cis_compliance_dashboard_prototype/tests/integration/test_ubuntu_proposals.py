@@ -340,3 +340,42 @@ class BackendRemediationTests(StoreFixture):
         _, snap = self.round(backend)
         self.assertEqual(snap.proposals, ())
         self.assertEqual(self.channel.runner_calls, [])
+
+    def stale_round(self, backend):
+        """A round whose plans were read from the server six minutes ago, as when approval waits too long."""
+        from datetime import datetime, timedelta, timezone
+        from unittest import mock
+        old = (datetime.now(timezone.utc) - timedelta(minutes=6)).isoformat()
+        with mock.patch('backends.ubuntu.adapter._host_now', return_value=old):
+            return self.round(backend)
+
+    def test_a_late_approval_re_reads_the_server_and_approves_a_fresh_copy_of_the_same_plan(self):
+        backend = self.backend(self.FIX)
+        handle, snap = self.stale_round(backend)
+        [old] = snap.proposals
+        workflow = handle.binding.workflow_session_id
+        previews = sum(c.startswith(b'{"op":"preview"') or b'"op":"preview"' in c for c in self.channel.runner_calls)
+        decision = backend.decide('c', workflow, old.reference, True, 'fixture-operator', '', 'op-late')
+        self.assertEqual(decision.state, 'approved')
+        self.assertNotEqual(decision.reference.record_id, old.reference.record_id)
+        self.assertEqual(sum(b'"op":"preview"' in c for c in self.channel.runner_calls), previews + 1)  # Read-only.
+        self.assertEqual(self.writes(), [])
+        snap = backend.snapshot('c', workflow)
+        by_id = {p.reference.record_id: p for p in snap.proposals}
+        self.assertEqual(by_id[old.reference.record_id].decision, 'rejected')  # Closed, with the reason recorded.
+        self.assertEqual(by_id[decision.reference.record_id].decision, 'approved')
+        from system.ui.components import plan_cards
+        [card] = plan_cards(snap)
+        self.assertEqual(card['state'], 'Approved, ready to execute')  # The card shows the fresh plan.
+
+    def test_a_late_approval_after_the_server_changed_is_refused_and_stores_nothing(self):
+        backend = self.backend(self.FIX)
+        handle, snap = self.stale_round(backend)
+        [old] = snap.proposals
+        workflow = handle.binding.workflow_session_id
+        (self.work / 'alpha').write_bytes(b'changed by someone else')
+        with self.assertRaisesRegex(ValueError, 'server has changed since this fix was planned'):
+            backend.decide('c', workflow, old.reference, True, 'fixture-operator', '', 'op-late')
+        snap = backend.snapshot('c', workflow)
+        self.assertEqual([(p.reference.record_id, p.decision) for p in snap.proposals], [(old.reference.record_id, None)])
+        self.assertEqual(self.writes(), [])

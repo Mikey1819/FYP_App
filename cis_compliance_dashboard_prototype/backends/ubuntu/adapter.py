@@ -576,6 +576,8 @@ class UbuntuBackend(BoundBackend):
         try:
             if approved:
                 from .actions import AUXILIARY
+                payload, proposal_ref = self._fresh_plan(store, binding, payload, proposal_ref, operator, now)
+                now = datetime.now(timezone.utc)  # Approval time after any re-read, never before the plan was read.
                 if payload['action']['action_id'].startswith('ubuntu.'):
                     other = shared_file_conflict(payload, store.proposals(binding, latest.round_id))
                     if other:
@@ -596,6 +598,45 @@ class UbuntuBackend(BoundBackend):
         result = 'approved' if approved else 'rejected'
         self.ledger.transition(operation_id, 'completed', detail=result)
         return DecisionResult(proposal_ref, result, existing)
+
+    # A plan may be approved only within five minutes of reading the server (MAX_BEFORE_STATE_AGE, checked again by
+    # the runner). Approving later re-reads the server instead of refusing outright; this margin keeps the fresh plan
+    # well inside the limit.
+    FRESH_MARGIN_SECONDS = 30
+
+    def _fresh_plan(self, store, binding, payload, proposal_ref, operator, now):
+        """The plan to approve: this one while it is fresh; otherwise a fresh copy of exactly the same change.
+
+        The read-only preview is run again. Only if the server's before-state and the expected after-state are byte for
+        byte the ones planned is a new plan stored (same round, parameters and evidence; a fresh read time) and the old
+        one closed as rejected with a comment saying it was replaced. If anything on the server changed, nothing is
+        stored and the administrator is asked to run a new round, as before."""
+        from dataclasses import replace
+        from vm.ubuntu.remediation_schema import MAX_BEFORE_STATE_AGE, canonical, utc
+        from .actions import PLAN_FIELDS, plan_action
+        fields, spec = payload['fields'], self.families.get(payload['action']['action_id'])
+        age = (now - utc(fields['before_state_collected_at'])).total_seconds()
+        if spec is None or age <= MAX_BEFORE_STATE_AGE - self.FRESH_MARGIN_SECONDS:
+            return payload, proposal_ref
+        changed = ValueError('The server has changed since this fix was planned, so the plan is no longer exact. '
+                             'Run a new round to plan it again.')
+        try:
+            preview = json.loads(self.session.channel.invoke_runner(canonical(
+                {'op': 'preview', 'action_id': spec.action_id, 'parameters': fields['parameters']}) + b'\n'))
+        except (ValueError, KeyError, TypeError, OSError, TimeoutError):
+            raise changed from None
+        if (type(preview) is not dict or preview.get('action_id') != spec.action_id
+                or preview.get('before_state_sha256') != fields['before_state_sha256']
+                or preview.get('expected_after_sha256') != fields['expected_after_sha256']):
+            raise changed
+        kept = {k: fields[k] for k in PLAN_FIELDS if k not in ('parameters', 'before_state_collected_at')}
+        plan = plan_action(spec, families=self.families, parameters=fields['parameters'],
+                           **dict(kept, before_state_collected_at=_host_now()))
+        store.add_proposal(binding, plan, title=payload['title'], preview=preview.get('summary', payload['preview']))
+        store.record_decision(binding, proposal_ref.record_id, rejected=(operator, now))
+        store.add_comment(binding, proposal_ref.record_id, operator, 'Replaced by a fresh plan of the same change: '
+                          'this plan was more than five minutes old and the server was unchanged.', now)
+        return store._proposal(binding, plan.proposal_id), replace(proposal_ref, record_id=plan.proposal_id)
 
     def execute_approved(self, connection_session_id, workflow_session_id, round_ref,
                          expected_approved_request_ids, deterministic, operation_id):
