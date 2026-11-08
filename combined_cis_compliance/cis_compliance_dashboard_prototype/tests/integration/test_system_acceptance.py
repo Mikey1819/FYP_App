@@ -1,0 +1,85 @@
+"""Same existing page, two simulated transports; never connects to a live VM."""
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from streamlit.testing.v1 import AppTest
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
+from test_agentic import FakeVm
+from test_winrm_channel import target
+from hardening.winrm_channel import LiveScanner
+from system.connection import ConnectionService
+from system.ledger import CoordinationLedger
+from system.identity import VerifiedIdentity
+from system.bootstrap import SERVICE_KEY, WORKFLOW_KEY
+from backends.windows.adapter import WindowsBackend
+from backends.ubuntu.adapter import UbuntuBackend
+from tests.integration.pairing_fixture import paired_connect
+
+
+def existing_page():
+    import streamlit as st
+    from pathlib import Path
+    from hardening.agentic_view import render_agentic
+    render_agentic(Path(st.session_state['fixture_database']))
+
+class FixtureSsh:
+    def verify_identity(self,request):
+        return VerifiedIdentity('ubuntu',request.expected_hostname,request.expected_machine_identity,'22.04','ssh','SHA256:'+'a'*43)
+    def close(self):pass
+
+class SameUiAcceptanceTests(unittest.TestCase):
+    def test_windows_ubuntu_windows_resume_without_secret_or_workflow_leak(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder);ledger=CoordinationLedger(path/'integration.sqlite3');vm=FakeVm()
+            factory=lambda runtime,t:LiveScanner(runtime,t,session_factory=vm)
+            def backend_factory(session):
+                if session.identity.platform=='windows':
+                    return WindowsBackend(path/'windows'/'imports.sqlite3',session=session,ledger=ledger,scanner_factory=factory)
+                return UbuntuBackend(path/'ubuntu'/'imports.sqlite3',session=session,ledger=ledger)
+            service=ConnectionService(ledger,windows_scanner_factory=factory,ssh_factory=lambda *a:FixtureSsh(),backend_factory=backend_factory)
+            app=AppTest.from_function(existing_page,default_timeout=30)
+            app.session_state['fixture_database']=str(path/'windows'/'imports.sqlite3')
+            app.session_state[SERVICE_KEY]=service
+            app.run()
+            def connect(platform):
+                t=target()
+                # What a pairing by code hands the connection service (the Servers page; test_servers_page.py).
+                paired_connect(app, platform=platform, hostname=t.hostname if platform=='windows' else 'UBUNTU-FIXTURE',
+                               identity=t.machine_uuid if platform=='windows' else 'a'*32)
+                self.assertEqual(len(app.exception),0,[e.value for e in app.exception])
+                self.assertFalse(list(app.error),[e.value for e in app.error])
+            def scan():
+                # A read-only deterministic scan through the backend, as a round's scan step runs it (the page's
+                # Assess without AI button was removed by the administrator).
+                from system.bootstrap import CONNECTION_KEY
+                from hardening.agentic_view import SESSION
+                connection=app.session_state[CONNECTION_KEY]
+                handle=service.backend_for(connection).start_round(connection,None,None,'deterministic','op-scan')
+                app.session_state[WORKFLOW_KEY]=handle.binding.workflow_session_id
+                app.session_state[SESSION]=handle.binding.backend_session_id
+                app.run()
+            connect('windows')
+            self.assertEqual(len(vm.scripts),1,'Connect may run identity only')
+            self.assertEqual([b for b in app.button if b.key=='agentic_assess_without_ai'],[])
+            scan()
+            self.assertEqual(len(app.exception),0,[e.value for e in app.exception])
+            self.assertFalse(list(app.error),[e.value for e in app.error])
+            workflow=app.session_state[WORKFLOW_KEY]
+            self.assertEqual([x.label for x in app.tabs],['Fixes','Risk ranking','Controls','Results','Agent log'])
+            app.button(key='agentic_disconnect').click().run()
+            self.assertNotIn(WORKFLOW_KEY,app.session_state)
+            from unittest import mock
+            with mock.patch('backends.ubuntu.adapter.assessment_gate', return_value=('Ubuntu assessment is not enabled (test-closed gate).',)):
+                connect('ubuntu')
+                self.assertEqual([b for b in app.button if b.key=='agentic_assess_without_ai'],[])
+            self.assertEqual([x.label for x in app.tabs],['Fixes','Risk ranking','Controls','Results','Agent log'])
+            self.assertNotIn(WORKFLOW_KEY,app.session_state)
+            app.button(key='agentic_disconnect').click().run()
+            connect('windows')
+            app.button(key='agentic_resume').click().run()
+            self.assertFalse(list(app.error),[e.value for e in app.error])
+            self.assertEqual(app.session_state[WORKFLOW_KEY],workflow)
+            self.assertEqual(vm.writes,[])
+            for database in path.rglob('*.sqlite3'):
+                self.assertNotIn(b'FIXTURE-SECRET-SENTINEL',database.read_bytes())

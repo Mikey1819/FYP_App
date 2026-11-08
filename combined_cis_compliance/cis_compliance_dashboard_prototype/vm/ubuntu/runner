@@ -1,0 +1,7 @@
+#!/usr/bin/python3 -IB
+"""Fixed root-owned launcher for the remediation runner. Installed with its package by approved setup."""
+import sys
+sys.path.insert(0, '/usr/local/libexec/fyp-hardening')
+import os
+from fyp_ubuntu.runner_cli import main
+raise SystemExit(main(argv=sys.argv[1:], environ=dict(os.environ)))
