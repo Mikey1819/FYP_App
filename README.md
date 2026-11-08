@@ -12,6 +12,18 @@ The same application and connection form now also assess and harden one Ubuntu S
 ..\.venv-integration\Scripts\python.exe -m streamlit run app.py
 ```
 
+**First time on a fresh copy** (the environment, the VM helper bundle and the app's data are not included; they are rebuilt or created locally). From the project folder, with Python 3.13:
+
+```powershell
+python -m venv .venv-integration
+.\.venv-integration\Scripts\python.exe -m pip install -r cis_compliance_dashboard_prototype\requirements.integration.lock.txt
+cd cis_compliance_dashboard_prototype
+..\.venv-integration\Scripts\python.exe -B -m tools.build_ubuntu_bundle      # VM helper bundle -> ..\dist\ubuntu-helper
+..\.venv-integration\Scripts\python.exe -m unittest discover -s tests        # 666 tests
+```
+
+The app creates its empty stores under `cis_compliance_dashboard_prototype\data\` on first use. Ollama with `qwen3:8b` is needed for agentic rounds; **Assess without AI** works without it.
+
 Ubuntu runbook, backup and recovery: [OPERATIONS.md](cis_compliance_dashboard_prototype/docs/OPERATIONS.md). Architecture and interfaces: [UNIFIED_ARCHITECTURE.md](cis_compliance_dashboard_prototype/docs/UNIFIED_ARCHITECTURE.md). Live and offline evidence: `cis_compliance_dashboard_prototype/docs/evaluation/`.
 
 ## The agents
