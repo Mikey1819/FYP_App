@@ -46,7 +46,7 @@
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/agentic.py": {
-      "sha256": "8334a87724a8b8f1c104e44e7f3f2d34b53ffecbe0ac023dd8ab498d946ffdcb",
+      "sha256": "d34ac9b951eeac039ecdddf7a4dcbf23bbbb58c4e3e36709800f17c82c8d04cb",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/agentic_view.py": {

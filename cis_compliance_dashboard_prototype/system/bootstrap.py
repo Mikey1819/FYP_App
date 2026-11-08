@@ -1,5 +1,5 @@
 """Per-session connection wiring. No authenticated objects in process-wide caches."""
-from .config import PATHS
+from . import config
 from .connection import ConnectionService
 from .ledger import CoordinationLedger
 from tools.baseline import verify_import_origin
@@ -30,9 +30,12 @@ def invalidate_changed_form(state):
 
 def connection_service(state):
     if SERVICE_KEY not in state:
-        verify_import_origin(PATHS.app)
-        PATHS.prepare()
-        state[SERVICE_KEY] = ConnectionService(CoordinationLedger(PATHS.coordination))
+        # Looked up when called, not copied at import: a test that points config.PATHS at a temporary folder must
+        # never reach the real ledger (live 9 Nov: the end-to-end test had registered its fixture server in it).
+        paths = config.PATHS
+        verify_import_origin(paths.app)
+        paths.prepare()
+        state[SERVICE_KEY] = ConnectionService(CoordinationLedger(paths.coordination))
     return state[SERVICE_KEY]
 
 

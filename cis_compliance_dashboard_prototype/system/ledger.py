@@ -230,6 +230,13 @@ class CoordinationLedger:
                        (operation_id, stamp, 'claimed', canonical({'command_sha256': digest})))
         return True, OperationState(operation_id, 'running')
 
+    def unsettled(self, workflow_session_id):
+        """Operations of one workflow that are neither completed nor refused, oldest first (read-only)."""
+        with self._db() as db:
+            rows = db.execute("SELECT operation_id, kind, state, result FROM operation_claims WHERE workflow_session_id=? "
+                              "AND state NOT IN ('completed','refused') ORDER BY created_at", (workflow_session_id,))
+            return [dict(operation_id=r[0], kind=r[1], state=r[2], result=r[3]) for r in rows.fetchall()]
+
     def operation_state(self, operation_id):
         with self._db() as db:
             row = db.execute('SELECT state,result FROM operation_claims WHERE operation_id=?', (operation_id,)).fetchone()

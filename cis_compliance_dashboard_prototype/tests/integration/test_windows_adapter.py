@@ -61,3 +61,61 @@ class WindowsAdapterTests(unittest.TestCase):
                     backend.start_round('connection', None, 'Keep RDP usable', mode, 'goal-' + mode.value)
             self.assertEqual(vm.scripts, [])
             self.assertEqual(backend.history(), ())
+
+
+class UnattemptedFixTests(unittest.TestCase):
+    """Live 9 Nov: the WinRM channel failed before the 11th of 15 approved fixes. The 5 never attempted had no verdict,
+    were counted as uncertain, and the execute locked the server: Confirm and Execute without AI were both refused."""
+
+    def setUp(self):
+        from types import SimpleNamespace
+        from backends.windows.adapter import WindowsBackend
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        path = Path(folder.name); vm = FakeVm(); t = target()
+        session = VerifiedSession('connection', VerifiedIdentity('windows', t.hostname, t.machine_uuid, 'Server 2022', 'winrm'),
+                                  'windows:' + t.machine_uuid, 'epoch', t.username, t.host, t.port, None, t)
+        self.ledger = CoordinationLedger(path / 'integration.db')
+        self.backend = WindowsBackend(path / 'windows' / 'imports.sqlite3', session=session, ledger=self.ledger,
+                                      allow_mutation=True,
+                                      scanner_factory=lambda runtime, t: LiveScanner(runtime, t, session_factory=vm))
+        handle = self.backend.start_round('connection', None, None, AssessmentMode.DETERMINISTIC, 'scan')
+        self.workflow, self.round = handle.binding.workflow_session_id, handle.round_reference
+        # Five approved fixes; the store and the engine are simulated, the ledger and the backend are real.
+        self.records = {f'r{n}': dict(proposal=dict(request_id=f'r{n}'), decision='approved', verdict=None)
+                        for n in range(5)}
+        real = self.backend.store
+        self.backend.store = SimpleNamespace(rounds=real.rounds, for_run=lambda run_id: list(self.records.values()),
+                                             get=lambda identifier: self.records[identifier])
+        self.outcomes = []
+        self.backend.engine = SimpleNamespace(execute_approved=lambda session_id, deterministic=False:
+                                              self.records.update(self.outcomes.pop(0)))
+
+    def execute(self, ids, operation):
+        return self.backend.execute_approved('connection', self.workflow, self.round, ids, False, operation)
+
+    def test_fixes_never_attempted_stay_approved_and_can_be_executed_next(self):
+        done = dict(self.records['r0'], verdict='Verified compliant')
+        refused = dict(self.records['r1'], verdict='Refused before execution: value changed')
+        self.outcomes = [{'r0': done, 'r1': refused}, {n: dict(self.records[n], verdict='Verified compliant')
+                                                      for n in ('r2', 'r3', 'r4')}]
+        self.assertEqual(self.execute(tuple(self.records), 'exec-1').state, 'completed')
+        self.assertEqual(self.ledger.unsettled(self.workflow), [])  # nothing locks the server
+        self.assertEqual(self.execute(('r2', 'r3', 'r4'), 'exec-2').state, 'completed')
+
+    def test_an_uncertain_outcome_still_locks_until_reviewed(self):
+        self.outcomes = [{'r0': dict(self.records['r0'], verdict='Unresolved: outcome uncertain (channel lost); rescan')}]
+        self.assertEqual(self.execute(tuple(self.records), 'exec-1').state, 'unresolved')
+        with self.assertRaisesRegex(ValueError, 'unresolved operation'):
+            self.execute(('r1', 'r2', 'r3', 'r4'), 'exec-2')
+
+    def test_an_execute_already_locked_by_unattempted_fixes_is_settled_from_the_records(self):
+        # The state the live ledger was left in before this fix: unresolved with no detail, no uncertain verdict.
+        binding = self.ledger.resume(self.workflow, 'windows', self.backend.session.target_id, 'epoch')
+        self.ledger.claim(binding, 'old-exec', 'execute', {'round': self.round.record_id}, mutation=True)
+        self.ledger.transition('old-exec', 'unresolved')
+        self.records['r0'] = dict(self.records['r0'], verdict='Verified compliant')
+        self.outcomes = [{n: dict(self.records[n], verdict='Verified compliant') for n in ('r1', 'r2', 'r3', 'r4')}]
+        self.assertEqual(self.execute(('r1', 'r2', 'r3', 'r4'), 'exec-2').state, 'completed')
+        self.assertEqual(self.ledger.operation_state('old-exec').state, 'completed')
+        self.assertIn('Settled from stored receipts', self.ledger.operation_state('old-exec').detail)

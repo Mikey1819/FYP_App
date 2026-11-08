@@ -89,6 +89,9 @@ class EndToEndTests(unittest.TestCase):
         app = self.ok(app.button(key='servers_find').click().run())
         app.text_input(key='servers_pair_password').input('FIXTURE-SECRET-SENTINEL').run()
         app = self.ok(app.button(key='servers_pair_finish').click().run())
+        # Isolation: the connection service's ledger is the temporary one, never the real data/integration.sqlite3.
+        from system.bootstrap import SERVICE_KEY
+        self.assertEqual(app.session_state[SERVICE_KEY].ledger.path, self.paths.coordination)
         self.assertEqual(app.title[0].value, 'Overview')  # The workspace opens once connected.
         self.assertIn('Workspace: Windows Server 2022', text(app))
 

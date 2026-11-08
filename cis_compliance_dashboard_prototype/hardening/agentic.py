@@ -728,7 +728,8 @@ class RemediationTools(_RoleTools):
             verdict = self.executor.execute(request_id)
         except ChannelError as exc:  # Identity check failed before the runner was sent: nothing was written.
             self.stopped = 'server channel ' + exc.state
-            verdict = 'Refused before execution: server channel ' + exc.state
+            # The library's own message is kept (live 9 Nov: only "channel_error" was recorded, so the cause was lost).
+            verdict = 'Refused before execution: server channel ' + exc.state + ' (' + str(exc.detail)[:160] + ')'
         except ValueError as exc:  # Executor refusal before any VM call, e.g. the approval expired meanwhile.
             verdict = 'Refused before execution: ' + str(exc)[:200]
         kind = verdict_kind(verdict)
