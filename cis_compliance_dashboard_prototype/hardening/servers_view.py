@@ -26,6 +26,7 @@ import streamlit as st
 from .connection_view import LIVE_TARGET, connected_session, disconnect
 from .pairing import PairingError, normalize_code
 from .pairing_client import FoundServer, find_server
+from .reconnect import remember
 from .server_access import helper_bundle, helper_sha256, ubuntu_helper, ubuntu_helper_sha256
 from .server_control import close_access, disconnect_laptop, paired_laptops
 from .servers import MAX_NOTE, ServerRegistry
@@ -119,6 +120,9 @@ def _open(platform, host, port, hostname, identity, username, *, password=None, 
         return None
     st.session_state[CONNECTION_KEY] = result.connection_session_id
     st.session_state[LIVE_TARGET] = session.target if platform == 'windows' else None
+    if platform == 'ubuntu':  # For the fresh login that confirms SSH and firewall changes (reconnect.py).
+        remember(st.session_state, host=host, port=port, hostname=session.identity.hostname, identity=identity,
+                 username=username.strip(), password=password or None, key_path=key_path or None, sudo=sudo or None)
     return session
 
 

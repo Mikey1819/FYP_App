@@ -16,7 +16,7 @@ from .remediation import RemediationStore
 from .round_report import round_analysis, round_report, shown
 from .ui import VERDICT_COLOR, badge, level_badge, md_escape, myt
 from .winrm_channel import ChannelError, LiveScanner
-from system.bootstrap import active_backend, CONNECTION_KEY, WORKFLOW_KEY
+from system.bootstrap import active_backend, CONNECTION_KEY, SERVICE_KEY, WORKFLOW_KEY
 from system.contracts import AssessmentMode, RecordRef
 from system.ui.components import render_controls, render_snapshot_tabs
 from backends.windows.adapter import original_services
@@ -226,34 +226,89 @@ def _ubuntu_maintenance_actions(backend, connection, snapshot, capabilities, wor
                   disabled=not (capabilities.can_remediate and confirmed))
 
 
+def _ubuntu_safety_check(operator):
+    """Both execution acceptance tests, run by the dashboard: the confirm test (a fresh login confirms it) and the
+    rollback test (left unconfirmed until the server's timer restores it). Returns a line for the page."""
+    import time
+    from .reconnect import fresh_login
+    service = st.session_state[SERVICE_KEY]
+    with st.status('Safety check: confirm test…', expanded=True) as status:
+        backend, connection = active_backend(st.session_state), st.session_state[CONNECTION_KEY]
+        st.write('Applying a harmless marker that must be confirmed after a fresh login.')
+        run = backend.start_acceptance(connection, 'confirm', operator, uuid4().hex)
+        deadline = time.monotonic() + 120
+        while run.outcome is None and run.code != 'awaiting_confirmation':
+            if time.monotonic() > deadline:
+                raise ValueError('The confirm test did not reach its confirmation step within two minutes.')
+            time.sleep(2)
+            run = next(r for r in backend.acceptance_status(connection) if r.request_id == run.request_id)
+        if run.outcome is None:
+            st.write('Logging in again over a new SSH connection, which proves the change kept SSH working.')
+            connection = fresh_login(st.session_state)
+            backend = service.backend_for(connection)
+            run = backend.confirm_acceptance(connection, run.request_id)
+        if run.outcome != 'confirmed':
+            raise ValueError('The confirm test ended ' + str(run.outcome or run.code) + '; it did not pass.')
+        status.update(label='Safety check: rollback test…')
+        st.write('Confirm test passed. Applying a marker that is left unconfirmed, so the server must restore it.')
+        run = backend.start_acceptance(connection, 'rollback', operator, uuid4().hex)
+        deadline = time.monotonic() + 300
+        while run.outcome is None:
+            if time.monotonic() > deadline:
+                raise ValueError('The server did not restore the rollback test marker within five minutes.')
+            time.sleep(5)
+            run = next(r for r in backend.acceptance_status(connection) if r.request_id == run.request_id)
+        if run.outcome != 'rolled_back':
+            raise ValueError('The rollback test ended ' + str(run.outcome) + '; it did not pass.')
+        status.update(label='Safety check passed', state='complete')
+    return 'Safety check passed: the confirm test was confirmed after a fresh login and the rollback test was restored by the server.'
+
+
 def _ubuntu_acceptance(backend, connection):
     """Execution acceptance: two live runs of a harmless marker prove the confirm and rollback paths on this VM.
-    Shown only while needed: once both passed for the deployed runner it is hidden until a reinstall needs it again."""
+    While needed it is shown open; once both passed for the deployed runner it folds into a line that can run it again
+    (for example after the VM was reverted to a snapshot). With the login remembered, one button runs both tests."""
+    from .reconnect import can_reconnect
     error, notice = (st.session_state.pop('ubuntu_acceptance_error', None),
                      st.session_state.pop('ubuntu_acceptance_notice', None))
-    if not error and backend.acceptance_complete(connection):
-        if notice:
-            st.success(md_escape(notice))  # the last scenario's result stays visible once the panel is gone
-        return
-    with st.expander('Execution acceptance (required before any live fix)', expanded=bool(error or notice)):
+    complete = not error and backend.acceptance_complete(connection)
+    if complete and notice:
+        st.success(md_escape(notice))  # the last result stays visible once the panel folds
+    label = ('Safety check (execution acceptance): passed. Run it again' if complete
+             else 'Execution acceptance (required before any live fix)')
+    with st.expander(label, expanded=not complete or bool(error)):
         if error:
             st.error(md_escape(error))
-        if notice:
+        if notice and not complete:
             st.success(md_escape(notice))
         deployment = backend.deployment_status(connection)
         if not deployment.ok:
             for reason in deployment.reasons:
                 st.warning(md_escape(reason))
             return
-        st.caption('Writes only a marker file in the runner state directory on the VM; no system setting changes.')
+        st.caption('Two tests with a harmless marker file in the runner state directory on the server; no system '
+                   'setting changes. The confirm test must be kept after a fresh login, the rollback test must be '
+                   'restored by the server itself.')
         runs = backend.acceptance_status(connection)
+        operator = st.text_input('Your name (recorded with the acceptance approval)', key='ubuntu_acceptance_operator',
+                                 value=st.session_state.get('agentic_operator') or '')
+        open_run = any(run.outcome is None for run in runs)
+        if can_reconnect(st.session_state):
+            if st.button('Run safety check', key='ubuntu_safety_check', type='primary', icon=':material/verified_user:',
+                         disabled=open_run or not operator.strip(),
+                         help='Runs both tests by itself in about two to three minutes, including the fresh login.'):
+                try:
+                    st.session_state['ubuntu_acceptance_notice'] = _ubuntu_safety_check(operator.strip())
+                except (ValueError, OSError) as failure:
+                    st.session_state['ubuntu_acceptance_error'] = str(failure)[:300]
+                st.rerun()
         for run in runs:
             label = md_escape(run.scenario + ' scenario (' + run.request_id[:8] + '): ' + (run.outcome or run.code))
             if run.outcome is not None:
                 st.markdown('- ' + label)
                 continue
             if run.scenario == 'confirm' and run.code == 'awaiting_confirmation':
-                st.warning(label + '. Disconnect, reconnect to the VM, then confirm within about a minute.')
+                st.warning(label + '. Disconnect, connect to the server again, then confirm within about a minute.')
             elif run.scenario == 'rollback' and run.code == 'awaiting_confirmation':
                 st.info(label + '. Do not confirm: the rollback timer restores it shortly; then check status.')
             else:
@@ -274,8 +329,6 @@ def _ubuntu_acceptance(backend, connection):
                 if run.scenario == 'confirm' and run.code == 'awaiting_confirmation':
                     st.button('Confirm', key='ubuntu_acceptance_confirm_run_' + run.request_id, type='primary',
                               on_click=act, kwargs={'confirm': True})
-        operator = st.text_input('Your name (recorded with the acceptance approval)', key='ubuntu_acceptance_operator')
-        open_run = any(run.outcome is None for run in runs)
 
         def start(scenario):
             try:
@@ -283,20 +336,74 @@ def _ubuntu_acceptance(backend, connection):
                 st.session_state['ubuntu_acceptance_notice'] = scenario + ' scenario started.'
             except (ValueError, OSError) as failure:
                 st.session_state['ubuntu_acceptance_error'] = str(failure)[:300]
+        st.caption('Or run each test by hand:')
         with st.container(horizontal=True):
             for scenario, label in (('confirm', 'Run confirm scenario'), ('rollback', 'Run rollback scenario')):
                 st.button(label, key='ubuntu_acceptance_' + scenario, on_click=start, args=(scenario,),
                           disabled=open_run or not operator.strip())
 
 
+AUTO_FAILED = 'ubuntu_autoconfirm_failed'
+
+
+@st.fragment(run_every=5)
+def _ubuntu_watch_changes():
+    """While a change runs or waits for confirmation, check it every five seconds; confirm a waiting one over a fresh
+    login made by the dashboard. The whole page redraws once something settles."""
+    from .reconnect import can_reconnect, fresh_login
+    backend, connection = active_backend(st.session_state), st.session_state.get(CONNECTION_KEY)
+    if backend is None or connection is None:
+        return
+    items = backend.pending_supervised(connection)
+    if not items:
+        st.rerun(scope='app')
+    failed = st.session_state.setdefault(AUTO_FAILED, set())
+    for item in items:
+        label = md_escape(item.control_id + ' · ' + item.title)
+        if item.code == 'awaiting_confirmation' and can_reconnect(st.session_state) and item.request_id not in failed:
+            st.info(f'**{label}** was applied. Confirming it over a fresh SSH login…')
+            try:
+                new = fresh_login(st.session_state)
+                handle = st.session_state[SERVICE_KEY].backend_for(new).confirm_change(
+                    new, item.workflow_session_id, item.round_reference, item.request_id, uuid4().hex)
+                st.session_state[WORKFLOW_KEY] = item.workflow_session_id
+                st.session_state['ubuntu_pending_notice'] = (item.control_id + ': confirmed after a fresh login, '
+                                                             + handle.state.replace('_', ' ') + '.')
+            except (ValueError, OSError) as failure:
+                failed.add(item.request_id)
+                st.session_state['ubuntu_pending_error'] = (item.control_id + ': not confirmed automatically. '
+                                                            + str(failure)[:300])
+            st.rerun(scope='app')
+        elif item.code == 'awaiting_confirmation':
+            st.warning(f'**{label}** was applied and is waiting for confirmation. Disconnect, reconnect to the server '
+                       '(a fresh login proves SSH still works), then confirm before the rollback timer restores it.')
+        elif item.outcome == 'running':
+            st.info(f'**{label}** is running on the server. This page checks it every few seconds.')
+            try:
+                handle = backend.refresh_execution(connection, item.workflow_session_id, item.round_reference,
+                                                   uuid4().hex)
+            except (ValueError, OSError):
+                continue
+            if handle.state != 'running':
+                st.session_state[WORKFLOW_KEY] = item.workflow_session_id
+                st.rerun(scope='app')
+        else:
+            st.warning(f'**{label}**: outcome unknown ({md_escape(item.code)}). Check its status before any other change.')
+
+
 def _ubuntu_pending_changes(backend, connection):
-    """Changes still running or waiting for confirmation on this VM, from any workflow, so a fresh login finds them."""
+    """Changes still running or waiting for confirmation on this VM, from any workflow, so a fresh login finds them.
+    They are watched automatically; the buttons stay for checking or confirming by hand."""
     error, notice = st.session_state.pop('ubuntu_pending_error', None), st.session_state.pop('ubuntu_pending_notice', None)
     if error:
         st.error(md_escape(error))
     if notice:
         st.success(md_escape(notice))
-    for item in backend.pending_supervised(connection):
+    items = backend.pending_supervised(connection)
+    if not items:
+        return
+    _ubuntu_watch_changes()
+    for item in items:
         def act(item=item, confirm=False):
             try:
                 if confirm:
@@ -309,16 +416,8 @@ def _ubuntu_pending_changes(backend, connection):
                 st.session_state['ubuntu_pending_notice'] = (item.control_id + ': ' + handle.state.replace('_', ' ') + '.')
             except (ValueError, OSError) as failure:
                 st.session_state['ubuntu_pending_error'] = str(failure)[:300]
-        label = md_escape(item.control_id + ' · ' + item.title)
-        if item.code == 'awaiting_confirmation':
-            st.warning(f'**{label}** was applied and is waiting for confirmation. Disconnect, reconnect to the VM '
-                       '(a fresh login proves SSH still works), then confirm before the rollback timer restores it.')
-        elif item.outcome == 'running':
-            st.info(f'**{label}** is running under systemd supervision ({md_escape(item.code)}). Check its status.')
-        else:
-            st.warning(f'**{label}**: outcome unknown ({md_escape(item.code)}). Check its status before any other change.')
         with st.container(horizontal=True):
-            st.button('Check status', key='ubuntu_status_' + item.request_id, on_click=act)
+            st.button('Check status of ' + item.control_id, key='ubuntu_status_' + item.request_id, on_click=act)
             if item.code == 'awaiting_confirmation':
                 st.button('Confirm change', key='ubuntu_confirm_change_' + item.request_id, type='primary',
                           on_click=act, kwargs={'confirm': True})

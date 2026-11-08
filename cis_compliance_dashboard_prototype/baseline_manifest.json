@@ -135,7 +135,7 @@
     },
     "cis_compliance_dashboard_prototype/hardening/servers_view.py": {
       "category": "protected",
-      "sha256": "fdad9018b7175e66e96d00d96d4223682c7e296dab4e959d45889a9f528fab26"
+      "sha256": "f44cc465b1175638c1de0478ba44752c00f581c03fb93e23acf528da1b2d061a"
     },
     "cis_compliance_dashboard_prototype/hardening/system_detect.py": {
       "category": "protected",

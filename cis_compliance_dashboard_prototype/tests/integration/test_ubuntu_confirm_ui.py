@@ -97,6 +97,76 @@ class ConfirmUiTests(FixUiTests):
         for database in self.root.rglob('*.sqlite3'):
             self.assertNotIn(b'FIXTURE-SECRET-SENTINEL', database.read_bytes())
 
+
+    def test_a_waiting_change_is_confirmed_over_the_dashboards_own_fresh_login(self):
+        """With the login remembered at connect (as the Servers page does), the page confirms a waiting SSH-style
+        change itself: a new SSH login, then the confirm over it. No disconnect, reconnect or click."""
+        from streamlit.testing.v1 import AppTest
+        from tests.integration.test_system_acceptance import existing_page
+        from tests.integration.test_ubuntu_agents import call, plan_call, team, scanner_ok, RankingAware, Scripted
+        from tests.integration.test_ubuntu_live_path import open_gate, TARGET as LIVE
+        from tests.integration.pairing_fixture import SECRET
+        from backends.ubuntu.actions import ActionSpec
+        from backends.ubuntu.adapter import UbuntuBackend
+        from hardening.reconnect import RECONNECT
+        from system.bootstrap import CONNECTION_KEY, SERVICE_KEY
+        from system.connection import ConnectionService
+        from system.ledger import CoordinationLedger
+        self.addCleanup(setattr, RankingAware, 'target', 'ubuntu:fixture')
+        spec = ActionSpec(self.family.action_id, 1, self.family.implementation_sha256, ('1.5.1',), self.family.validate, 60,
+                          propose=lambda cid, evidence: {'name': 'alpha', 'value': 'new'}, title='TEST-ONLY confirm value',
+                          recovery={'kind': 'restore_backup', 'scope': ['fixture:alpha']})
+        ledger = CoordinationLedger(self.root / 'integration.sqlite3')
+
+        def backend_factory(session):
+            fix = {'control_id': '1.5.1', 'decision': 'fix', 'action_id': spec.action_id, 'reason_code': 'highest_risk'}
+            clients = team([call('delegate_scanner'), call('delegate_analysis'), plan_call([fix])],
+                           scanner_ok(), RankingAware())
+            for client in clients.values():
+                if isinstance(client, Scripted):
+                    for item in client.script:
+                        item['tool_calls'][0]['function']['arguments']['target_id'] = session.target_id
+            RankingAware.target = session.target_id
+            return UbuntuBackend(self.root / 'ubuntu' / 'imports.sqlite3', session=session, ledger=ledger,
+                                 families={spec.action_id: spec}, model_client_factory=clients.__getitem__,
+                                 model_probe=lambda: True)
+
+        service = ConnectionService(ledger, ssh_factory=lambda *a: self.make_channel(), backend_factory=backend_factory)
+        app = AppTest.from_function(existing_page, default_timeout=60)
+        app.session_state['fixture_database'] = str(self.root / 'windows' / 'imports.sqlite3')
+        app.session_state[SERVICE_KEY] = service
+
+        def keyed(prefix, exclude=None):
+            return [b for b in app.button if b.key and b.key.startswith(prefix) and b.key != exclude]
+
+        with open_gate(), mock.patch('backends.ubuntu.adapter.execution_gate', return_value=()):
+            app.run()
+            self.assertEqual(paired_connect(app, platform='ubuntu', hostname=LIVE[1], identity=LIVE[0],
+                                            run=False).state, 'connected')
+            app.session_state[RECONNECT] = dict(host='fixture.invalid', port=22, hostname=LIVE[1], identity=LIVE[0],
+                                                username='fixture-user', password=SECRET, key_path=None, sudo=None)
+            app.run()
+            first = app.session_state[CONNECTION_KEY]
+            app.button(key='agentic_run').click().run()
+            app.text_input(key='agentic_operator').input('fixture-operator').run()
+            keyed('ubuntu_approve_', exclude='ubuntu_approve_all')[0].click().run()
+            app.button(key='ubuntu_execute_review').click().run()
+            app.button(key='ubuntu_execute').click().run()
+            self.assertFalse(list(app.error), [e.value for e in app.error])
+            [status] = keyed('ubuntu_status_')
+            rid = status.key.removeprefix('ubuntu_status_')
+            self.runner().run_job(rid)  # The job ran on the server; it now waits for confirmation.
+            self.launcher.active.discard(rid)
+            app.run()  # The watcher reads the status and confirms over its own fresh login, then redraws the page.
+            self.assertFalse(list(app.error), [e.value for e in app.error])
+            self.assertEqual(keyed('ubuntu_confirm_change_'), [])
+            self.assertNotEqual(app.session_state[CONNECTION_KEY], first)  # A new login, not the old one.
+            self.assertTrue(any('confirmed after a fresh login' in s.value for s in app.success), [s.value for s in app.success])
+        self.assertEqual((self.work / 'alpha').read_bytes(), b'new')
+        self.assertEqual(len([c for c in self.runner_calls() if c.startswith(b'{"op":"confirm"')]), 1)
+        for database in self.root.rglob('*.sqlite3'):
+            self.assertNotIn(b'FIXTURE-SECRET-SENTINEL', database.read_bytes())
+
     def make_channel(self):
         channel = super().make_channel()
         self._channels = getattr(self, '_channels', []) + [channel]

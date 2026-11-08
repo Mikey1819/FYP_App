@@ -15,15 +15,15 @@ Hot reload is deliberately off (`.streamlit/config.toml`). Restart the app after
 ## Everyday use
 
 1. **Connect:** the first time, run `sudo python3 fyp-pair-ubuntu.py` on the VM (download it from **Servers**), type its code under **Servers > Add a server**, then the account and password. The VM's name, machine ID, address and SSH host key come from the VM's signed answer; nothing is typed but the code and the login. Later, pick the VM under **My servers** and type the password. The password is kept in memory only. The SSH host key is checked before login (the one pinned at pairing).
-   **New server, once:** on **Servers**, click **Set up this server**. The dashboard builds the helper bundle for exactly this server and copies it to `~/fyp-ubuntu-helper` over the SSH login (no root, nothing run). Then, on the server, run the one command it shows, `sudo bash ~/fyp-ubuntu-helper/setup.sh` (take a snapshot first). It asks before doing anything, then installs OpenSCAP (`libopenscap8`) if missing, `install.sh` and `install-runner.sh`, skipping what is already installed. Click **Check again**. Then run the two Execution acceptance tests.
+   **New server, once:** on **Servers**, click **Set up this server**. The dashboard builds the helper bundle for exactly this server and copies it to `~/fyp-ubuntu-helper` over the SSH login (no root, nothing run). Then, on the server, run the one command it shows, `sudo bash ~/fyp-ubuntu-helper/setup.sh` (take a snapshot first). It asks before doing anything, then installs OpenSCAP (`libopenscap8`) if missing, `install.sh` and `install-runner.sh`, skipping what is already installed. Click **Check again**. Then click **Run safety check** (Agentic hardening) once; it runs both execution acceptance tests by itself.
 2. **Assess:** **Start agentic round** scans the server read-only, then the bounded agents rank findings and propose fixes. It needs the local model (Ollama with qwen3:8b). Fixes are proposed only in agentic rounds, and only for confirmed Non-Compliant controls.
 3. **Decide:** in **Fixes**, name the operator, then approve or reject each proposal. The approval screen shows the exact change, its impact and how to recover.
    - **Fixes** has the same layout as the Windows page: your name with **Approve all / Reject all undecided**, then one row per proposed fix, highest risk first (the change, why the Orchestrator chose it, and on the right Approve and Reject, or who approved it and until when, or the verified result). Controls the Orchestrator did not propose are listed under **Not proposed this round** with the reason. **Execute N approved fix(es)…** above the tabs opens the confirmation listing exactly those changes. Restore sits in the fix's row; package-list refresh and reboot are in the **Maintenance** box. The **Agent log** tab shows every agent step.
    - After a fix runs, a fresh re-scan runs automatically, and the fix's row shows its result. The Controls tab keeps showing the scan the plan was made from.
    - The orchestrator chooses what to propose (project decision D4); approve only the fixes you want to run now and leave the rest undecided. Round goals are disabled for Ubuntu and due for removal.
 4. **Execute:** tick the confirmation, then **Execute approved fixes**. Each approved change runs at most once.
-   - Supervised jobs (packages, GRUB, patches) appear above the tabs with **Check status**.
-   - **SSH and UFW changes:** when the panel says "waiting for confirmation", **disconnect, reconnect, then press Confirm change** within 10 minutes. Without that, the VM restores the change by itself.
+   - Supervised jobs (packages, GRUB, patches) appear above the tabs; the page checks them every 5 seconds (**Check status** is still there).
+   - **SSH and UFW changes:** when one is waiting for confirmation, the dashboard logs in again over a new SSH connection with the account you connected with (kept in memory only, forgotten on Disconnect) and confirms it. That new login is the proof SSH still works. If it fails, nothing is confirmed and the server restores the change by itself within 10 minutes. By hand: disconnect, connect again, **Confirm change**.
 5. **Verify:** after a change completes, a fresh scan runs automatically. A control counts as fixed only when that scan says so; nothing is retried automatically.
    - **Refresh status** (top of Fixes) redraws the page from the stored records and keeps the VM connection. A browser reload starts a new session and ends the connection, because the password lives only in that session.
    - **Run verification scan** appears when a change applied but has no re-scan yet, for example because the scan failed after Check status settled a job. It runs the read-only scan for exactly those changes and never re-runs a fix.
@@ -47,9 +47,8 @@ cd ~/ubuntu-helper && sudo bash install.sh && sudo bash install-runner.sh
 
 - `uninstall.sh` also removes the runner stage, and refuses while a change is in progress.
 - **Same code reinstalled:** earlier acceptance results still count.
-- **New code:** run both acceptance scenarios again (**Execution acceptance** on the Ubuntu page). The panel appears only while it is needed: after a reinstall of new code, or while a scenario is still open. Once both have passed for the deployed runner it is hidden.
-  - **Confirm scenario:** run it, Check status until it is waiting, disconnect, reconnect, Confirm (about 60 s window).
-  - **Rollback scenario:** run it, do not confirm, wait about 90 s, then Check status until it shows `rolled_back`.
+- **New code:** click **Run safety check** on the Ubuntu page (about two to three minutes). It runs the confirm test, confirms it over its own fresh login, then runs the rollback test and waits for the server to restore it. The panel is open while the tests are needed; once both have passed for the deployed runner it folds into **Safety check (execution acceptance): passed. Run it again**, which can be run any time (for example after reverting the server to an earlier state).
+  - **By hand:** **Run confirm scenario**, Check status until it is waiting, disconnect, connect again, Confirm (about 60 s window); **Run rollback scenario**, do not confirm, wait about 90 s, Check status until `rolled_back`.
 
 ## Maintenance (Fixes tab)
 
@@ -100,7 +99,7 @@ Reads the same settings a second way on the VM, then compares them with the late
 | "Execution acceptance pending: …" | Run the scenario(s) it names. |
 | "runner is not deployed or refused the probe" | **Servers > Set up this server**, then the command it shows (or `install-runner.sh` by hand). |
 | "This server is not set up yet: the FYP helper is not installed" | **Servers > Set up this server**, then the command it shows. |
-| "Confirmation needs a fresh login" | Disconnect and reconnect, then press Confirm. |
+| "Confirmation needs a fresh login" or "not confirmed automatically" | Disconnect and connect again, then press Confirm before the timer restores the change. |
 | "Another VM has a running or unresolved change" | Reconnect to that VM and settle its change first. |
 | "Target or workflow has an unresolved operation" | Use **Check status** on the pending change; it settles from the VM's own record and never re-runs anything. |
 
