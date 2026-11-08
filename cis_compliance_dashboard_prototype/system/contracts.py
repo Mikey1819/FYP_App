@@ -215,6 +215,8 @@ class ProposalRow:
     approved_request_id: str | None = None
     # Digest of the approved before-state: the backup a recovery request must name (Ubuntu).
     before_state_sha256: str | None = None
+    # Who approved it, as recorded in the approved request (shown like the Windows page).
+    approved_by: str | None = None
 
 
 @dataclass(frozen=True)

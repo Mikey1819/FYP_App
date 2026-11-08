@@ -155,13 +155,16 @@ def _render_cards(snapshot, control_actions):
                 control_actions(card)
 
 
-def render_snapshot_tabs(snapshot, *, tabs=None, fix_actions=None, fix_header=None, control_actions=None):
+def render_snapshot_tabs(snapshot, *, tabs=None, fix_actions=None, fix_header=None, control_actions=None,
+                         fixes_panel=None):
     """Common panels, also used while a verified backend requires setup. `fix_actions` renders the page's own
     decision/execution controls inside Fixes; with a plan (Ubuntu), `fix_header` renders above the per-control
     cards and `control_actions(card)` inside each card. The panels themselves never call a backend."""
     fixes, risk, controls, results, log = tabs or st.tabs(TABS)
     with fixes:
-        if getattr(snapshot, 'plan', ()):
+        if fixes_panel is not None:  # The page's own Fixes layout (Ubuntu: the same layout as the Windows page).
+            fixes_panel()
+        elif getattr(snapshot, 'plan', ()):
             if fix_header is not None:
                 fix_header()
             _render_cards(snapshot, control_actions)
@@ -179,7 +182,7 @@ def render_snapshot_tabs(snapshot, *, tabs=None, fix_actions=None, fix_header=No
                             + md_escape(row.decision or 'awaiting decision'))
                 st.text(row.exact_preview)
                 st.caption(md_escape(row.reason) + ' Recovery: ' + md_escape(row.recovery))
-        if fix_actions is not None:
+        if fix_actions is not None and fixes_panel is None:
             fix_actions()
     with risk:
         if snapshot.findings:

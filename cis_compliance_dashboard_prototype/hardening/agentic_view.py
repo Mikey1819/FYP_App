@@ -187,105 +187,6 @@ def _ubuntu_states(snapshot):
     return executed, applied, restoring
 
 
-def _ubuntu_fix_header(backend, connection, snapshot):
-    """Refresh and pending verification, then the operator name and comment the per-control cards use."""
-    error, notice = st.session_state.pop('ubuntu_verify_error', None), st.session_state.pop('ubuntu_verify_notice', None)
-    if error:
-        st.error(md_escape(error))
-    if notice:
-        st.success(md_escape(notice))
-    workflow = st.session_state.get(WORKFLOW_KEY)
-    unverified = backend.unverified_applied(connection, workflow) if workflow else ()
-
-    def verify():
-        try:
-            handle = backend.verify_applied(connection, workflow, snapshot.current_round_reference, uuid4().hex)
-            st.session_state['ubuntu_verify_notice'] = 'Verification scan: ' + handle.state.replace('_', ' ') + '.'
-        except (ValueError, OSError) as failure:
-            st.session_state['ubuntu_verify_error'] = str(failure)[:300]
-    with st.container(horizontal=True):
-        # A browser reload starts a new session and ends the connection (credentials live only in this session).
-        st.button('Refresh status', key='ubuntu_refresh', icon=':material/refresh:',
-                  help='Reload this page from the stored records; the VM connection stays open.')
-        if unverified:
-            st.button('Run verification scan', key='ubuntu_verify_applied', icon=':material/fact_check:', type='primary',
-                      on_click=verify, help='Read-only re-scan for applied changes that have none yet; never re-runs a fix.')
-    if unverified:
-        st.warning('%d applied change%s still need%s the verification scan, so the card%s cannot show the result yet.'
-                   % (len(unverified), '' if len(unverified) == 1 else 's', 's' if len(unverified) == 1 else '',
-                      '' if len(unverified) == 1 else 's'))
-    if any(p.eligible_commands for p in snapshot.proposals):
-        st.text_input('Your name (recorded with each decision)', key='agentic_operator')
-        st.text_input('Comment (optional)', key='agentic_comment')
-
-
-def _ubuntu_decision_buttons(backend, connection, workflow, p):
-    operator = st.session_state.get('agentic_operator') or ''
-    comment = st.session_state.get('agentic_comment') or ''
-    label = p.control_id or p.title
-    if 'approve' not in p.eligible_commands:  # e.g. it shares a file with an approved fix not executed yet
-        st.warning(md_escape(p.reason))
-    left, right = st.columns(2)
-    if left.button('Approve ' + label, key='ubuntu_approve_' + p.reference.record_id,
-                   disabled=not operator.strip() or 'approve' not in p.eligible_commands):
-        backend.decide(connection, workflow, p.reference, True, operator, comment, uuid4().hex)
-        st.rerun()
-    if right.button('Reject ' + label, key='ubuntu_reject_' + p.reference.record_id, disabled=not operator.strip()):
-        backend.decide(connection, workflow, p.reference, False, operator, comment, uuid4().hex)
-        st.rerun()
-
-
-def _ubuntu_card_actions(backend, connection, snapshot, capabilities, card):
-    """Inside one control's card: approve/reject its proposals, prepare and run an approved restore."""
-    workflow = st.session_state.get(WORKFLOW_KEY)
-    executed, applied, restoring = _ubuntu_states(snapshot)
-    for p in card['proposals']:
-        if p.eligible_commands:
-            _ubuntu_decision_buttons(backend, connection, workflow, p)
-    _ubuntu_restore_actions(backend, connection, card['proposals'], capabilities, workflow, applied, executed, restoring)
-
-
-def _ubuntu_fix_actions(backend, connection, snapshot, capabilities):
-    """Ubuntu decisions and execution through the backend's typed commands only. With a plan, per-control decisions
-    and restores sit inside each control's card; this renders the rest (execution, maintenance)."""
-    from system.ui.components import plan_cards
-    workflow = st.session_state.get(WORKFLOW_KEY)
-    carded = {p.reference for c in plan_cards(snapshot) for p in c['proposals']}
-    rest = [p for p in snapshot.proposals if p.reference not in carded]
-    undecided = [p for p in rest if p.eligible_commands]
-    # The CIS fix set only; approved restores run separately through dispatch_auxiliary.
-    approved = [p for p in snapshot.proposals if p.decision == 'approved' and p.approved_request_id
-                and p.kind == 'control_remediation']
-    executed, applied, restoring = _ubuntu_states(snapshot)
-    if undecided:
-        if not snapshot.plan:  # without cards the name and comment fields are rendered here
-            _ubuntu_fix_header(backend, connection, snapshot)
-        for p in undecided:
-            _ubuntu_decision_buttons(backend, connection, workflow, p)
-    if approved:
-        pending = [p for p in approved if p.reference not in executed]
-        ids = tuple(p.approved_request_id for p in approved)
-        st.caption('Approved set: ' + ', '.join(md_escape(p.control_id + ' (' + p.approved_request_id[:8] + ')')
-                                                for p in approved))
-        error = st.session_state.pop('ubuntu_execute_error', None)
-        if error:
-            st.error(md_escape(error))
-        confirmed = st.checkbox(f'I confirm executing exactly these {len(pending)} approved change(s) on the VM',
-                                key='ubuntu_confirm_execute', disabled=not pending)
-
-        def execute():
-            # Runs once per click, before the rerun; the confirmation is cleared so it never carries over.
-            st.session_state['ubuntu_confirm_execute'] = False
-            try:
-                backend.execute_approved(connection, workflow, snapshot.current_round_reference, ids, True, uuid4().hex)
-            except ValueError as failure:
-                st.session_state['ubuntu_execute_error'] = str(failure)[:300]
-        st.button('Execute approved fixes', key='ubuntu_execute', on_click=execute,
-                  disabled=not (capabilities.can_remediate and confirmed and pending))
-    _ubuntu_restore_actions(backend, connection, rest, capabilities, workflow, applied, executed, restoring)
-    _ubuntu_maintenance_actions(backend, connection, snapshot, capabilities, workflow, applied, executed)
-
-
 def _ubuntu_maintenance_actions(backend, connection, snapshot, capabilities, workflow, applied, executed):
     """Package-list refresh and a reboot completing applied changes: prepare, approve above, confirm, run once."""
     from system.contracts import AuxiliaryKind, MetadataRefreshInput, RebootInput
@@ -809,11 +710,11 @@ def render_agentic(database_path: Path):
                     if st.button('Assess without AI', key='agentic_assess_without_ai', disabled=not capabilities.can_assess):
                         # Read-only deterministic scan through the backend; the helper gate is checked again there.
                         _run_round(None, None, AssessmentMode.DETERMINISTIC)
-                render_snapshot_tabs(snapshot, fix_actions=lambda: _ubuntu_fix_actions(backend, connection, snapshot,
-                                                                                      capabilities),
-                                     fix_header=lambda: _ubuntu_fix_header(backend, connection, snapshot),
-                                     control_actions=lambda card: _ubuntu_card_actions(backend, connection, snapshot,
-                                                                                       capabilities, card))
+                    st.button('Refresh status', key='ubuntu_refresh', icon=':material/refresh:',
+                              help='Reload this page from the stored records; the server connection stays open.')
+                _ubuntu_execute_bar(backend, connection, snapshot, capabilities)
+                render_snapshot_tabs(snapshot, fixes_panel=lambda: _ubuntu_show_fixes(backend, connection, snapshot,
+                                                                                     capabilities))
                 return
         runtime, store, hardening = _services(database_path, target)
         session_id = st.session_state.get(SESSION)
@@ -867,3 +768,205 @@ def render_agentic(database_path: Path):
         st.error('Server channel (' + exc.state + '): ' + md_escape(exc.detail))
     except (ValueError, OSError, sqlite3.Error) as exc:
         st.error('Agentic workflow: ' + md_escape(exc))
+
+
+# ------------------------------------------------------------------ Ubuntu: the same Fixes layout as Windows
+# The Fixes tab and the execution confirmation follow the Windows page above (_show_fixes, _decision_cell,
+# _confirm_execution) element for element. What only Ubuntu has (verification scan, restore, maintenance) sits in its
+# own boxes. Every decision and execution still goes through the backend's typed commands.
+UBUNTU_DONE = {'Fixed, re-scan: Compliant': ('Verified compliant', 'green'), 'Running': ('Running', 'blue'),
+               'Applied, re-scan pending': ('Applied, re-scan pending', 'blue'), 'Not applied': ('Refused', 'gray'),
+               'Outcome unknown': ('Outcome uncertain', 'orange'), 'Restored to the before-state': ('Restored', 'gray')}
+UBUNTU_CONFIRM = 'ubuntu_confirm_execution'
+
+
+def _ubuntu_now_line(p):
+    """The Windows row's "Now X → Y" line: the preview's readable lines, then the action and its version."""
+    lines = [line.strip() for line in p.exact_preview.splitlines() if line.strip()]
+    return ' · '.join(lines[:3] + [p.action_id + ' ' + p.version])
+
+
+def _ubuntu_decide(backend, connection, p, approve, operator, comment):
+    try:
+        backend.decide(connection, st.session_state.get(WORKFLOW_KEY), p.reference, approve, operator, comment,
+                       uuid4().hex)
+    except ValueError as failure:
+        st.session_state['ubuntu_decision_error'] = (p.control_id or p.title) + ': ' + str(failure)[:300]
+
+
+def _ubuntu_decision_cell(backend, connection, card, p, operator, comment):
+    state = card['state']
+    if state in UBUNTU_DONE or state.startswith('Applied, re-scan: '):
+        label, color = UBUNTU_DONE.get(state, ('Failed', 'red'))
+        st.markdown(badge(label, color))
+        result = card['results'].get(p.reference.record_id)
+        if result is not None and label != 'Verified compliant':
+            st.caption(md_escape(result.detail))
+    elif p.decision == 'approved':
+        expired = p.expiry and datetime.fromisoformat(p.expiry) <= datetime.now(timezone.utc)
+        st.markdown(badge('Approval expired', 'orange') if expired else badge('Approved', 'blue'))
+        st.caption((f'by {md_escape(p.approved_by)}, ' if p.approved_by else '')
+                   + (f'valid until {myt(p.expiry)}' if p.expiry else ''))
+    elif p.decision == 'rejected':
+        st.markdown(badge('Rejected'))
+    elif not p.eligible_commands:
+        st.markdown(badge('No decision'))
+    else:
+        if 'approve' not in p.eligible_commands:  # It shares a file with an approved fix that has not run yet.
+            st.caption(md_escape(p.reason))
+        with st.container(horizontal=True):
+            ready = bool(operator.strip())
+            hint = None if ready else 'Enter your name above first'
+            if st.button('Approve', key='ubuntu_approve_' + p.reference.record_id, help=hint,
+                         disabled=not ready or 'approve' not in p.eligible_commands):
+                _ubuntu_decide(backend, connection, p, True, operator, comment)
+                st.session_state.pop('agentic_comment', None)
+                st.rerun()
+            if st.button('Reject', key='ubuntu_reject_' + p.reference.record_id, disabled=not ready, help=hint):
+                _ubuntu_decide(backend, connection, p, False, operator, comment)
+                st.session_state.pop('agentic_comment', None)
+                st.rerun()
+
+
+def _ubuntu_verification_box(backend, connection, snapshot):
+    """Ubuntu only: applied changes that still need their read-only verification scan."""
+    workflow = st.session_state.get(WORKFLOW_KEY)
+    unverified = backend.unverified_applied(connection, workflow) if workflow else ()
+    if not unverified:
+        return
+
+    def verify():
+        try:
+            handle = backend.verify_applied(connection, workflow, snapshot.current_round_reference, uuid4().hex)
+            st.session_state['ubuntu_verify_notice'] = 'Verification scan: ' + handle.state.replace('_', ' ') + '.'
+        except (ValueError, OSError) as failure:
+            st.session_state['ubuntu_verify_error'] = str(failure)[:300]
+    with st.container(border=True):
+        st.markdown('%d applied change%s still need%s the verification scan, so the result cannot show yet.'
+                    % (len(unverified), '' if len(unverified) == 1 else 's', 's' if len(unverified) == 1 else ''))
+        st.button('Run verification scan', key='ubuntu_verify_applied', icon=':material/fact_check:', type='primary',
+                  on_click=verify, help='Read-only re-scan for applied changes that have none yet; never re-runs a fix.')
+
+
+def _ubuntu_show_fixes(backend, connection, snapshot, capabilities):
+    from system.ui.components import NO_PLAN, plan_cards, plan_summary
+    for key, show in (('ubuntu_decision_error', st.error), ('ubuntu_verify_error', st.error),
+                      ('ubuntu_execute_error', st.error), ('ubuntu_verify_notice', st.success)):
+        message = st.session_state.pop(key, None)
+        if message:
+            show(md_escape(message))
+    _ubuntu_verification_box(backend, connection, snapshot)
+    workflow = st.session_state.get(WORKFLOW_KEY)
+    executed, applied, restoring = _ubuntu_states(snapshot)
+    cards = plan_cards(snapshot)
+    fixes = [c for c in cards if any(p.kind == 'control_remediation' for p in c['proposals'])]
+    if snapshot.plan:
+        st.caption('Orchestrator summary: ' + md_escape(plan_summary(snapshot)) + '.')
+    if not fixes:
+        st.info('The Orchestrator proposed no fixes in this round.')
+    undecided = [p for c in fixes for p in c['proposals'] if p.kind == 'control_remediation' and p.eligible_commands]
+    operator = comment = ''
+    if any(p.eligible_commands for p in snapshot.proposals):  # A fix, a restore or a maintenance step awaits you.
+        with st.container(horizontal=True, vertical_alignment='bottom'):
+            operator = st.text_input('Your name (recorded with each decision)', key='agentic_operator',
+                                     persist_state='session', width=320)
+            ready = bool(operator.strip())
+            approve_all = st.button('Approve all undecided', key='ubuntu_approve_all', disabled=not (ready and undecided))
+            reject_all = st.button('Reject all undecided', key='ubuntu_reject_all', disabled=not (ready and undecided))
+        comment = st.text_input('Comment (optional, recorded with your next decision)', key='agentic_comment',
+                                max_chars=500, placeholder='e.g. Approved for the Saturday maintenance window')
+        if approve_all or reject_all:
+            for p in undecided:
+                if approve_all and 'approve' not in p.eligible_commands:
+                    continue
+                _ubuntu_decide(backend, connection, p, approve_all, operator, comment)
+            st.session_state.pop('agentic_comment', None)
+            st.rerun()
+        st.caption('Each approval is bound to that exact request on this server and expires after one hour.')
+    findings = {f.control_id: f for f in snapshot.findings}
+    for number, card in enumerate(fixes, 1):
+        p = [q for q in card['proposals'] if q.kind == 'control_remediation'][-1]  # The latest plan for the control.
+        finding = findings.get(card['control_id'])
+        with st.container(border=True):
+            left, right = st.columns([3, 1.2], vertical_alignment='center')
+            left.markdown(f"**{number}. {md_escape(card['control_id'])} · {md_escape(p.title)}** "
+                          + (level_badge(finding.level) + f' risk {finding.score}' if finding else ''))
+            left.caption('Now: ' + md_escape(_ubuntu_now_line(p)) + ' · ' + md_escape(p.recovery))
+            left.caption('Why the Orchestrator chose it: ' + md_escape(card['reason'])
+                         + (' · Analysis flag: ' + md_escape(card['flag']) if card['flag'] else ''))
+            with right:
+                _ubuntu_decision_cell(backend, connection, card, p, operator, comment)
+            restores = [q for q in card['proposals'] if q.kind == 'recovery']
+            if p.reference in applied or restores:
+                with left:
+                    _ubuntu_restore_actions(backend, connection, card['proposals'], capabilities, workflow, applied,
+                                            executed, restoring)
+                    for q in restores:
+                        if q.eligible_commands:
+                            st.caption('Restore of ' + md_escape(card['control_id']) + ' awaits your decision:')
+                            _ubuntu_decision_cell(backend, connection, dict(card, state='Awaiting your decision'), q,
+                                                  operator, comment)
+    skipped = [c for c in cards if c not in fixes]
+    if skipped:
+        st.markdown('**Not proposed this round**')
+        st.dataframe([{'Control': c['control_id'], 'Reason': (
+            'Fix proposed, but the read-only check on the server refused it (a prerequisite is missing, for example '
+            'an SSH allow rule before the firewall is enabled)' if c['state'] == NO_PLAN
+            else c['decision'] + ': ' + c['reason'])} for c in skipped], hide_index=True)
+    with st.container(border=True):
+        st.markdown('**Maintenance**')
+        carded = {q.reference for c in cards for q in c['proposals']}
+        for q in snapshot.proposals:  # Package-list refresh and reboot proposals, which belong to no control.
+            if q.reference not in carded and q.eligible_commands:
+                st.caption(md_escape(q.title) + ' awaits your decision.')
+                _ubuntu_decision_cell(backend, connection, {'state': 'Awaiting your decision', 'results': {}}, q,
+                                      operator, comment)
+        _ubuntu_maintenance_actions(backend, connection, snapshot, capabilities, workflow, applied, executed)
+
+
+def _ubuntu_execute_bar(backend, connection, snapshot, capabilities):
+    """Above the tabs, as on Windows: Execute N approved fix(es)…, then a confirmation listing exactly those changes."""
+    executed = {r.proposal_reference for r in snapshot.results}
+    pending = [p for p in snapshot.proposals if p.kind == 'control_remediation' and p.decision == 'approved'
+               and p.approved_request_id and p.reference not in executed]
+    if not pending:
+        st.session_state.pop(UBUNTU_CONFIRM, None)
+        return
+    if st.session_state.get(UBUNTU_CONFIRM) != snapshot.current_round_reference.record_id:
+        if st.button(f'Execute {len(pending)} approved fix(es)…', type='primary', key='ubuntu_execute_review',
+                     icon=':material/play_arrow:', disabled=not capabilities.can_remediate,
+                     help=None if capabilities.can_remediate else 'Execution is not enabled on this server yet.'):
+            st.session_state[UBUNTU_CONFIRM] = snapshot.current_round_reference.record_id
+            # The backend takes the round's whole approved set (fixes already run are skipped, never repeated).
+            st.session_state['ubuntu_confirm_requests'] = tuple(
+                p.approved_request_id for p in snapshot.proposals
+                if p.kind == 'control_remediation' and p.decision == 'approved' and p.approved_request_id)
+            st.rerun()
+        return
+    findings = {f.control_id: f for f in snapshot.findings}
+    now = datetime.now(timezone.utc)
+    with st.container(border=True):
+        st.markdown(f'**Confirm: change {len(pending)} setting(s) on {md_escape(backend.session.identity.hostname)}**')
+        st.dataframe([{'Rank': findings[p.control_id].rank if p.control_id in findings else '—',
+                       'Control': p.control_id, 'Change': p.title, 'Current value': _ubuntu_now_line(p),
+                       'Approved by': p.approved_by or '—',
+                       'Approval valid until': myt(p.expiry) + (' (expired)' if datetime.fromisoformat(p.expiry) <= now
+                                                                else '') if p.expiry else '—'}
+                      for p in pending], hide_index=True)
+        st.caption('The server re-checks each value and refuses anything that changed since the plan. A fresh scan '
+                   'verifies the result. Expired approvals are refused. SSH and firewall changes must be confirmed '
+                   'after reconnecting, or the server undoes them by itself.')
+        with st.container(horizontal=True):
+            if st.button('Confirm and execute', type='primary', key='ubuntu_execute'):
+                st.session_state.pop(UBUNTU_CONFIRM, None)
+                ids = st.session_state.pop('ubuntu_confirm_requests', ())
+                with st.spinner('Executing the approved fixes, then verifying. This can take a few minutes.'):
+                    try:
+                        backend.execute_approved(connection, st.session_state.get(WORKFLOW_KEY),
+                                                 snapshot.current_round_reference, ids, True, uuid4().hex)
+                    except ValueError as failure:
+                        st.session_state['ubuntu_execute_error'] = str(failure)[:300]
+                st.rerun()
+            if st.button('Cancel', key='ubuntu_execute_cancel'):
+                st.session_state.pop(UBUNTU_CONFIRM, None)
+                st.rerun()

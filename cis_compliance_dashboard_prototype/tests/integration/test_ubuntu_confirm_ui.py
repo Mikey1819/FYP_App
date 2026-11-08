@@ -57,16 +57,16 @@ class ConfirmUiTests(FixUiTests):
             self.assertEqual(paired_connect(app, platform='ubuntu', hostname=LIVE[1], identity=LIVE[0]).state, 'connected')
             self.assertFalse(list(app.error), [e.value for e in app.error])
 
-        def keyed(prefix):
-            return [b for b in app.button if b.key and b.key.startswith(prefix)]
+        def keyed(prefix, exclude=None):
+            return [b for b in app.button if b.key and b.key.startswith(prefix) and b.key != exclude]
 
         with open_gate(), mock.patch('backends.ubuntu.adapter.execution_gate', return_value=()):
             app.run()
             connect()
             app.button(key='agentic_run').click().run()
             app.text_input(key='agentic_operator').input('fixture-operator').run()
-            keyed('ubuntu_approve_')[0].click().run()
-            app.checkbox(key='ubuntu_confirm_execute').check().run()
+            keyed('ubuntu_approve_', exclude='ubuntu_approve_all')[0].click().run()
+            app.button(key='ubuntu_execute_review').click().run()  # Windows-style: review, then confirm
             app.button(key='ubuntu_execute').click().run()
             self.assertFalse(list(app.error), [e.value for e in app.error])
             app.run()

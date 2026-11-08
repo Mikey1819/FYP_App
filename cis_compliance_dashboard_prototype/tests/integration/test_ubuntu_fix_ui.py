@@ -45,10 +45,13 @@ class FixUiTests(StoreFixture):
         return datetime.now(timezone.utc)
 
     @staticmethod
-    def card(app, control_id):
-        from hardening.ui import md_escape
-        [card] = [e for e in app.expander if e.label.startswith('**' + md_escape(control_id) + '**')]
-        return card
+    def text(app):
+        return ' '.join(e.value.replace(chr(92), '') for kind in (app.markdown, app.caption, app.info, app.warning)
+                        for e in kind)
+
+    @staticmethod
+    def approve_buttons(app):
+        return [b for b in app.button if b.key and b.key.startswith('ubuntu_approve_') and b.key != 'ubuntu_approve_all']
 
     def test_page_approves_then_confirms_and_executes_the_exact_set_once(self):
         from streamlit.testing.v1 import AppTest
@@ -90,42 +93,42 @@ class FixUiTests(StoreFixture):
             self.assertEqual([t for t in app.text_input if t.key == 'agentic_goal'], [])  # round goals are disabled
             app.button(key='agentic_run').click().run()
             self.assertFalse(list(app.error), [e.value for e in app.error])
-            approve = [b for b in app.button if b.key and b.key.startswith('ubuntu_approve_')]
+            approve = self.approve_buttons(app)
             self.assertEqual(len(approve), 1)
             # Refresh redraws from the stored records and keeps the connection (a browser reload would not).
             app.button(key='ubuntu_refresh').click().run()
             self.assertTrue([b for b in app.button if b.key == 'agentic_disconnect'])  # still connected
             self.assertEqual([b for b in app.button if b.key == 'ubuntu_verify_applied'], [])  # nothing applied yet
-            # One expandable card per Non-Compliant control; the decision buttons live inside the control's card.
-            card = self.card(app, '1.5.1')
-            self.assertIn('Awaiting your decision', card.label.replace(chr(92), ''))
-            self.assertEqual([b.key for b in card.button if b.key.startswith('ubuntu_approve_')], [approve[0].key])
-            self.assertEqual(list(app.dataframe)[:0], [])
+            # The Windows layout: one bordered row per proposed fix, numbered, with its decision on the right.
+            self.assertIn('1. 1.5.1 · TEST-ONLY fixture value', self.text(app))
+            self.assertIn('Why the Orchestrator chose it', self.text(app))
             self.assertTrue(approve[0].disabled)  # no operator name yet
+            self.assertTrue(app.button(key='ubuntu_approve_all').disabled)
             app.text_input(key='agentic_operator').input('fixture-operator').run()
-            [b for b in app.button if b.key.startswith('ubuntu_approve_')][0].click().run()
+            self.approve_buttons(app)[0].click().run()
             self.assertFalse(list(app.error), [e.value for e in app.error])
-            self.assertEqual([b for b in app.button if b.key and b.key.startswith('ubuntu_approve_')], [])
-            execute = app.button(key='ubuntu_execute')
-            self.assertTrue(execute.disabled)  # the real execution gate is closed
+            self.assertEqual(self.approve_buttons(app), [])
+            self.assertIn('by fixture-operator, valid until', self.text(app))  # As on Windows: who and until when.
+            review = app.button(key='ubuntu_execute_review')
+            self.assertTrue(review.disabled)  # the real execution gate is closed
             self.assertEqual(self.writes(), [])
             with mock.patch('backends.ubuntu.adapter.execution_gate', return_value=()):
                 app.run()
-                self.assertTrue(app.button(key='ubuntu_execute').disabled)  # confirmation still required
-                app.checkbox(key='ubuntu_confirm_execute').check().run()
+                self.assertEqual([b for b in app.button if b.key == 'ubuntu_execute'], [])  # confirmation first
+                app.button(key='ubuntu_execute_review').click().run()
+                self.assertIn('Confirm: change 1 setting(s) on', self.text(app))
+                self.assertEqual(self.writes(), [])
                 app.button(key='ubuntu_execute').click().run()
                 self.assertFalse(list(app.error), [e.value for e in app.error])
                 app.run()
                 self.assertEqual(self.writes(), ['alpha'])
                 self.assertEqual((self.work / 'alpha').read_bytes(), b'new')
-                self.assertIn('Applied, re-scan: Non-Compliant', self.card(app, '1.5.1').label.replace(chr(92), ''))  # fixture keeps ASLR 0
-                self.assertTrue([b for b in self.card(app, '1.5.1').button if b.key.startswith('ubuntu_prepare_restore_')])
+                self.assertIn(':red-badge[Failed]', self.text(app))  # fixture keeps ASLR 0, so the re-scan fails
                 # Restore: prepare -> approve -> confirm -> run, through the same page and gates.
                 [prepare] = [b for b in app.button if b.key and b.key.startswith('ubuntu_prepare_restore_')]
                 prepare.click().run()
                 self.assertFalse(list(app.error), [e.value for e in app.error])
-                app.text_input(key='agentic_operator').input('fixture-operator').run()  # a new decision names its operator
-                [approve] = [b for b in app.button if b.key and b.key.startswith('ubuntu_approve_')]
+                [approve] = self.approve_buttons(app)
                 approve.click().run()
                 self.assertFalse(list(app.error), [e.value for e in app.error])
                 [run] = [b for b in app.button if b.key and b.key.startswith('ubuntu_run_restore_')]
@@ -135,7 +138,7 @@ class FixUiTests(StoreFixture):
                 [b for b in app.button if b.key and b.key.startswith('ubuntu_run_restore_')][0].click().run()
                 self.assertFalse(list(app.error), [e.value for e in app.error])
                 app.run()
-                self.assertIn('Restored to the before-state', self.card(app, '1.5.1').label.replace(chr(92), ''))
+                self.assertIn(':gray-badge[Restored]', self.text(app))
         self.assertEqual((self.work / 'alpha').read_bytes(), b'old')
         self.assertEqual(len([c for c in channel.runner_calls if c.startswith(b'{"op":"execute"}')]), 2)
         for database in self.root.rglob('*.sqlite3'):

@@ -377,7 +377,8 @@ class UbuntuBackend(BoundBackend):
                 shared_file_message(p.payload['fields']['control_id'], blocked) if blocked else
                 'Deterministic plan from the registered family; the target preview supplied the before/after digests.',
                 (('reject',) if blocked else ('approve', 'reject')) if latest and p.decision is None else (),
-                approved['request_id'] if approved else None, approved['before_state_sha256'] if approved else None))
+                approved['request_id'] if approved else None, approved['before_state_sha256'] if approved else None,
+                approved.get('approver') if approved else None))
             if p.receipts:
                 last = p.receipts[-1]
                 applied = last['outcome'] in ('applied', 'reconciled_applied')

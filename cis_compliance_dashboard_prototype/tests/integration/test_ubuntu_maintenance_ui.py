@@ -56,8 +56,8 @@ class MaintenanceUiTests(FixUiTests):
         app.session_state['fixture_database'] = str(self.root / 'windows' / 'imports.sqlite3')
         app.session_state[SERVICE_KEY] = service
 
-        def keyed(prefix):
-            return [b for b in app.button if b.key and b.key.startswith(prefix)]
+        def keyed(prefix, exclude=None):
+            return [b for b in app.button if b.key and b.key.startswith(prefix) and b.key != exclude]
 
         with open_gate(), mock.patch('backends.ubuntu.adapter.execution_gate', return_value=()):
             app.run()
@@ -65,8 +65,8 @@ class MaintenanceUiTests(FixUiTests):
             app.button(key='agentic_run').click().run()
             self.assertTrue(app.button(key='ubuntu_prepare_reboot').disabled)  # nothing applied yet
             app.text_input(key='agentic_operator').input('fixture-operator').run()
-            keyed('ubuntu_approve_')[0].click().run()
-            app.checkbox(key='ubuntu_confirm_execute').check().run()
+            keyed('ubuntu_approve_', exclude='ubuntu_approve_all')[0].click().run()
+            app.button(key='ubuntu_execute_review').click().run()  # Windows-style: review, then confirm
             app.button(key='ubuntu_execute').click().run()
             app.run()
             self.assertEqual(self.writes(), ['alpha'])
@@ -74,7 +74,7 @@ class MaintenanceUiTests(FixUiTests):
             app.button(key='ubuntu_prepare_refresh').click().run()
             self.assertFalse(list(app.error), [e.value for e in app.error])
             app.text_input(key='agentic_operator').input('fixture-operator').run()
-            keyed('ubuntu_approve_')[0].click().run()
+            keyed('ubuntu_approve_', exclude='ubuntu_approve_all')[0].click().run()
             [run] = keyed('ubuntu_run_maintenance_')
             self.assertTrue(run.disabled)  # confirmation first
             [confirm] = [c for c in app.checkbox if c.key and c.key.startswith('ubuntu_confirm_maintenance_')]
@@ -87,7 +87,7 @@ class MaintenanceUiTests(FixUiTests):
             self.assertFalse(app.button(key='ubuntu_prepare_reboot').disabled)
             app.button(key='ubuntu_prepare_reboot').click().run()
             self.assertFalse(list(app.error), [e.value for e in app.error])
-            self.assertEqual(len(keyed('ubuntu_approve_')), 1)  # the reboot proposal waits for its own approval
+            self.assertEqual(len(keyed('ubuntu_approve_', exclude='ubuntu_approve_all')), 1)  # the reboot proposal waits for its own approval
         self.assertEqual(len([c for c in channel.runner_calls if c.startswith(b'{"op":"execute"}')]), 2)
         for database in self.root.rglob('*.sqlite3'):
             self.assertNotIn(b'FIXTURE-SECRET-SENTINEL', database.read_bytes())
