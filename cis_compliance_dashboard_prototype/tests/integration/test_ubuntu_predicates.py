@@ -10,7 +10,7 @@ class UbuntuPredicateTests(unittest.TestCase):
         self.assertEqual(len(cases()),30)
         for cid, facts in cases().items():
             with self.subTest(control=cid, state='pass'):
-                expected = Status.UNKNOWN if cid == '1.2.2.1' else Status.COMPLIANT
+                expected = Status.COMPLIANT  # catalogue v2: every fixture control decides (no Manual control)
                 self.assertEqual(evaluate(cid,facts).status,expected)
             with self.subTest(control=cid, state='fail'):
                 failed = deepcopy(facts)

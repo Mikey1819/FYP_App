@@ -19,7 +19,7 @@ SCAN = {
         {'name': 'root', 'maximum': 365, 'minimum': 0, 'warning': 7, 'inactive': -1, 'password_bearing': True},
         {'name': 'daemon', 'maximum': 99999, 'minimum': 0, 'warning': 7, 'inactive': -1, 'password_bearing': False}])},
     '6.3.3.4': {'loaded_audit_rules': ok([{'key': 'time-change'}] * 3), 'persistent_audit_rules': ok([{'key': 'time-change'}] * 3)},
-    '1.2.2.1': {'pending_updates': ok(10), 'held_packages': ok(0), 'reboot_required': ok(False)},
+    '2.4.1.2': {'crontab.mode': ok(0o600), 'crontab.uid': ok(0), 'crontab.gid': ok(0)},
 }
 SECOND = {'schema': 'fyp-ubuntu-crosscheck-v1', 'collected_at': '2026-11-07T11:10:00+00:00', 'hostname': HOST,
           'machine_id': MACHINE, 'root': True, 'errors': {}, 'values': {
@@ -32,7 +32,7 @@ SECOND = {'schema': 'fyp-ubuntu-crosscheck-v1', 'collected_at': '2026-11-07T11:1
               'login_defs': {'maximum': 365},
               'accounts': {'root': {'maximum': 365, 'minimum': 0, 'warning': 7, 'inactive': -1}},
               'audit': {'loaded': {'time-change': 3}, 'persistent_generated': {'time-change': 3}},
-              'updates': {'pending_updates': 10, 'held_packages': 0, 'reboot_required': False}}}
+              'crontab': {'mode': 0o600, 'uid': 0, 'gid': 0}}}
 
 
 def second(**changes):

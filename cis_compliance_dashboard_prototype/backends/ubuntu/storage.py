@@ -291,8 +291,11 @@ class UbuntuStore:
             if not any(_snapshot(parse_bundle(raw, expected, now=imported, **_rules(rules)).assessments) == row['snapshot']
                        for rules in candidates):
                 raise ValueError('Stored assessment differs from current predicate evaluation; reassessment required')
-        return StoredEvidence(raw, digest, expected, bundle.started_at, bundle.completed_at,
-                              row['imported_at'], bundle.assessments)
+        # Verified above against the selection it was stored under; shown under the current one (a retired control
+        # such as 1.2.2.1 in a catalogue v1 scan is not shown).
+        from .catalogue import EXPECTED_IDS
+        shown = tuple(a for a in bundle.assessments if a.control_id in EXPECTED_IDS)
+        return StoredEvidence(raw, digest, expected, bundle.started_at, bundle.completed_at, row['imported_at'], shown)
 
     # ---- framework runs (file 1) ------------------------------------------------------------
     def start_run(self, raw, expected, binding, *, now=None):

@@ -58,7 +58,7 @@ def scanner_ok():
     return [call('scan_target'), call('read_coverage'), call('handoff_analysis', reason='Coverage read.')]
 
 
-def analysis_ok(gaps=('1.2.2.1',)):
+def analysis_ok(gaps=('2.4.1.2',)):
     return [call('read_ranking'), call('inspect_finding', control_id='1.5.1'),
             call('submit_analysis', flags=[{'control_id': '1.5.1', 'flag_code': 'highest_risk'}],
                  gap_triage=[{'control_id': g, 'triage_code': 'manual_review'} for g in gaps])]
@@ -76,7 +76,9 @@ class AgentRoundTests(unittest.TestCase):
         def collect():
             if fail:
                 raise ValueError('helper refused')
-            changes = {}
+            # A standing Unknown gap for the Analysis agent to triage: 2.4.1.2 without its cron package observation
+            # (until 2026-11-08 the Manual 1.2.2.1 played this role).
+            changes = {'2.4.1.2': ('package.cron', {'state': 'missing', 'value': None})}
             if errors:
                 changes['1.5.4'] = ('package.prelink', {'state': 'error', 'value': None})
             if inject:
@@ -124,7 +126,7 @@ class AgentRoundTests(unittest.TestCase):
                        [call('read_ranking'),
                         call('submit_analysis', flags=[{'control_id': '1.5.1', 'flag_code': 'highest_risk', 'score': 100}],
                              gap_triage=[]),
-                        call('submit_analysis', flags=[], gap_triage=[{'control_id': '1.2.2.1', 'triage_code': 'manual_review'}])])
+                        call('submit_analysis', flags=[], gap_triage=[{'control_id': '2.4.1.2', 'triage_code': 'manual_review'}])])
         result = self.run_round(clients)
         kinds = [e['kind'] for e in self.events(result['orchestrator_run_id'])]
         self.assertGreaterEqual(kinds.count('tool_rejected'), 2)
@@ -159,7 +161,7 @@ class AgentRoundTests(unittest.TestCase):
         clients = team([call('delegate_scanner'), call('delegate_analysis'),
                         plan_call([{'control_id': '1.5.1', 'decision': 'defer', 'reason_code': 'no_registered_action'}])],
                        scanner_ok(), [call('read_ranking'), call('inspect_finding', control_id='5.2.3'),
-                                      call('submit_analysis', flags=[], gap_triage=[{'control_id': '1.2.2.1', 'triage_code': 'manual_review'}])])
+                                      call('submit_analysis', flags=[], gap_triage=[{'control_id': '2.4.1.2', 'triage_code': 'manual_review'}])])
         result = self.run_round(clients, collect=self.collect_with(failing=('1.5.1',), inject=True))
         self.assertIsNotNone(result['plan'])
         for client in clients.values():
@@ -167,9 +169,9 @@ class AgentRoundTests(unittest.TestCase):
 
     def test_investigation_flag_and_rescan_limits(self):
         analysis = [call('read_ranking'), call('inspect_finding', control_id='1.5.1'), call('inspect_finding', control_id='5.1.20'),
-                    call('inspect_finding', control_id='1.2.2.1'),
+                    call('inspect_finding', control_id='2.4.1.2'),
                     call('submit_analysis', flags=[{'control_id': c, 'flag_code': 'highest_risk'} for c in ('1.5.1', '5.1.20', '4.1.3', '3.3.1')],
-                         gap_triage=[{'control_id': g, 'triage_code': 'manual_review'} for g in ('1.2.2.1', '1.5.4')])]
+                         gap_triage=[{'control_id': g, 'triage_code': 'manual_review'} for g in ('2.4.1.2', '1.5.4')])]
         scanner = [call('scan_target'), call('read_coverage'), call('rescan', reason='Error on 1.5.4'),
                    call('rescan', reason='again'), call('handoff_analysis', reason='ok')]
         clients = team([call('delegate_scanner'), call('delegate_analysis')], scanner, analysis)

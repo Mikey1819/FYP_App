@@ -24,7 +24,7 @@ SYSCTL = ('kernel.randomize_va_space', 'fs.suid_dumpable', 'net.ipv4.ip_forward'
           'net.ipv4.conf.all.send_redirects', 'net.ipv4.conf.default.send_redirects',
           'net.ipv4.conf.all.accept_source_route', 'net.ipv4.conf.default.accept_source_route',
           'net.ipv6.conf.all.accept_source_route', 'net.ipv6.conf.default.accept_source_route')
-PACKAGES = ('apparmor', 'apparmor-utils', 'prelink', 'avahi-daemon', 'ufw', 'auditd', 'audispd-plugins')
+PACKAGES = ('apparmor', 'apparmor-utils', 'prelink', 'avahi-daemon', 'ufw', 'auditd', 'audispd-plugins', 'cron')
 UNITS = ('avahi-daemon.service', 'avahi-daemon.socket', 'ufw.service', 'auditd.service')
 SSH = ('clientaliveinterval', 'clientalivecountmax', 'hostbasedauthentication', 'maxauthtries',
        'permitemptypasswords', 'permitrootlogin', 'permituserenvironment')
@@ -197,13 +197,14 @@ def boot():
             'boot_entries_with_audit_1': None if entries is None else sum('audit=1' in e for e in entries)}
 
 
-def updates():
-    """`apt list --upgradable`, holds from dpkg selections (the collector uses apt-get -s and apt-mark)."""
-    code, listing = run('apt', 'list', '--upgradable', timeout=120)
-    _, selections = run('dpkg', '--get-selections')
-    return {'pending_updates': None if code != 0 else sum('[upgradable from' in l for l in listing.splitlines()),
-            'held_packages': sum(1 for l in selections.splitlines() if l.split()[-1:] == ['hold']),
-            'reboot_required': Path('/var/run/reboot-required').exists()}
+def crontab():
+    """/etc/crontab mode and ownership with Python's os.stat, following links like `stat -L` (the collector runs the
+    stat command). CIS 2.4.1.2 replaced 1.2.2.1 on 2026-11-08."""
+    try:
+        info = os.stat('/etc/crontab')
+    except OSError:
+        return None
+    return {'mode': info.st_mode & 0o7777, 'uid': info.st_uid, 'gid': info.st_gid}
 
 
 def sudoers():
@@ -232,7 +233,7 @@ def pam_minlen():
 def main():
     readers = {'runtime_sysctl': runtime_sysctl, 'persistent_sysctl': persistent_sysctl, 'packages': packages,
                'units': units, 'ufw': ufw, 'ssh': ssh, 'login_defs': login_defs, 'accounts': accounts,
-               'audit': audit, 'boot': boot, 'updates': updates, 'sudoers': sudoers, 'pam_minlen': pam_minlen}
+               'audit': audit, 'boot': boot, 'crontab': crontab, 'sudoers': sudoers, 'pam_minlen': pam_minlen}
     values, errors = {}, {}
     for name, reader in readers.items():
         try:

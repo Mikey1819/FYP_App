@@ -32,8 +32,7 @@ COMMANDS = {
     'sudoers_syntax':('/usr/sbin/visudo','-c'),
     'ufw_status':('/usr/sbin/ufw','status','verbose'),
     'audit_rules':('/usr/sbin/auditctl','-l'),
-    'apt_upgrade_sim':('/usr/bin/apt-get','-s','-q','-o','Debug::NoLocking=1','upgrade'),
-    'apt_holds':('/usr/bin/apt-mark','showhold'),
+    'crontab_stat':('/usr/bin/stat','-Lc','%a %u %g','/etc/crontab'),
     'audit_status':('/usr/sbin/auditctl','-s'),
     'architecture':('/usr/bin/uname','-m'),
     'openscap_version':('/usr/bin/oscap','--version'),
@@ -222,15 +221,6 @@ class FixedProbeIO:
         paths = sorted(directory.glob(pattern),key=lambda p:p.name)
         if len(paths) > 256: raise ValueError('Too many configuration fragments')
         return tuple((p.name,self._read(p)) for p in paths)
-
-    def apt_metadata_age(self):
-        """Seconds since the newest apt Release/InRelease list was fetched (stat only; nothing is read)."""
-        self._ready()
-        folder = Path('/var/lib/apt/lists')
-        stamps = [p.stat().st_mtime for p in sorted(folder.glob('*Release'))[:2000] if p.is_file() and not p.is_symlink()]
-        if not stamps:
-            raise ValueError('No apt release lists')
-        return max(0, int(time.time() - max(stamps)))
 
     def privileged_paths(self):
         self._ready()

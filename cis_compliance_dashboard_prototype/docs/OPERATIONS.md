@@ -28,7 +28,7 @@ Hot reload is deliberately off (`.streamlit/config.toml`). Restart the app after
    - **Run verification scan** appears when a change applied but has no re-scan yet, for example because the scan failed after Check status settled a job. It runs the read-only scan for exactly those changes and never re-runs a fix.
    - **Fixes that change the same file cannot be approved together.** While one fix of a group is approved and not executed, the others' Approve button is disabled and the card says why. The groups are: the kernel-settings file (1.5.1, 1.5.3, 3.3.1, 3.3.2, 3.3.8), the sudoers drop-in (5.2.2, 5.2.3), `/etc/shadow` (5.4.1.x), the UFW files (4.1.x) and the SSH drop-in (5.1.x). Execute the approved one, then start a new round for the next.
    - **2.1.2** keeps avahi-daemon installed and stops and masks its socket and service (site decision, recorded per machine in `system/config.py`).
-   - **1.2.2.1** is not proposed: installing updates is deferred until the family uses a separately approved metadata refresh and exact package versions.
+   - **2.4.1.2** (`/etc/crontab` root:root, `chmod og-rwx`) replaced 1.2.2.1 in the selection on 2026-11-08. Scans from before then (catalogue v1) still open; their retired 1.2.2.1 row is not shown.
 
 ## Helper and runner updates
 

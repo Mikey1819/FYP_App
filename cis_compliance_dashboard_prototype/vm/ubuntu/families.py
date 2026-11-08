@@ -9,7 +9,7 @@ from .family_auth import LinuxAuthIO, PasswordMinlenFamily, SudoLogfileFamily, S
 from .family_service import AvahiMaskFamily, LinuxServiceIO, MASK_SPECS, ServiceFamily, SPECS as SERVICE_SPECS
 from .family_audit import AuditRulesFamily, FILES as AUDIT_FILES, LinuxAuditIO
 from .family_grub import GrubAuditFamily, LinuxGrubIO
-from .family_patch import LinuxPatchIO, PatchFamily
+from .family_cron import CrontabPermissionFamily, LinuxCronIO
 from .family_acceptance import AcceptanceMarkerFamily, LinuxAcceptanceIO
 from .family_maintenance import AptRefreshFamily, LinuxMaintenanceIO, RebootFamily
 from .family_package import LinuxPackageIO, PackageFamily, SPECS as PACKAGE_SPECS
@@ -19,7 +19,7 @@ from .family_core import CoreDumpFamily, LinuxCoreDumpIO
 from .family_sysctl import LinuxSysctlSystem, REQUIRED, SysctlFamily
 
 
-class LinuxTargetSystem(LinuxMaintenanceIO, LinuxAcceptanceIO, LinuxPatchIO, LinuxGrubIO, LinuxAuditIO, LinuxServiceIO, LinuxUfwIO, LinuxSshIO, LinuxPackageIO, LinuxAgingIO, LinuxAuthIO, LinuxCoreDumpIO, LinuxSysctlSystem):
+class LinuxTargetSystem(LinuxMaintenanceIO, LinuxAcceptanceIO, LinuxCronIO, LinuxGrubIO, LinuxAuditIO, LinuxServiceIO, LinuxUfwIO, LinuxSshIO, LinuxPackageIO, LinuxAgingIO, LinuxAuthIO, LinuxCoreDumpIO, LinuxSysctlSystem):
     """Fixed, bounded target I/O shared by the implemented families (unvalidated on the VM)."""
 
 
@@ -36,7 +36,7 @@ def build(system):
     fixed += [PackageFamily(control_id, system) for control_id in sorted(PACKAGE_SPECS)]
     fixed += [SshFamily(control_id, system) for control_id in sorted(SSH_SETTINGS)]
     for family in fixed + [UfwDefaultDenyFamily(system), UfwLoopbackFamily(system), UfwEnableFamily(system),
-                           PatchFamily(system), AcceptanceMarkerFamily(system), AptRefreshFamily(system),
+                           CrontabPermissionFamily(system), AcceptanceMarkerFamily(system), AptRefreshFamily(system),
                            RebootFamily(system)]:
         families[family.action_id] = family
     return families

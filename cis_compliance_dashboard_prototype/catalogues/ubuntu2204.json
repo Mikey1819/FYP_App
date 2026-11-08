@@ -3,29 +3,33 @@
   "catalogue_version": "ubuntu2204-cis2.0.0-project-v1-draft",
   "controls": [
     {
-      "control_id": "1.2.2.1",
+      "control_id": "2.4.1.2",
       "platform": "ubuntu",
-      "title": "Ensure updates, patches, and additional security software are installed",
+      "title": "Ensure permissions on /etc/crontab are configured",
       "area": "System and software security",
       "server_level": 1,
-      "cis_assessment_type": "Manual",
+      "cis_assessment_type": "Automated",
       "source_pages": [
-        131
+        324
       ],
       "benchmark_sha256": "37b8d91eadb5621656ff38d24c39ac34b9589087a3f3a9fbba2c8a2dd665b6da",
-      "predicate_id": "ubuntu.1.2.2.1.predicate.v1",
+      "predicate_id": "ubuntu.2.4.1.2.predicate.v1",
       "predicate_version": 1,
-      "assessment_contract": "Determine available upgrades from authenticated configured repositories and fresh package metadata; record held packages, pending updates and reboot indication. A stale cache cannot prove a pass. Human review remains required for site applicability.",
-      "remediation_contract": "**U-1.2.2.1:** two explicit stages: approved metadata refresh, then exact package-version upgrade plan after simulation. Pin package/version/dependency list and its digest; changed solver output needs new approval. Show restart/reboot impacts. Verify package database, fresh upgrade simulation and required human review. Never run an unbounded automatic full distribution upgrade.",
-      "scap_rule_ids": [],
+      "assessment_contract": "If cron is installed, /etc/crontab (stat -L) is owned by uid 0 and gid 0 and grants no group or other permissions (CIS example 600). Cron absent is outside applicability, never a pass.",
+      "remediation_contract": "**U-2.4.1.2:** `chown root:root` and `chmod og-rwx` on /etc/crontab only; no recursive change; a symlinked or non-regular file is refused. Preview the exact before/after mode and ownership. Recover the exact prior mode and ownership.",
+      "scap_rule_ids": [
+        "xccdf_org.ssgproject.content_rule_file_groupowner_crontab",
+        "xccdf_org.ssgproject.content_rule_file_owner_crontab",
+        "xccdf_org.ssgproject.content_rule_file_permissions_crontab"
+      ],
       "scap_variable_values": {},
       "direct_probe_ids": [
-        "ubuntu.1.2.2.1.effective.v1"
+        "ubuntu.2.4.1.2.effective.v1"
       ],
-      "direct_probe_reason": "Upstream marks this Manual without rules. Read-only metadata/accounted update evidence plus bound human review is required; refresh is a separate approved action.",
+      "direct_probe_reason": "Upstream rules check owner, group and mode separately; the direct probe reads all three with stat -L and the cron package state, so cron absence is not mistaken for compliance.",
       "authoritative_source_policy": "PDF v2.0.0 compound predicate; reviewed effective-state probes override narrower SCAP examples. Conflict remains visible.",
       "action_ids": [
-        "ubuntu.1.2.2.1.v1"
+        "ubuntu.2.4.1.2.v1"
       ],
       "review_status": "approved",
       "coverage": {

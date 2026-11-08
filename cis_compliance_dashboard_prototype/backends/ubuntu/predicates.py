@@ -114,7 +114,15 @@ def evaluate(control_id, observations, *, reviewed_avahi_retention=False, ssh_ef
             f.test('package.'+package, lambda value: value == ('absent' if control_id == '1.5.4' else 'installed'))
     elif control_id in SYSCTL:
         _sysctl(f, SYSCTL[control_id])
-    elif control_id == '1.2.2.1':
+    elif control_id == '2.4.1.2':
+        cron = f.read('package.cron')
+        if cron == 'absent':
+            f.checks.append(Check('cron', 'inapplicable', 'cron is not installed; CIS applies this only with cron'))
+        elif cron is not None:
+            f.test('crontab.uid', lambda value: value == 0)
+            f.test('crontab.gid', lambda value: value == 0)
+            f.test('crontab.mode', lambda value: value & 0o077 == 0)  # no group or other permission
+    elif control_id == '1.2.2.1':  # retired 2026-11-08; evaluated only to verify stored catalogue v1 scans
         fresh = f.read('metadata_fresh')
         updates = f.read('pending_updates')
         f.read('held_packages')

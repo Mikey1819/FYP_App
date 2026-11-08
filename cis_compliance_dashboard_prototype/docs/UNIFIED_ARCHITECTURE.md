@@ -30,7 +30,7 @@ Every page action goes through `WorkspaceBackend` (`system/contracts.py`). Each 
 | `request_auxiliary` / `dispatch_auxiliary` | Restore, package-list refresh, reboot: proposed, approved and run like fixes, never counted as CIS fixes |
 | `operation_state`, `reconcile_operation`, `cancel_operation` | Long or interrupted operations, settled from the target's own record |
 | `history`, `compare` | Per-platform history and drift, with qualified record references |
-| `record_manual_review` | Bound human review for Manual controls (1.2.2.1) |
+| `record_manual_review` | Bound human review for Manual controls (none in catalogue v2; 1.2.2.1 was retired 2026-11-08) |
 
 ## Ubuntu round, end to end
 

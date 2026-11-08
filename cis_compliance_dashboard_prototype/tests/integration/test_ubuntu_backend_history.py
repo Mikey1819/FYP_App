@@ -49,7 +49,7 @@ class UbuntuBackendHistoryTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         row = rows[0]
         self.assertEqual(row.run_reference, RecordRef('ubuntu', 'ubuntu:fixture', run.run_id))
-        self.assertEqual((row.counts.selected, row.counts.compliant, row.counts.unknown), (30, 29, 1))
+        self.assertEqual((row.counts.selected, row.counts.compliant, row.counts.unknown), (30, 30, 0))  # v2: no Manual control
         self.assertEqual(row.evidence_mode, 'Synthetic fixture')
         self.assertNotIn('Live', row.target.evidence_mode)
         snap = backend.snapshot('c', 'workflow')
@@ -58,9 +58,9 @@ class UbuntuBackendHistoryTests(unittest.TestCase):
         self.assertEqual(snap.summary.selected, 30)
         self.assertEqual(snap.target.evidence_mode, 'Synthetic fixture')
         self.assertEqual(snap.findings, ())  # risk derivation (task 8) is not implemented
-        manual = next(c for c in snap.controls if c.control_id == '1.2.2.1')
-        self.assertEqual(manual.status.value, 'Unknown')
-        self.assertTrue(manual.subchecks)
+        crontab = next(c for c in snap.controls if c.control_id == '2.4.1.2')  # replaced 1.2.2.1 (catalogue v2)
+        self.assertEqual(crontab.status.value, 'Compliant')
+        self.assertTrue(crontab.subchecks)
         from unittest import mock
         with mock.patch('backends.ubuntu.adapter.assessment_gate', return_value=('Ubuntu assessment is not enabled (test-closed gate).',)):
             self.assertFalse(backend.capabilities('c').can_assess)

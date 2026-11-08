@@ -107,6 +107,12 @@ class RebootFamily:
 class LinuxMaintenanceIO:
     """Mixin: apt sources digest, boot ID, stamps in the runner state directory, and one fixed reboot timer."""
 
+    def apt_update(self):
+        """`apt-get update` through LinuxPackageIO's fixed-environment runner (moved here from the retired 1.2.2.1
+        patch family on 2026-11-08; the approved package-list refresh is its only user)."""
+        if self._exec(list(self._APT) + ['update'], 600)[0] != 0:
+            raise OSError('apt-get update failed')
+
     def apt_sources_digest(self):
         digest = hashlib.sha256(b'apt-sources-v1\0')
         paths = [Path('/etc/apt/sources.list')] if Path('/etc/apt/sources.list').exists() else []

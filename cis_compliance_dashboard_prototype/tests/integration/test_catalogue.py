@@ -14,7 +14,7 @@ class CatalogueTests(unittest.TestCase):
         catalogue = load_catalogue(ROOT / 'catalogues/ubuntu2204.json', ROOT / 'catalogues/source-lock.json')
         self.assertEqual(len(catalogue.controls), 30)
         self.assertEqual(sum(c.server_level == 2 for c in catalogue.controls), 6)
-        self.assertEqual(sum(c.cis_assessment_type == 'Manual' for c in catalogue.controls), 1)
+        self.assertEqual(sum(c.cis_assessment_type == 'Manual' for c in catalogue.controls), 0)  # v2: 1.2.2.1 retired
         apparmor = next(c for c in catalogue.controls if c.control_id == '1.3.1.1')
         self.assertEqual(len(apparmor.scap_rule_ids), 2)
         # Superseded "not activated": user approval and the observed OpenSCAP 1.2.17 evaluation are recorded.

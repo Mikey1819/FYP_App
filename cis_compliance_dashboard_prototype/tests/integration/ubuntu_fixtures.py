@@ -12,9 +12,11 @@ def rule(path='', syscalls=(), arch='', permissions='wa', *, uid_min=-1, exclude
                 auid_min=uid_min, exclude_unset=exclude, unrestricted=True)
 
 
-def cases():
+def cases(*, legacy=False):
+    """Compliant facts for the current selection (catalogue v2); legacy=True gives catalogue v1, which held the
+    retired 1.2.2.1 instead of 2.4.1.2 (stored scans before 2026-11-08)."""
     values = {
-        '1.2.2.1': dict(metadata_fresh=True,pending_updates=0,held_packages=0,reboot_required=False),
+        '2.4.1.2': {'package.cron':'installed','crontab.mode':0o600,'crontab.uid':0,'crontab.gid':0},
         '1.3.1.1': {'package.apparmor':'installed','package.apparmor-utils':'installed'},
         '1.5.4': {'package.prelink':'absent'},
         '2.1.2': {'package.avahi-daemon':'absent'},
@@ -61,11 +63,14 @@ def cases():
             '5.1.16':{'maxauthtries':4},'5.1.7':{'clientaliveinterval':15,'clientalivecountmax':3},
             '5.1.10':{'hostbasedauthentication':'no'},'5.1.21':{'permituserenvironment':'no'}}.items():
         values[cid] = {'ssh_context_resolution':'complete','ssh_contexts':[dict(context_id='global',**options),dict(context_id='management',**options)]}
+    if legacy:
+        del values['2.4.1.2']
+        values['1.2.2.1'] = dict(metadata_fresh=True,pending_updates=0,held_packages=0,reboot_required=False)
     return {cid:{key:observation(value) for key,value in facts.items()} for cid,facts in values.items()}
 
 
 FAILURES = {
-    '1.2.2.1': ('pending_updates',1), '1.3.1.1': ('package.apparmor-utils','absent'),
+    '2.4.1.2': ('crontab.mode',0o644), '1.3.1.1': ('package.apparmor-utils','absent'),
     '1.5.1': ('persistent.kernel.randomize_va_space',0), '1.5.3': ('coredump_process_size_max',1),
     '1.5.4': ('package.prelink','installed'), '2.1.2': ('package.avahi-daemon','installed'),
     '5.3.3.2.2': ('effective_minlen',{'common-password':13}), '5.4.1.1': ('default.maximum',366),

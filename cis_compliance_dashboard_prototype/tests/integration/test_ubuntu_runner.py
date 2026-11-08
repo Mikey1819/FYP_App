@@ -90,7 +90,7 @@ class ApprovalTests(Fixture):
                        'ubuntu.5.1.19.v1', 'ubuntu.5.1.20.v1', 'ubuntu.5.1.21.v1', 'ubuntu.4.1.7.v1',
                        'ubuntu.5.2.2.v1', 'ubuntu.6.3.1.2.v1', 'ubuntu.6.3.3.4.v1', 'ubuntu.6.3.3.6.v1',
                        'ubuntu.6.3.3.8.v1', 'ubuntu.6.3.1.3.v1', 'ubuntu.4.1.3.v1', 'ubuntu.4.1.4.v1',
-                       'ubuntu.1.2.2.1.v1'}
+                       'ubuntu.2.4.1.2.v1'}
         self.assertEqual(set(FAMILIES), implemented)
         auxiliary = {'acceptance.marker.v1', 'maintenance.apt_refresh.v1', 'maintenance.reboot.v1'}
         self.assertEqual(set(build(FakeSystem())), implemented | auxiliary)  # auxiliaries are not CIS families

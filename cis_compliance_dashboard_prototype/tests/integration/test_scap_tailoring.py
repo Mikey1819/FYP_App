@@ -28,7 +28,7 @@ class TailoringTests(unittest.TestCase):
         self.assertEqual(len(rules), 623)
         self.assertEqual(set(selects), set(rules))
         self.assertEqual({r for r, v in selects.items() if v == 'true'}, set(SELECTED))
-        self.assertEqual(len(selects) - len(SELECTED), 623 - 53)
+        self.assertEqual(len(selects) - len(SELECTED), 623 - 56)  # catalogue v2: 53 + the three 2.4.1.2 rules
         self.assertNotIn(b'remediat', raw.lower())
 
     def test_scan_argv_uses_the_tailoring_file_and_no_rule_options(self):

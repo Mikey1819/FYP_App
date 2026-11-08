@@ -124,11 +124,11 @@ def compare(scan, second, machine_id, hostname):
             None if boot is None else boot.get('current_audit_argument'), '/proc/cmdline')
         add('6.3.1.3', 'boot entries with audit=1', None if entries is None else sum('audit=1' in e for e in entries),
             None if boot is None else boot.get('boot_entries_with_audit_1'), 'linux lines of /boot/grub/grub.cfg')
-    updates = values.get('updates')
-    for fact, method in (('pending_updates', 'apt list --upgradable'), ('held_packages', 'dpkg --get-selections'),
-                         ('reboot_required', '/var/run/reboot-required')):
-        if fact in scan.get('1.2.2.1', {}):
-            add('1.2.2.1', fact, _value(scan['1.2.2.1'][fact]), None if updates is None else updates.get(fact), method)
+    cron = values.get('crontab')
+    for fact, key in (('crontab.mode', 'mode'), ('crontab.uid', 'uid'), ('crontab.gid', 'gid')):
+        if fact in scan.get('2.4.1.2', {}):
+            add('2.4.1.2', fact, _value(scan['2.4.1.2'][fact]), None if cron is None else cron.get(key),
+                "Python os.stat (the collector runs `stat -Lc`)")
     sudo = values.get('sudoers')
     if '5.2.2' in scan:
         pty = _value(scan['5.2.2'].get('sudoers_use_pty'))

@@ -5,15 +5,16 @@ import unittest
 from tests.integration.ubuntu_fixtures import cases
 
 
-def envelope():
+def envelope(catalogue='ubuntu2204-cis2-selected30-v2'):
+    observations = cases(legacy=catalogue.endswith('-v1'))
     return dict(namespace='ubuntu-cis',schema_version=1,collector='ubuntu2204-readonly-v1',
-        catalogue='ubuntu2204-cis2-selected30-v1',target_id='ubuntu:fixture',registration_epoch='epoch',
+        catalogue=catalogue,target_id='ubuntu:fixture',registration_epoch='epoch',
         hostname='UBUNTU-FIXTURE',machine_id='a'*32,request_id='fixture-request',
         benchmark_sha256='b'*64,source_lock_sha256='c'*64,collector_sha256='d'*64,
         started_at='2026-11-06T00:00:00+00:00',completed_at='2026-11-06T00:00:01+00:00',
-        evidence_mode='Synthetic fixture',observations=cases(),artifacts=[],
+        evidence_mode='Synthetic fixture',observations=observations,artifacts=[],
         probes={cid:dict(probe_id='ubuntu.'+cid+'.effective.v1',version=1,source='fixed-target-helper',
-            started_at='2026-11-06T00:00:00+00:00',completed_at='2026-11-06T00:00:01+00:00',exit_state='ok') for cid in cases()},
+            started_at='2026-11-06T00:00:00+00:00',completed_at='2026-11-06T00:00:01+00:00',exit_state='ok') for cid in observations},
         transformation='allowlisted-normalized-facts-v1')
 
 
@@ -29,8 +30,7 @@ class UbuntuEvidenceTests(unittest.TestCase):
         bundle = self.parse(envelope())
         self.assertEqual(bundle.raw_sha256,hashlib.sha256(bundle.raw).hexdigest())
         self.assertEqual(len(bundle.assessments),30)
-        self.assertEqual(sum(r.status.value == 'Compliant' for r in bundle.assessments),29)
-        self.assertEqual(sum(r.status.value == 'Unknown' for r in bundle.assessments),1)
+        self.assertEqual(sum(r.status.value == 'Compliant' for r in bundle.assessments),30)  # v2: no Manual control
 
     def test_wrong_binding_source_request_time_mode_and_unknown_fields_rejected(self):
         for key,value in [('target_id','ubuntu:other'),('registration_epoch','other'),('machine_id','e'*32),

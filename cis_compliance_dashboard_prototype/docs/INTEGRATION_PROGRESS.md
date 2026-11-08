@@ -1189,3 +1189,23 @@ The execution gate was a hard-coded "closed". It now opens only on evidence.
 ## 8 November 2026 — Fixes cards ordered by risk (administrator request)
 - `plan_cards` now sorts the cards by deterministic risk score, highest first. Ties keep the risk ranking; controls without a score (risk withheld or not ranked) follow in plan order. Each card title shows "risk N (level)", and the Fixes caption says the order.
 - **Tests:** 2 new tests in `test_ubuntu_fix_cards`, written first. Full suite **652 tests, all passed**. Host-only change.
+
+## 8 November 2026 — selection v2: CIS 2.4.1.2 replaces 1.2.2.1; 2.1.2 validated live
+- **Administrator decision:** replace 1.2.2.1 with a control from the same "System and software security" area. Candidates were 2.4.1.2 (crontab permissions), 1.5.5 (apport) and 1.5.2 (ptrace, likely already compliant); **2.4.1.2 chosen**. CIS v2.0.0 p.324: if cron is installed, /etc/crontab is uid 0 / gid 0 with no group or other permissions (`stat -Lc`); remediation `chown root:root`, `chmod og-rwx`; default 644.
+- **Catalogue v2** (`selected30-v2`):
+  - The 1.2.2.1 entry is replaced in place, built as the generator builds one, with the three pinned rules `file_groupowner/owner/permissions_crontab`. The input catalogue row 1 is amended, and the generator's gap note follows. Approved under the administrator's instruction; the source lock is unchanged.
+  - Validators now expect 30 Automated. `CATALOGUE_IDS` maps v1 and v2 to their 30 IDs.
+- **Risk:** 2.4.1.2 = misuse_easier / privilege_escalation_path / local_account, L 4, so 63/67/71. `UBUNTU_RISK_DERIVATION.md` regenerated.
+- **Collector (helper):** v2 IDs; the cron package plus `stat -Lc '%a %u %g' /etc/crontab`. The 1.2.2.1 apt facts and commands are removed.
+- **SCAP:** 56 selected rules; the tailoring was regenerated (hash `3983c9c8a8f3`).
+- **Predicate:** uid 0, gid 0 and mode & 077 == 0. Cron absent is inapplicable (Unknown, never a pass).
+- **Fix family `ubuntu.2.4.1.2.v1`** (`vm/ubuntu/family_cron.py`, direct): `fchown 0:0` then `fchmod mode & ~077` through an `O_NOFOLLOW` descriptor. A symlinked or non-regular file is refused. Restore is the exact recorded mode and ownership; recovery scope `/etc/crontab`. Host spec proposes from the evidence.
+- **Retired:** the 1.2.2.1 patch family (`family_patch.py`), its host spec and its tests. `apt_update` moved to the maintenance IO (the package-list refresh keeps working). The legacy 1.2.2.1 predicate and schema stay only to verify stored v1 scans.
+- **Stored scans:** all 72 still verify against the selection they were stored under, and the latest (v1) shows 29 rows. New requests carry catalogue version v2.
+- **Tools:** the value cross-check script reads `/etc/crontab` with `os.stat` instead of the update counts; the comparator compares mode, uid and gid.
+  - The OpenSCAP cross-check skips retired rows and labels the reviewed avahi retention (2.1.2: only the package-removal rule fails).
+  - The register and cross-check now apply the machine's 2.1.2 retention review, as the app does.
+- **2.1.2 live:** after the helper reinstall, applied at 17:57:07 UTC (mask-first), both units `masked / inactive` and OpenSCAP's service rule passed. The app read **Compliant**; the register had shown Unknown only because it evaluated without the retention review (fixed).
+- **Register:** **20 validated live**, 10 not run live (2.4.1.2 among them).
+- **Tests:** `test_ubuntu_crontab_control` (16, written first; the symlink case is skipped on Windows). Tests that used 1.2.2.1 as an example now use 2.4.1.2 or a legacy v1 fixture (`cases(legacy=True)`, `envelope(catalogue=...)`). Full suite **662 tests, all passed**; baseline: no protected changes.
+- **Helper change:** collector digest is now **`1a86b00ebb04`**; `dist/ubuntu-helper` has been rebuilt. Reinstall plus both acceptance scenarios are needed.

@@ -67,7 +67,8 @@ class ReconciliationTests(unittest.TestCase):
         with self.assertRaises(ValueError):evaluate('1.5.1', facts)
         facts = with_scap('1.5.1'); facts['scap_rules']['value'] = {}
         with self.assertRaises(ValueError):evaluate('1.5.1', facts)
-        with self.assertRaises(ValueError):evaluate('1.2.2.1', dict(cases()['1.2.2.1'], scap_rules=observation({})))
+        # Retired 1.2.2.1 (read only from stored v1 scans) has no rules, so any SCAP result for it is refused.
+        with self.assertRaises(ValueError):evaluate('1.2.2.1', dict(cases(legacy=True)['1.2.2.1'], scap_rules=observation({})))
 
     def test_not_applicable_is_neutral_and_cannot_pass_alone(self):
         self.assertEqual(status('6.3.1.3', with_scap('6.3.1.3', {'zipl_audit_argument': 'notapplicable'})), 'Compliant')
@@ -96,7 +97,7 @@ class LiveEnvelopeTests(unittest.TestCase):
         for cid in SCAP_RULES:
             doc['observations'][cid] = with_scap(cid, base=doc['observations'][cid])
         bundle = self.parse(doc)
-        self.assertEqual(sum(a.status.value == 'Compliant' for a in bundle.assessments), 29)
+        self.assertEqual(sum(a.status.value == 'Compliant' for a in bundle.assessments), 30)  # v2: no Manual control
 
 
 class TargetSanitizerTests(unittest.TestCase):
@@ -162,7 +163,6 @@ class CollectionScapTests(unittest.TestCase):
         self.assertEqual(calls, [('a'*32, '1.3.7')])
         for cid, rules in SCAP_RULES.items():
             self.assertEqual(set(facts[cid]['scap_rules']['value']), set(rules))
-        self.assertNotIn('scap_rules', facts['1.2.2.1'])
 
     def test_failed_scan_is_explicit_error_and_no_request_means_no_scan(self):
         from vm.ubuntu.collection import collect_observations

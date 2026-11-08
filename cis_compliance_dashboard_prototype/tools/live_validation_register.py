@@ -72,6 +72,7 @@ def _copy(path, folder):
 
 def collect_records():
     """Decisions, receipts and per-request verification statuses from temporary copies of the stores."""
+    from backends.ubuntu.envelope import _avahi_retention
     from backends.ubuntu.predicates import evaluate
     folder = tempfile.mkdtemp()
     try:
@@ -94,11 +95,15 @@ def collect_records():
             row = imports.execute('SELECT raw FROM imported_assessments WHERE digest=?', (data['evidence_sha256'],)).fetchone()
             if row is None:
                 continue
-            observations = json.loads(row[0])['observations']
+            doc = json.loads(row[0])
+            observations = doc['observations']
             for request in data['details'].get('request_ids', []):
                 cid = controls_of.get(request)
                 if cid in observations:
-                    verifications[request] = evaluate(cid, observations[cid]).status.value
+                    # As the app evaluates: with the machine's registered 2.1.2 retention review (live 17:57: the
+                    # masked units read Compliant in the app but Unknown here without it).
+                    verifications[request] = evaluate(cid, observations[cid],
+                                                      reviewed_avahi_retention=_avahi_retention(doc)).status.value
         agentic.close(); imports.close()
         return decisions, receipts, verifications
     finally:

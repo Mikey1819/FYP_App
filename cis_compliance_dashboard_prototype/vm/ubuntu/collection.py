@@ -10,7 +10,8 @@ from .evidence_schema import validate_observations
 from .scap_results import result_path
 from .spec import SCAP_RULES
 
-IDS = tuple('1.2.2.1 1.3.1.1 1.5.1 1.5.3 1.5.4 2.1.2 5.3.3.2.2 5.4.1.1 5.4.1.3 5.4.1.5 5.2.2 5.2.3 3.3.1 3.3.2 3.3.8 4.1.3 4.1.4 4.1.7 6.3.1.1 6.3.1.2 6.3.1.3 6.3.3.4 6.3.3.8 6.3.3.6 5.1.20 5.1.19 5.1.16 5.1.7 5.1.10 5.1.21'.split())
+# Catalogue v2 (2026-11-08): 2.4.1.2 replaces 1.2.2.1.
+IDS = tuple('2.4.1.2 1.3.1.1 1.5.1 1.5.3 1.5.4 2.1.2 5.3.3.2.2 5.4.1.1 5.4.1.3 5.4.1.5 5.2.2 5.2.3 3.3.1 3.3.2 3.3.8 4.1.3 4.1.4 4.1.7 6.3.1.1 6.3.1.2 6.3.1.3 6.3.3.4 6.3.3.8 6.3.3.6 5.1.20 5.1.19 5.1.16 5.1.7 5.1.10 5.1.21'.split())
 SYSCTLS = {'1.5.1':('kernel.randomize_va_space',),'1.5.3':('fs.suid_dumpable',),
     '3.3.1':('net.ipv4.ip_forward','net.ipv6.conf.all.forwarding'),
     '3.3.2':('net.ipv4.conf.all.send_redirects','net.ipv4.conf.default.send_redirects'),
@@ -65,7 +66,7 @@ def collect_observations(io, *, registered_firewall_manager=None, scap_request=N
     try:package_map = packages()
     except (OSError,ValueError,TimeoutError):pass
     for cid,names in {'1.3.1.1':('apparmor','apparmor-utils'),'1.5.4':('prelink',),
-            '2.1.2':('avahi-daemon',),'4.1.3':('ufw',),'6.3.1.1':('auditd','audispd-plugins')}.items():
+            '2.1.2':('avahi-daemon',),'4.1.3':('ufw',),'6.3.1.1':('auditd','audispd-plugins'),'2.4.1.2':('cron',)}.items():
         for name in names:result[cid]['package.'+name] = _ok(package_map.get(name,'absent')) if package_map is not None else _error()
     def unit(name,field):
         values=dict(line.split('=',1) for line in command('unit.'+name).splitlines() if '=' in line)
@@ -249,17 +250,13 @@ def collect_observations(io, *, registered_firewall_manager=None, scap_request=N
     if hasattr(io,'privileged_paths'):
         set_fact('6.3.3.6','privileged_paths',lambda:list(io.privileged_paths()))
     result['6.3.3.6']['privileged_inventory']=_ok('complete' if result['6.3.3.6'].get('privileged_paths',{}).get('state')=='ok' else 'incomplete')
-    # 1.2.2.1 is Manual: these read-only facts can confirm a failure (pending updates) but never a pass.
-    result['1.2.2.1'] = {key:_missing() for key in ('metadata_fresh','pending_updates','held_packages','reboot_required')}
-    set_fact('1.2.2.1','pending_updates',lambda:sum(1 for line in command('apt_upgrade_sim').splitlines() if line.startswith('Inst ')))
-    set_fact('1.2.2.1','held_packages',lambda:sum(1 for line in command('apt_holds').splitlines() if line.strip()))
-    def reboot_required():
-        try:return bool(io.read_file('/run/reboot-required'))
-        except FileNotFoundError:return False
-    set_fact('1.2.2.1','reboot_required',reboot_required)
-    if hasattr(io,'apt_metadata_age'):
-        # Site threshold (CIS sets none): package lists refreshed within the last 7 days.
-        set_fact('1.2.2.1','metadata_fresh',lambda:io.apt_metadata_age() <= 7*86400)
+    # 2.4.1.2: `stat -Lc '%a %u %g' /etc/crontab`, as the CIS audit (mode octal, owner uid, group gid).
+    def crontab(index):
+        fields = command('crontab_stat').split()
+        if len(fields) != 3 or not all(f.isdigit() for f in fields):raise ValueError('Unexpected stat output')
+        return int(fields[0],8) if index == 0 else int(fields[index])
+    for index,name in enumerate(('crontab.mode','crontab.uid','crontab.gid')):
+        set_fact('2.4.1.2',name,lambda i=index:crontab(i))
     if scap_request is not None:
         # One selected-rule evaluation for all controls; any engine failure is explicit per control.
         try:scap=io.scap_results(*scap_request)

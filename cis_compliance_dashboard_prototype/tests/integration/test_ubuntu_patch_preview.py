@@ -1,10 +1,6 @@
-"""1.2.2.1 preview diagnosis (administrator, 2026-11-08: diagnose the refusal first; defer installing updates).
-Live 05:08-07:19: the read-only preview was refused every round. The apt simulation parser required each Inst line to
-end at its closing bracket; `apt-get -s upgrade` often appends a related-package list ("... [amd64]) [python3.10:amd64 ]"
-or "... [amd64]) []"), which raised "Unrecognised apt simulation line". The parser now accepts that optional list.
-Installing updates stays deferred: the current family runs apt-get update inside the job and a full upgrade without
-exact package versions, while the plan requires a separately approved metadata refresh and exact package/version
-approval. No VM."""
+"""The apt simulation parser (shared by the package families). Found while diagnosing the 1.2.2.1 preview refusals
+(live 2026-11-07): `apt-get -s` often appends a related-package list ("... [amd64]) [python3.10:amd64 ]" or "... []"),
+which raised "Unrecognised apt simulation line". 1.2.2.1 was replaced by 2.4.1.2 on 2026-11-08; the fix stays. No VM."""
 import json
 import unittest
 
@@ -27,19 +23,6 @@ class SimulationParserTests(unittest.TestCase):
         for line in (TRAILING + ' extra', PLAIN + ' trailing words', 'Inst ../evil [1] (2 x)'):
             with self.subTest(line=line), self.assertRaises(ValueError):
                 parse_simulation(line)
-
-
-class PatchDeferredTests(unittest.TestCase):
-    def test_the_update_job_is_not_proposed_while_deferred(self):
-        from backends.ubuntu.actions import FAMILIES
-        from tests.integration.test_ubuntu_risk import evidence
-        from tests.integration.ubuntu_fixtures import cases, observation, FAILURES
-        ev = evidence(['1.2.2.1'])
-        obs = cases()
-        key, value = FAILURES['1.2.2.1']
-        obs['1.2.2.1'][key] = observation(value)
-        ev.raw = json.dumps({'observations': obs}).encode()
-        self.assertIsNone(FAMILIES['ubuntu.1.2.2.1.v1'].propose('1.2.2.1', ev))
 
 
 if __name__ == '__main__':

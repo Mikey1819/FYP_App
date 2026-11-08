@@ -54,9 +54,9 @@ class RiskPolicyTests(unittest.TestCase):
         from backends.ubuntu.risk import load_policy, derive
         policy = load_policy()
         values = {cid: derive(policy, cid).likelihood for cid in policy.controls}
-        self.assertEqual(values['1.2.2.1'], 3)  # L1 Manual
+        self.assertEqual(values['2.4.1.2'], 4)  # L1 Automated (catalogue v2 has no Manual control)
         self.assertTrue(all(values[c] == 3 for c in values if c.startswith('6.3.')))  # L2 Automated
-        self.assertEqual(sorted(values.values()).count(4), 23)
+        self.assertEqual(sorted(values.values()).count(4), 24)  # the 24 L1 Automated controls (v2)
         from hardening.risk import LIKELIHOOD
         self.assertEqual(LIKELIHOOD, {(1, True): 4, (1, False): 3, (2, True): 3, (2, False): 2})
 
@@ -82,7 +82,7 @@ class RiskPolicyTests(unittest.TestCase):
         bad = [
             broken(lambda d: d['controls']['1.5.1'].update(consequence='invented')),
             broken(lambda d: d['controls']['1.5.1'].update(level=2)),
-            broken(lambda d: d['controls']['1.2.2.1'].update(assessment='Automated')),
+            broken(lambda d: d['controls']['2.4.1.2'].update(assessment='Manual')),
             broken(lambda d: d['controls'].pop('1.5.1')),
             broken(lambda d: d['controls'].update({'9.9.9': d['controls']['1.5.1']})),
             broken(lambda d: d['extensions']['surface'].update(network_logon={'score': 5, 'reason': 'x'})),
@@ -123,8 +123,7 @@ class RankTests(unittest.TestCase):
         self.assertEqual([r.rank for r in rows], [1, 2, 3])
         self.assertEqual(rows, tuple(sorted(rows, key=lambda r: (-r.score, r.control_id))))
         statuses = {a.control_id: a.status.value for a in current.assessments}
-        self.assertEqual(statuses['1.2.2.1'], 'Unknown')
-        self.assertNotIn('1.2.2.1', {r.control_id for r in rows})
+        self.assertTrue(all(statuses[r.control_id] == 'Non-Compliant' for r in rows))  # only confirmed failures
 
     def test_drift_1_3_5_and_persistent_failure_with_changed_value_is_3(self):
         current = item('now', 'r3', evidence(['1.5.1', '5.1.20'], time='2026-11-06T02:00:00+00:00'))

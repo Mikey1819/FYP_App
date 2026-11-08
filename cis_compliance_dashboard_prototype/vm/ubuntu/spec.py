@@ -21,7 +21,7 @@ SCAP_DATASTREAM_SHA256 = 'c8be1aa2bf93284507b8810ea829f8904ab4552865f07d106561d5
 SCAP_RULE_PREFIX = 'xccdf_org.ssgproject.content_rule_'
 # OpenSCAP 1.2.17 honours one --rule only: scope comes from a pinned tailored profile extending SCAP_PROFILE.
 SCAP_TAILORED_PROFILE = 'xccdf_org.fyphardening_profile_cis_level2_server_selected30'
-SCAP_TAILORING_SHA256 = '56d77459b9184b60726e68163e297d57785916aaa46e632cd763c4efe0ef800a'
+SCAP_TAILORING_SHA256 = '3983c9c8a8f3eee03375edd9efa4e972f76757d6d664ac0258ad6bc843a02ca5'
 
 SCAP_RULES = {
     '1.3.1.1': tuple(SCAP_RULE_PREFIX + r for r in ('package_apparmor_installed', 'package_apparmor-utils_installed',)),
@@ -29,6 +29,8 @@ SCAP_RULES = {
     '1.5.3': tuple(SCAP_RULE_PREFIX + r for r in ('disable_users_coredumps', 'sysctl_fs_suid_dumpable',)),
     '1.5.4': tuple(SCAP_RULE_PREFIX + r for r in ('package_prelink_removed',)),
     '2.1.2': tuple(SCAP_RULE_PREFIX + r for r in ('package_avahi_removed', 'service_avahi-daemon_disabled',)),
+    '2.4.1.2': tuple(SCAP_RULE_PREFIX + r for r in ('file_groupowner_crontab', 'file_owner_crontab',
+                                                    'file_permissions_crontab',)),
     '5.3.3.2.2': tuple(SCAP_RULE_PREFIX + r for r in ('accounts_password_pam_minlen',)),
     '5.4.1.1': tuple(SCAP_RULE_PREFIX + r for r in ('accounts_maximum_age_login_defs', 'accounts_password_set_max_life_existing',)),
     '5.4.1.3': tuple(SCAP_RULE_PREFIX + r for r in ('accounts_password_warn_age_login_defs',)),

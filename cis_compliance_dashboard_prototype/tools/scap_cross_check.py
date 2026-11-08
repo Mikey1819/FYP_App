@@ -23,6 +23,7 @@ APP = Path(__file__).resolve().parents[1]
 DETERMINATE = ('Compliant', 'Non-Compliant')
 SSH_EXPECTED = 'Expected disagreement (SSH explicit line)'
 CIS_WORDING = 'Expected disagreement (CIS wording)'
+RETENTION = 'Expected disagreement (reviewed avahi retention)'
 
 
 def scap_verdict(results):
@@ -37,10 +38,10 @@ def scap_verdict(results):
     return 'Unresolved'
 
 
-def compare(cid, observations):
+def compare(cid, observations, *, reviewed_avahi_retention=False):
     from backends.ubuntu.predicates import SSH, evaluate
     direct_obs = {k: v for k, v in observations.items() if k != 'scap_rules'}
-    direct = evaluate(cid, direct_obs).status.value
+    direct = evaluate(cid, direct_obs, reviewed_avahi_retention=reviewed_avahi_retention).status.value
     scap_obs = observations.get('scap_rules')
     scap = scap_verdict(scap_obs['value']) if scap_obs and scap_obs.get('state') == 'ok' else 'No SCAP result'
     if direct not in DETERMINATE or scap not in DETERMINATE:
@@ -51,6 +52,9 @@ def compare(cid, observations):
         verdict = SSH_EXPECTED
     elif direct == 'Compliant' and scap == 'Non-Compliant' and _only_reviewed_failures(cid, scap_obs['value']):
         verdict = CIS_WORDING
+    elif (cid == '2.1.2' and reviewed_avahi_retention and direct == 'Compliant'
+          and [r for r, v in scap_obs['value'].items() if v == 'fail'] == ['xccdf_org.ssgproject.content_rule_package_avahi_removed']):
+        verdict = RETENTION  # administrator decision 2026-11-08: package kept, units masked (CIS pp. 222-223)
     else:
         verdict = 'Disagree'
     return {'control_id': cid, 'direct': direct, 'scap': scap, 'verdict': verdict}
@@ -72,7 +76,8 @@ def live_scans():
         with sqlite3.connect(copy) as db:
             rows = db.execute("SELECT collected_at, raw FROM imported_assessments WHERE evidence_mode='Live (SSH)' "
                               'ORDER BY collected_at').fetchall()
-        return [(at, json.loads(raw)['observations']) for at, raw in rows]
+        from backends.ubuntu.envelope import _avahi_retention
+        return [(at, json.loads(raw)['observations'], _avahi_retention(json.loads(raw))) for at, raw in rows]
     finally:
         shutil.rmtree(folder, ignore_errors=True)
 
@@ -82,12 +87,15 @@ def order(cid):
 
 
 def markdown(scans):
-    latest_at, latest = scans[-1]
-    rows = [compare(cid, latest[cid]) for cid in sorted(latest, key=order)]
+    latest_at, latest, retention = scans[-1]
+    from backends.ubuntu.catalogue import EXPECTED_IDS
+    rows = [compare(cid, latest[cid], reviewed_avahi_retention=retention) for cid in sorted(latest, key=order)
+            if cid in EXPECTED_IDS]
     history = Counter()
-    for _, observations in scans:
+    for _, observations, reviewed in scans:
         for cid in observations:
-            history[(cid, compare(cid, observations[cid])['verdict'])] += 1
+            if cid in EXPECTED_IDS:  # retired controls (1.2.2.1 in catalogue v1 scans) are not cross-checked
+                history[(cid, compare(cid, observations[cid], reviewed_avahi_retention=reviewed)['verdict'])] += 1
     totals = Counter(r['verdict'] for r in rows)
     disagreements = sorted({cid for (cid, verdict) in history if verdict == 'Disagree'}, key=order)
     lines = ['# Ubuntu independent cross-check against OpenSCAP', '',
@@ -102,11 +110,12 @@ def markdown(scans):
                                         '**Disagree**' if r['verdict'] == 'Disagree' else r['verdict']) for r in rows]
     lines += ['', '## All %d stored live scans' % len(scans), '',
               'Controls that disagreed in any scan: ' + (', '.join(disagreements) or 'none'), '',
-              '| Control | ' + ' | '.join(['Agree', SSH_EXPECTED, CIS_WORDING, 'Disagree', 'Not comparable']) + ' |',
-              '| --- | --- | --- | --- | --- | --- |']
+              '| Control | ' + ' | '.join(['Agree', SSH_EXPECTED, CIS_WORDING, RETENTION, 'Disagree', 'Not comparable']) + ' |',
+              '| --- | --- | --- | --- | --- | --- | --- |']
     for cid in sorted({c for c, _ in history}, key=order):
         lines.append('| %s | %s |' % (cid, ' | '.join(str(history[(cid, v)]) for v in
-                                                      ('Agree', SSH_EXPECTED, CIS_WORDING, 'Disagree', 'Not comparable'))))
+                                                      ('Agree', SSH_EXPECTED, CIS_WORDING, RETENTION, 'Disagree',
+                                                       'Not comparable'))))
     return '\n'.join(lines) + '\n'
 
 

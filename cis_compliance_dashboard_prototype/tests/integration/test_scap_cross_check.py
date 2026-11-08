@@ -62,7 +62,17 @@ class CompareTests(unittest.TestCase):
     def test_not_applicable_or_unresolved_sides_are_not_comparable(self):
         self.assertEqual(self.compare('3.3.2', facts('3.3.2', scap=rules('3.3.2', 'notapplicable')))['verdict'],
                          'Not comparable')
-        self.assertEqual(self.compare('1.2.2.1', facts('1.2.2.1'))['verdict'], 'Not comparable')  # Manual: no SCAP
+        self.assertEqual(self.compare('3.3.2', facts('3.3.2'))['verdict'], 'Not comparable')  # no SCAP result recorded
+
+    def test_the_reviewed_avahi_retention_is_labelled_only_when_the_removal_rule_alone_fails(self):
+        from tools.scap_cross_check import compare
+        masked = {'package.avahi-daemon': observation('installed'),
+                  **{'%s.%s' % (u, f): observation(v) for u in ('avahi-daemon.service', 'avahi-daemon.socket')
+                     for f, v in (('active', 'inactive'), ('enabled', 'masked'))}}
+        masked['scap_rules'] = observation({RULE + 'package_avahi_removed': 'fail', RULE + 'service_avahi-daemon_disabled': 'pass'})
+        self.assertEqual(compare('2.1.2', masked, reviewed_avahi_retention=True)['verdict'],
+                         'Expected disagreement (reviewed avahi retention)')
+        self.assertEqual(compare('2.1.2', masked)['verdict'], 'Not comparable')  # unreviewed retention stays Unknown
 
 
 if __name__ == '__main__':

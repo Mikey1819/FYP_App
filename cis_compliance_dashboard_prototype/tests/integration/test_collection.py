@@ -9,7 +9,7 @@ class FakeIO:
     def command(self,key):
         self.calls.append(key)
         if key == 'packages':
-            return SimpleNamespace(returncode=0,stdout='apparmor\tinstalled\napparmor-utils\tinstalled\nauditd\tinstalled\naudispd-plugins\tinstalled\nufw\tinstalled\n')
+            return SimpleNamespace(returncode=0,stdout='apparmor\tinstalled\napparmor-utils\tinstalled\nauditd\tinstalled\naudispd-plugins\tinstalled\nufw\tinstalled\ncron\tinstalled\n')
         if key.startswith('sysctl.'):
             return SimpleNamespace(returncode=0,stdout='2\n' if key.endswith('randomize_va_space') else '0\n')
         if key == 'sysctl_config':
@@ -20,6 +20,7 @@ class FakeIO:
                 return SimpleNamespace(returncode=0,stdout='ActiveState=inactive\nUnitFileState=disabled\n')
             return SimpleNamespace(returncode=0,stdout='ActiveState=active\nUnitFileState=enabled\n')
         if key == 'account_defaults':return SimpleNamespace(returncode=0,stdout='INACTIVE=45\n')
+        if key == 'crontab_stat':return SimpleNamespace(returncode=0,stdout='600 0 0\n')
         if key == 'sudoers_syntax':return SimpleNamespace(returncode=0,stdout='parsed OK')
         if key == 'ssh_global':
             return SimpleNamespace(returncode=0,stdout='permitrootlogin no\npermitemptypasswords no\nmaxauthtries 4\nclientaliveinterval 15\nclientalivecountmax 3\nhostbasedauthentication no\npermituserenvironment no\n')

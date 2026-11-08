@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import re
-from .catalogue import EXPECTED_IDS
+from .catalogue import CATALOGUE_IDS
 from .evidence import validate_observations
 from .predicates import evaluate, Assessment
 from vm.ubuntu.spec import SCAP_RULES
@@ -71,7 +71,7 @@ def parse_bundle(raw, expected, *, now=None, ssh_effective_authority=True, cis_a
         if type(doc) is not dict or set(doc) != FIELDS:
             raise ValueError('Unexpected evidence envelope fields')
         if (doc['namespace'] != 'ubuntu-cis' or type(doc['schema_version']) is not int or doc['schema_version'] != 1
-                or doc['collector'] != 'ubuntu2204-readonly-v1' or doc['catalogue'] != 'ubuntu2204-cis2-selected30-v1'
+                or doc['collector'] != 'ubuntu2204-readonly-v1' or doc['catalogue'] not in CATALOGUE_IDS
                 or doc['transformation'] != 'allowlisted-normalized-facts-v1'):
             raise ValueError('Unsupported evidence contract')
         for field in ExpectedEvidence.__dataclass_fields__:
@@ -88,9 +88,10 @@ def parse_bundle(raw, expected, *, now=None, ssh_effective_authority=True, cis_a
             raise ValueError('Impossible evidence times')
         if started < now - timedelta(minutes=10):
             raise ValueError('Evidence is too old for a new scan response')
-        if type(doc['observations']) is not dict or set(doc['observations']) != EXPECTED_IDS:
+        selected = CATALOGUE_IDS[doc['catalogue']]  # v1: stored scans before 2026-11-08; v2: current
+        if type(doc['observations']) is not dict or set(doc['observations']) != selected:
             raise ValueError('Evidence must account for every selected control')
-        if type(doc['probes']) is not dict or set(doc['probes']) != EXPECTED_IDS:
+        if type(doc['probes']) is not dict or set(doc['probes']) != selected:
             raise ValueError('Each control requires probe provenance')
         for cid, probe in doc['probes'].items():
             if type(probe) is not dict or set(probe) != {'probe_id','version','source','started_at','completed_at','exit_state'}:
@@ -119,7 +120,7 @@ def parse_bundle(raw, expected, *, now=None, ssh_effective_authority=True, cis_a
                                      cis_audit_authority=cis_audit_authority, audit_wording=audit_wording,
                                      reviewed_avahi_retention=_avahi_retention(doc) if reviewed_avahi_retention is None
                                      else reviewed_avahi_retention)
-                            for cid in sorted(EXPECTED_IDS))
+                            for cid in sorted(selected))
         return EvidenceBundle(raw,hashlib.sha256(raw).hexdigest(),expected,doc['started_at'],doc['completed_at'],assessments)
     except (TypeError,KeyError,UnicodeError,RecursionError,json.JSONDecodeError):
         raise ValueError('Malformed Ubuntu evidence envelope') from None

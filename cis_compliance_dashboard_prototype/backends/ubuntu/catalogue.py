@@ -8,7 +8,13 @@ import re
 from defusedxml import ElementTree as ET
 from defusedxml.common import DefusedXmlException
 
-EXPECTED_IDS = frozenset('1.2.2.1 1.3.1.1 1.5.1 1.5.3 1.5.4 2.1.2 5.3.3.2.2 5.4.1.1 5.4.1.3 5.4.1.5 5.2.2 5.2.3 3.3.1 3.3.2 3.3.8 4.1.3 4.1.4 4.1.7 6.3.1.1 6.3.1.2 6.3.1.3 6.3.3.4 6.3.3.8 6.3.3.6 5.1.20 5.1.19 5.1.16 5.1.7 5.1.10 5.1.21'.split())
+# Versioned selection. v1 (stored scans up to 2026-11-08) held 1.2.2.1; v2 replaces it with 2.4.1.2 (administrator
+# decision 2026-11-08: same "System and software security" area). Stored v1 evidence still verifies exactly.
+IDS_V1 = frozenset('1.2.2.1 1.3.1.1 1.5.1 1.5.3 1.5.4 2.1.2 5.3.3.2.2 5.4.1.1 5.4.1.3 5.4.1.5 5.2.2 5.2.3 3.3.1 3.3.2 3.3.8 4.1.3 4.1.4 4.1.7 6.3.1.1 6.3.1.2 6.3.1.3 6.3.3.4 6.3.3.8 6.3.3.6 5.1.20 5.1.19 5.1.16 5.1.7 5.1.10 5.1.21'.split())
+RETIRED = frozenset({'1.2.2.1'})
+EXPECTED_IDS = (IDS_V1 - RETIRED) | {'2.4.1.2'}
+CATALOGUE_V1, CATALOGUE_ID = 'ubuntu2204-cis2-selected30-v1', 'ubuntu2204-cis2-selected30-v2'
+CATALOGUE_IDS = {CATALOGUE_V1: IDS_V1, CATALOGUE_ID: EXPECTED_IDS}
 NS = {'x': 'http://checklists.nist.gov/xccdf/1.2'}
 
 
@@ -88,14 +94,14 @@ def _validate(raw, lock, stream):
         raise ValueError('Catalogue must contain five areas of six controls')
     if Counter(c['server_level'] for c in rows) != {1:24, 2:6}:
         raise ValueError('Catalogue must contain 24 L1 and six L2 controls')
-    if Counter(c['cis_assessment_type'] for c in rows) != {'Automated':29, 'Manual':1}:
+    if Counter(c['cis_assessment_type'] for c in rows) != {'Automated':30}:  # v2: 1.2.2.1 (Manual) retired
         raise ValueError('Catalogue classification changed')
     controls = []
     for c in rows:
         cid = c['control_id']
         if c['platform'] != 'ubuntu' or c['benchmark_sha256'] != lock['benchmark_sha256']:
             raise ValueError('Control source/platform mismatch')
-        if c['server_level'] != (2 if cid.startswith('6.3.') else 1) or c['cis_assessment_type'] != ('Manual' if cid == '1.2.2.1' else 'Automated'):
+        if c['server_level'] != (2 if cid.startswith('6.3.') else 1) or c['cis_assessment_type'] != 'Automated':
             raise ValueError('Control classification does not match selected PDF recommendation')
         if not c['source_pages'] or any(type(p) is not int or not 1 <= p <= 1064 for p in c['source_pages']):
             raise ValueError('Invalid printed source page')

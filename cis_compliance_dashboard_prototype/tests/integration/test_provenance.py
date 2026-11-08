@@ -49,10 +49,10 @@ class ProvenanceTests(unittest.TestCase):
         self.assertEqual(len(bundle.assessments), 30)
         doc = json.loads(raw)
         self.assertEqual(doc['probes']['1.5.1']['exit_state'], 'ok')
-        # The Manual updates control now has read-only update facts; this fixture target lacks some of them,
-        # so the probe is explicitly incomplete and the control is never a pass (manual review remains).
-        self.assertIn(doc['probes']['1.2.2.1']['exit_state'], ('partial', 'missing', 'error'))
-        self.assertNotEqual(next(a for a in bundle.assessments if a.control_id == '1.2.2.1').status.value, 'Compliant')
+        # 2.4.1.2 (catalogue v2): the fixture target's /etc/crontab is 600 root:root with cron installed.
+        self.assertEqual(doc['catalogue'], 'ubuntu2204-cis2-selected30-v2')
+        self.assertEqual(doc['probes']['2.4.1.2']['exit_state'], 'ok')
+        self.assertEqual(next(a for a in bundle.assessments if a.control_id == '2.4.1.2').status.value, 'Compliant')
         with tempfile.TemporaryDirectory() as folder:
             store = UbuntuStore(Path(folder)/'ubuntu.sqlite3')
             binding = WorkflowBinding('workflow', 'ubuntu', 'ubuntu:fixture', 'epoch', 'backend', '2026-11-06T00:00:00+00:00')

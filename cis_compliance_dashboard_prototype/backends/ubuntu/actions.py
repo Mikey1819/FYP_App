@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from uuid import uuid4
 from vm.ubuntu.remediation_schema import MAX_JOB_SECONDS
 
-CATALOGUE_VERSION = 'ubuntu2204-cis2-selected30-v1'
+from backends.ubuntu.catalogue import CATALOGUE_ID as CATALOGUE_VERSION  # v2 since 2026-11-08 (2.4.1.2 for 1.2.2.1)
 PLAN_FIELDS = ('target_id', 'registration_epoch', 'hostname', 'machine_id', 'workflow_session_id', 'round_id',
                'evidence_sha256', 'control_id', 'predicate_id', 'parameters', 'before_state_sha256',
                'expected_after_sha256', 'before_state_collected_at', 'recovery', 'job_deadline_seconds')
@@ -300,25 +300,29 @@ def _ufw_spec():
         recovery={'kind': 'restore_backup', 'scope': ['/etc/default/ufw', '/etc/ufw/user.rules', '/etc/ufw/user6.rules']})}
 
 
-def _patch_spec():
-    """Host spec for the 1.2.2.1 patch job; fixture-tested, not validated on the VM. Recovery is the snapshot."""
+def _cron_spec():
+    """Host spec for CIS 2.4.1.2 (/etc/crontab root:root, og-rwx); replaced 1.2.2.1 on 2026-11-08."""
     import json
     from system.contracts import ComplianceStatus
-    from vm.ubuntu.family_patch import IMPLEMENTATION_SHA256, PARAMS
+    from vm.ubuntu.family_cron import IMPLEMENTATION_SHA256, PARAMS
 
     def propose(cid, evidence):
-        # Deferred by the administrator (2026-11-08): this job refreshes metadata itself and upgrades without exact
-        # versions, while the plan requires a separately approved metadata refresh and exact package/version approval,
-        # a recovery snapshot and human review afterwards. Not proposed until the family is redesigned.
-        return None
+        result = next((a for a in evidence.assessments if a.control_id == cid), None)
+        if result is None or result.status is not ComplianceStatus.NON_COMPLIANT:
+            return None
+        facts = json.loads(evidence.raw)['observations'][cid]
+        if facts.get('package.cron', {}).get('value') != 'installed' or any(
+                facts.get('crontab.' + k, {}).get('state') != 'ok' for k in ('mode', 'uid', 'gid')):
+            return None
+        return dict(PARAMS)
 
     def validate(candidate):
-        if type(candidate) is not dict or candidate != PARAMS:
-            raise ValueError('Only a plain apt-get upgrade is managed')
-    return {'ubuntu.1.2.2.1.v1': ActionSpec(
-        'ubuntu.1.2.2.1.v1', 1, IMPLEMENTATION_SHA256, ('1.2.2.1',), validate, 1800, propose=propose,
-        title='Install pending updates: apt-get update, apt-get upgrade (supervised; recovery is the VM snapshot)',
-        recovery={'kind': 'snapshot_restore', 'scope': ['virtualbox:recovery-snapshot']})}
+        if type(candidate) is not dict or json.dumps(candidate, sort_keys=True) != json.dumps(PARAMS, sort_keys=True):
+            raise ValueError('Only root ownership and removing group/other permissions on /etc/crontab are managed')
+    return {'ubuntu.2.4.1.2.v1': ActionSpec(
+        'ubuntu.2.4.1.2.v1', 1, IMPLEMENTATION_SHA256, ('2.4.1.2',), validate, 60, propose=propose,
+        title='Set /etc/crontab to root:root and remove group/other permissions (chmod og-rwx)',
+        recovery={'kind': 'restore_backup', 'scope': ['/etc/crontab']})}
 
 
 def _grub_spec():
@@ -443,7 +447,7 @@ def _avahi_mask_spec():
 
 FAMILIES = dict(_sysctl_specs(), **_core_spec(), **_auth_specs(), **_aging_specs(), **_package_specs(), **_avahi_mask_spec(),
                 **_ssh_specs(), **_ufw_spec(), **_service_specs(), **_audit_specs(),
-                **_grub_spec(), **_patch_spec())
+                **_grub_spec(), **_cron_spec())
 
 
 def _restore_spec():

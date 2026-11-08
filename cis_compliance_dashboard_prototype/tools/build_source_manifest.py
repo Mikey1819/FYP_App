@@ -15,7 +15,7 @@ COMMIT = 'a1b32362394c7739a7a94426c61c7cb24449d9a0'
 BENCHMARK = '37b8d91eadb5621656ff38d24c39ac34b9589087a3f3a9fbba2c8a2dd665b6da'
 NAMESPACE = {'x': 'http://checklists.nist.gov/xccdf/1.2'}
 GAPS = {
-    '1.2.2.1': 'Upstream marks this Manual without rules. Read-only metadata/accounted update evidence plus bound human review is required; refresh is a separate approved action.',
+    '2.4.1.2': 'Upstream rules check owner, group and mode separately; the direct probe reads all three with stat -L and the cron package state, so cron absence is not mistaken for compliance.',
     '1.3.1.1': 'Both package states must be installed; package presence does not establish profile enforcement.',
     '1.5.1': 'Resolve effective persistence and UFW IPT_SYSCTL overrides as well as runtime.',
     '1.5.3': 'Mapped rules omit conditional systemd-coredump Storage=none and ProcessSizeMax=0; also resolve hard limits and sysctl precedence.',

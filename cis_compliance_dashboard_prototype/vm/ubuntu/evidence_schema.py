@@ -58,7 +58,10 @@ ACTIVE = enum('active','inactive','failed','activating','deactivating','unknown'
 
 def schemas():
     result = {
+        # Retired 2026-11-08 (catalogue v1 only): kept so stored v1 scans still validate.
         '1.2.2.1': dict(metadata_fresh=boolean,pending_updates=natural,held_packages=natural,reboot_required=boolean),
+        '2.4.1.2': {'package.cron':PACKAGE,'crontab.mode':lambda v: natural(v) and v <= 0o7777,
+                    'crontab.uid':natural,'crontab.gid':natural},
         '2.1.2': {'package.avahi-daemon':PACKAGE},
         '5.3.3.2.2': {'pam_resolution':RESOLUTION,'effective_minlen':mapping},
         '5.2.2': {'sudoers_syntax_valid':boolean,'sudoers_resolution':RESOLUTION,

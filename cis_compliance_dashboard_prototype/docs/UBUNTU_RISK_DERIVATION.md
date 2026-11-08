@@ -21,12 +21,12 @@ Scores are withheld in the dashboard until a named reviewer approves this policy
 
 | Control | Consequence (I) | Privilege (P) | Surface (E) | L | Score D=1 / 3 / 5 | Rationale (paraphrase) |
 | --- | --- | --- | --- | --- | --- | --- |
-| 1.2.2.1 | protection_weakened (4) | privilege_escalation_path (4) | system_software (3) | 3 | 66 / 70 / 74 | Outstanding security updates leave known, published vulnerabilities in place. |
 | 1.3.1.1 | protection_weakened (4) | privilege_escalation_path (4) | local_exploit_mitigation (2) | 4 | 64 / 68 / 72 | Without the AppArmor packages, mandatory access control cannot confine compromised programs. |
 | 1.5.1 | misuse_easier (3) | privilege_escalation_path (4) | local_exploit_mitigation (2) | 4 | 58 / 62 / 66 | Predictable memory layout makes memory-corruption exploits easier to write. |
 | 1.5.3 | misuse_easier (3) | privilege_escalation_path (4) | local_exploit_mitigation (2) | 4 | 58 / 62 / 66 | Core dumps of privileged programs can disclose sensitive memory contents. |
 | 1.5.4 | misuse_easier (3) | privilege_escalation_path (4) | local_exploit_mitigation (2) | 4 | 58 / 62 / 66 | Prelinking modifies binaries, interfering with integrity checking and easing shared-library tampering. |
 | 2.1.2 | misuse_easier (3) | guest_or_anonymous (2) | network_anonymous (4) | 4 | 60 / 64 / 68 | An unneeded unauthenticated discovery service adds network attack surface and discloses host information. |
+| 2.4.1.2 | misuse_easier (3) | privilege_escalation_path (4) | local_account (3) | 4 | 63 / 67 / 71 | Group- or world-accessible /etc/crontab discloses system jobs; write access would let an unprivileged user run commands as root. |
 | 3.3.1 | protection_weakened (4) | host_network_path (2) | network_boundary (4) | 4 | 66 / 70 / 74 | A host that forwards packets can act as a router and bypass network segmentation. |
 | 3.3.2 | misuse_easier (3) | host_network_path (2) | network_boundary (4) | 4 | 60 / 64 / 68 | Sending ICMP redirects can be abused to alter other hosts' routing. |
 | 3.3.8 | misuse_easier (3) | host_network_path (2) | network_boundary (4) | 4 | 60 / 64 / 68 | Accepting source-routed packets lets senders dictate paths around network controls. |
