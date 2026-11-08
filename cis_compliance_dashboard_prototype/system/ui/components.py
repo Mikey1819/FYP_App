@@ -93,6 +93,7 @@ def _card_state(row, fix, recovery, results):
 def plan_cards(snapshot):
     """One card per Non-Compliant control of the round's plan: decision, reason, its proposals and their outcome."""
     results = {r.proposal_reference.record_id: r for r in snapshot.results}
+    risk = {f.control_id: f for f in getattr(snapshot, 'findings', ())}
     cards = []
     for row in getattr(snapshot, 'plan', ()):
         own = [p for p in snapshot.proposals if p.control_id == row.control_id
@@ -100,13 +101,19 @@ def plan_cards(snapshot):
         fixes = [p for p in own if p.kind == 'control_remediation']
         recovery = [p for p in own if p.kind == 'recovery']
         state = _card_state(row, fixes[-1] if fixes else None, recovery, results)
+        finding = risk.get(row.control_id)
         cards.append({'control_id': row.control_id, 'title': row.title, 'state': state, 'decision': row.decision,
+                      'risk': 'risk %d (%s)' % (finding.score, finding.level) if finding else '',
+                      '_order': (0, -finding.score, finding.rank) if finding else (1, 0, 0),
                       'note': NO_PLAN_NOTE if state == NO_PLAN else '',
                       'reason': row.reason, 'flag': row.flag, 'proposals': own,
                       'results': {p.reference.record_id: results[p.reference.record_id]
                                   for p in own if p.reference.record_id in results},
                       'icon': ICONS.get(state, ':material/warning:' if state.startswith('Applied')
                                         else ':material/pause_circle:')})
+    # Highest deterministic risk first (administrator request 2026-11-08); ties keep the risk ranking, and controls
+    # without a score (risk withheld or not ranked) follow in plan order.
+    cards.sort(key=lambda c: c.pop('_order'))
     return cards
 
 
@@ -123,10 +130,12 @@ def plan_summary(snapshot):
 
 def _render_cards(snapshot, control_actions):
     st.markdown('**' + md_escape(plan_summary(snapshot)) + '**')
-    st.caption("One card per Non-Compliant control from this round's scan. The AI Agent Orchestrator chooses what "
-               'to propose; every fix needs your approval. After a fix runs, its card shows the fresh re-scan.')
+    st.caption("One card per Non-Compliant control from this round's scan, highest deterministic risk first. The AI "
+               'Agent Orchestrator chooses what to propose; every fix needs your approval. After a fix runs, its card '
+               'shows the fresh re-scan.')
     for card in plan_cards(snapshot):
-        label = '**%s** · %s — %s' % (md_escape(card['control_id']), md_escape(card['title']), md_escape(card['state']))
+        label = '**%s** · %s%s — %s' % (md_escape(card['control_id']), md_escape(card['title']),
+                                         ' · ' + md_escape(card['risk']) if card['risk'] else '', md_escape(card['state']))
         with st.expander(label, icon=card['icon'], key='fix_card_' + card['control_id']):
             st.markdown('**Planner decision:** ' + md_escape(card['decision']) + '  \n**Reason:** '
                         + md_escape(card['reason']) + ('  \n**Analysis flag:** ' + md_escape(card['flag'])

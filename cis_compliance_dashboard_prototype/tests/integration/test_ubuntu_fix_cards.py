@@ -85,3 +85,26 @@ class FixCardTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class RiskOrderTests(unittest.TestCase):
+    """Administrator request 2026-11-08: the Fixes cards in descending deterministic risk, not by control ID."""
+
+    def snap(self):
+        from system.contracts import FindingRow, TargetSummary
+        rows = tuple(PlanRow(cid, 'title ' + cid, 'Fix proposed', 'reason', '') for cid in ('1.5.1', '3.3.2', '6.3.1.2', '5.1.20'))
+        findings = (FindingRow('1.5.1', 3, 3, 3, 3, 1, 50, 'Medium', (), 'p', 3),
+                    FindingRow('3.3.2', 3, 3, 3, 3, 1, 50, 'Medium', (), 'p', 2),
+                    FindingRow('5.1.20', 5, 5, 5, 4, 1, 85, 'High', (), 'p', 1))  # 6.3.1.2 has no score
+        target = TargetSummary(ref('target'), 'host', 'Ubuntu 22.04', 'SSH', 'Live (SSH)', 'connected')
+        return WorkspaceSnapshot(target, findings=findings, plan=rows)
+
+    def test_cards_run_from_the_highest_risk_and_ties_keep_the_ranking(self):
+        from system.ui.components import plan_cards
+        self.assertEqual([c['control_id'] for c in plan_cards(self.snap())], ['5.1.20', '3.3.2', '1.5.1', '6.3.1.2'])
+
+    def test_each_card_carries_its_risk_for_the_title(self):
+        from system.ui.components import plan_cards
+        cards = {c['control_id']: c for c in plan_cards(self.snap())}
+        self.assertEqual(cards['5.1.20']['risk'], 'risk 85 (High)')
+        self.assertEqual(cards['6.3.1.2']['risk'], '')
