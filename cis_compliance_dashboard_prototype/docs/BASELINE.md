@@ -42,3 +42,7 @@ After the re-baseline `python -B -m tools.baseline` reports `protected: []`, `mi
 ## Re-baseline after pairing, 8 November 2026 (later)
 
 LAN pairing from the Windows project was brought in and extended to Ubuntu (root `PROGRESS.md`). The manifest was re-taken the same way as above: the newly ported Windows-origin files (`pairing.py`, `pairing_client.py`, `server_control.py`, `system_detect.py`, `servers.py`, `servers_view.py`, `launch.py`, their tests, `pairing_vectors.json`) are added as protected, the changed protected files (`winrm_channel.py`, `server_access.py`, the server access helper and its tests, the tools) take their synced bytes, and the authorized UI files keep their original hashes. `tools.baseline` then reports `protected: []`, `missing: []`.
+
+## Line endings, 9 November 2026
+
+The manifest now hashes each file with CRLF read as LF (`tools/baseline.content_sha256`). A fresh Windows checkout (CRLF) and a copy with LF line endings are the same source, so only a real edit is reported. Before this, a clone from GitHub reported 17 untouched Windows files as protected changes because their line endings differed from the working copy the hashes were taken from.

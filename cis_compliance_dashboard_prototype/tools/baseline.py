@@ -5,6 +5,12 @@ import json
 from pathlib import Path
 
 
+def content_sha256(path):
+    """SHA-256 of a file's text with CRLF read as LF: a Windows checkout (CRLF) and a copy with LF line endings are
+    the same source, so only a real edit shows as a change."""
+    return hashlib.sha256(Path(path).read_bytes().replace(b'\r\n', b'\n')).hexdigest()
+
+
 def edit_report(root, manifest):
     root = Path(root).resolve()
     report = {'protected': [], 'authorized_ui': [], 'metadata': [], 'missing': []}
@@ -14,7 +20,7 @@ def edit_report(root, manifest):
             raise ValueError('Manifest path escapes source root')
         if not path.is_file():
             report['missing'].append(name)
-        elif hashlib.sha256(path.read_bytes()).hexdigest() != record['sha256']:
+        elif content_sha256(path) != record['sha256']:
             report[record['category']].append(name)
     return {key: tuple(value) for key, value in report.items()}
 

@@ -14,23 +14,23 @@
   },
   "files": {
     "AGENTS.md": {
-      "sha256": "964da0cc7f780739bbb24d529f89ce049516c38db1d712ed5a8da0f7a1934c3d",
+      "sha256": "ab74ac0716454df1484c9222d31b9f77441b5d7eb62cf9556e5c123e370f6385",
       "category": "metadata"
     },
     "PROGRESS.md": {
-      "sha256": "1a4b3026f148d5856b36ce09a019512a73deda46a0255970c5bf785dcdad1c7a",
+      "sha256": "8ed72f34bdb021af04a8586289e65b355bb1ddc2071a9fbb9549d45ed4b7fae0",
       "category": "metadata"
     },
     "README.md": {
-      "sha256": "e2673d40ebf089b15ce2ffc02e589d9458abf7f6e78852597533e511a9749f11",
+      "sha256": "5c55945f48c43297135ba0fbd4f65f97e32b4e35ec21f8e8b491d2da89e6ce51",
       "category": "metadata"
     },
     "Run-Dashboard.cmd": {
       "category": "metadata",
-      "sha256": "c61a6c1d0d2794703f1e432d1729bb0b95f2e117dedcca2b99e73473d42cf4b6"
+      "sha256": "72429ab640c04b6c976a789b74b2b727a8a173279b71c794821c67af34738abe"
     },
     "cis_compliance_dashboard_prototype/.gitignore": {
-      "sha256": "1c64ce3aea57fe6fd176bcdeb8f954ef36dd511cd9381952b483d2678c94c071",
+      "sha256": "86b068702647ab3a31f3e8dc64585e9ba4a632299c99130d45a8fe284a294419",
       "category": "metadata"
     },
     "cis_compliance_dashboard_prototype/app.py": {
@@ -42,11 +42,11 @@
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/action_library.py": {
-      "sha256": "f3efcaf0266689868ca184afecf2d8bca0b313dbd7247abc1b3e5daaff798c2e",
+      "sha256": "dfb33f300cc5f47f22c1e7b9466c8fcf5f33cf61e63e3d11d63f86a33dae961d",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/agentic.py": {
-      "sha256": "b9996455bfa0502651194ea6e08dca9673bc9be08fd3164f2dde510bd474aa35",
+      "sha256": "b63c9ee844dff9a85f417d585480ea4973672fb90bff2996cb0e1166f068aa59",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/agentic_view.py": {
@@ -62,19 +62,19 @@
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/domain.py": {
-      "sha256": "6f4f8a19331793c737fe9339602f8756e6f16ebe2d8885ea33151acf69a00733",
+      "sha256": "d09d9f6da6810dc15959caa52ef019af04f9b43b215acaa4d25f6b29e1e881bd",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/evidence_import.py": {
-      "sha256": "ab394ea4617751cd88223b08d52bada9d76755db5c4bddbbc612d761bc4889a6",
+      "sha256": "9a2c86a0c548e1d137aeb102a4dae62c015169740501c5ff20ca2e1dae744118",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/framework.py": {
-      "sha256": "1a8c4b5622e211ee8d72a25aad5b64f37a31d1b84186253329607b64bb9e6b28",
+      "sha256": "bde48724435e493362d88ac68c675ff9f3415d77b2720206e25d2488be46abfc",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/history.py": {
-      "sha256": "92650ec6108c8551757563d8c9e2fac547fc63c3b9e45ed17478f927a44b8c1a",
+      "sha256": "52dd741e78f168c2643327a7231161f614a7ae06a7dfd9b81fe4dc9e7714064b",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/history_view.py": {
@@ -82,11 +82,11 @@
       "category": "authorized_ui"
     },
     "cis_compliance_dashboard_prototype/hardening/import_storage.py": {
-      "sha256": "c79c7f221d9f6486cdf2f26566834bf7760f164a979915d0b204450dca20395c",
+      "sha256": "253a51265f0bb2c5f0756727bd475fc2f927f8b40865cf784162cd25880006de",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/investigation.py": {
-      "sha256": "1e37feefed910a59aaeec615ae7dfb35eb428e2d92021b00d0df15cc70201a3b",
+      "sha256": "db45a42985370ee47fdd59b439734a2d567b58229e8168c831b0d10cb61c96e8",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/ollama_client.py": {
@@ -99,66 +99,66 @@
     },
     "cis_compliance_dashboard_prototype/hardening/pairing.py": {
       "category": "protected",
-      "sha256": "f84d166c56a64a61decce2cf0ef347541a2f8fd1d2bd70f4e386f6fa17266901"
+      "sha256": "8b815acbf41c95fa2f2a36d7967076eff8cc4e36dd557f5c2f23ca3958a191f6"
     },
     "cis_compliance_dashboard_prototype/hardening/pairing_client.py": {
       "category": "protected",
-      "sha256": "382963a745d821a180a259246edfcae9e49b5b782050b91f4b1a45fb786062b4"
+      "sha256": "ac492dbaad86b3771a6dfb77175c56af11e1f9658c7d618bcde2efd138a29b69"
     },
     "cis_compliance_dashboard_prototype/hardening/remediation.py": {
-      "sha256": "ebb2f3f79736ee2b212b87f23181680ed53b5f9e577ed633ce72528477953ce2",
+      "sha256": "e78b7018227a2d0cb4b7015f0842f6e8a639e8d25b8ec23422ea9adcea7d7647",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/risk.py": {
-      "sha256": "08042622e19a3eca266ec3c7918223df9b365054abbaa343728ed7d24f9b4137",
+      "sha256": "060b3b5ed7f2ea07afc26dd06810bb679b752e10691a95157423a8636f0a510e",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/round_report.py": {
-      "sha256": "7ed08ff5a25e8c9bef644f064ae4849ad1ec9df2613a247a163a13a92cfc9b07",
+      "sha256": "711f04dc38c6440424182981aae5149e7fb4fecf0bfcdc77281422c3403d0b34",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/server2022_catalogue.py": {
-      "sha256": "9e10a6c0a0a318cf45c8024cc03db3b7f86a4fd1d40d02e916fe93ad8356b08a",
+      "sha256": "a0ceba1481b8b51ad8628172cc96fb184aa6e4feb7cc04518b015eda4eaccb1f",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/server_access.py": {
-      "sha256": "ef5903cc76cafa6f42dce773546c154f8f3e6dbc4d78c3a1880ca01907468145",
+      "sha256": "efb392b58bf906b4bf2fee50611486229662e10022a2793ebb17573f2ec0393a",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/server_control.py": {
       "category": "protected",
-      "sha256": "4d010c1ce0b7165ec27bd84a585d8ed0b6645dbc6aefb7aeca177d10fadde25e"
+      "sha256": "f332d0fc3c9aa95f4295895a4715ffd86cabe47ba949727e710e6272e3cb352b"
     },
     "cis_compliance_dashboard_prototype/hardening/servers.py": {
       "category": "protected",
-      "sha256": "f9fb04546795417cbad7fc722299f465b049ef971246b49169d9613fe67fd454"
+      "sha256": "70139c6506ada814a6a6ca3ebd756d618cd98e21ee12a564166cc6cbd1bca1c1"
     },
     "cis_compliance_dashboard_prototype/hardening/servers_view.py": {
       "category": "protected",
-      "sha256": "7f989a866f2e1f89e6b179dd073a18855b22e1a87eb4b7ec842b1feda8f85f0a"
+      "sha256": "fdad9018b7175e66e96d00d96d4223682c7e296dab4e959d45889a9f528fab26"
     },
     "cis_compliance_dashboard_prototype/hardening/system_detect.py": {
       "category": "protected",
-      "sha256": "a0dc47abaa4f615cb3c7e1ab77f510102133533f09ba35f3828366b24d665ed8"
+      "sha256": "b7ffbfd652a3a2329611b4d8dcb0c75441b9c59c80c1ca94a47d1e70197906b5"
     },
     "cis_compliance_dashboard_prototype/hardening/ui.py": {
       "sha256": "e3dd45efb794417ebf09b66f8ff54a83d4f8f5f27cb14ec8f87ba980bf91405c",
       "category": "authorized_ui"
     },
     "cis_compliance_dashboard_prototype/hardening/winrm_channel.py": {
-      "sha256": "f1304eb2bccdf58c64d0b6ba782e2ee5c6a346a926fe2c20cbf4189d1efae457",
+      "sha256": "a0be869235f28814ae27a27c713d9466f0012b47d8c4dab81bc975acdb941d2c",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/launch.py": {
       "category": "protected",
-      "sha256": "8b54696589e3621c471e3ac1bd6eb074a7c8d35e7f0f9d22ae3a7fb934be0e16"
+      "sha256": "e4932f99e9849827956809b7cc11f2d9720c98958614f6fc47af47bb8176e21d"
     },
     "cis_compliance_dashboard_prototype/requirements.txt": {
       "sha256": "c07ad2a8f356c12629a268ab7ce7e0f2053e4e8b927872de29851c559c98fcfa",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/tests/evidence_fixture.py": {
-      "sha256": "79fe24833c61a15a30ca6db5abeac73da57b72eb84dc41e595fbab78f5bca9b7",
+      "sha256": "e78a60628e85cd708208ec5b5ecd50717335c22adc1744cf9056cb8a6f146fe6",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/tests/synthetic_fixtures.py": {
@@ -166,27 +166,27 @@
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/tests/test_account_policy_controls.py": {
-      "sha256": "42600320602d4547c01517f69115bfa9f4f886f043b5c8e3b10b229a64c5bcc9",
+      "sha256": "ca1816b2f6e79acc63fdfae66a71902399859477fbcba34f18c42a08ec408807",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/tests/test_agentic.py": {
-      "sha256": "31a2775428824d02514e6a0437179b07a46c47fa23089a8c896a7a056d1fc33b",
+      "sha256": "8fcbc44eb7a402481552791bef13887cc7384310cc4e6504408be716567616e5",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/tests/test_agentic_view.py": {
-      "sha256": "920144dea63957bc726b780bb3e1e228c2838acb829ea8e8293123a2e850a3a7",
+      "sha256": "40e469f9b6315c8123f5d036cd40717ae69b60cb4be987dd1fac738a9820e9de",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/tests/test_app_navigation.py": {
       "category": "protected",
-      "sha256": "9d1d7de819343ee90fd5f1cb7d4da7116328a68988618e0437877cc44d33b38f"
+      "sha256": "4ce1fd9ed71fa28ec2e051422f236360a7f19945b7c84088554c044ceacdb570"
     },
     "cis_compliance_dashboard_prototype/tests/test_catalogue.py": {
-      "sha256": "c53745083a428ec2059c928898b44072121539d25d3a4e1b2fb66d5657fc9df6",
+      "sha256": "80321763092f23ddd15d9880dde1b1a134cb71c173616569b8baa29d180c7430",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/tests/test_cross_check.py": {
-      "sha256": "916f8308c9f7a854e50762541b6469027e1bccd86ce3f410a1730b5f9c7b4033",
+      "sha256": "265effecc608f5d38f681bbd6da3f0f4b18136267e35505aacdfa0ae1e7d4113",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/tests/test_domain.py": {
@@ -194,19 +194,19 @@
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/tests/test_evidence_import.py": {
-      "sha256": "ee2210bbd65981dc2cc6a61d8899b8064b9e02c1af63d54b616f7f7a38c785f9",
+      "sha256": "be2a04551aaee900c3ee2702c9eff31a814a2685992c5c423d468651ef17b8d0",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/tests/test_framework.py": {
-      "sha256": "fdece8f97bf4dfd21fe669b3215ff1a68e3db07a1cf030f556d452e5349d68d8",
+      "sha256": "9334f88a2ad0c90ad1d998edfb151cf2971cb5c01e6692aa9de4b2c4f580728a",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/tests/test_history.py": {
-      "sha256": "f3934e2e4d159d43e2aadd38158d413e14d61778ac466a5f8c833e6e14de1e12",
+      "sha256": "cd3851a7055e5d47c839cd714a7b70a05d7d5e26b332d77d3baf25746671e12e",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/tests/test_import_storage.py": {
-      "sha256": "c52400b8b7ae57c5cf71cd885d3af1818b3e4b34538e874618842d5312d49754",
+      "sha256": "2c00ced3832d80bd616f2d9b4c00621f437ae9e1850e1fffaa8395d04ca93103",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/tests/test_investigation.py": {
@@ -214,7 +214,7 @@
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/tests/test_local_security_controls.py": {
-      "sha256": "bae860a50776e11562d53df4d3b3bb0f93da737058c25f268d425e260ae2c329",
+      "sha256": "02928df0ebb307d254a67709d4a9589618d944b38da9eef251eb5c439ad83602",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/tests/test_ollama_client.py": {
@@ -223,38 +223,38 @@
     },
     "cis_compliance_dashboard_prototype/tests/test_pairing.py": {
       "category": "protected",
-      "sha256": "25c8cce9be79840f20ab36fe803b504d29286b8780c2d3a1ef8c0e8e42cee44e"
+      "sha256": "1697c1f1eaf667728f2a260d9a35887ff3d9bc9db1b4de8b7c6ef673fc6c6bc0"
     },
     "cis_compliance_dashboard_prototype/tests/test_pairing_flow.py": {
       "category": "protected",
-      "sha256": "816aeb10db6e221b1067d0ca772554821dd0b1bdc660ecf7ae3a37cea4626b62"
+      "sha256": "5586a0a64b20b360b54493ad2b1840255cb691d770219305c9c5dea38156db5f"
     },
     "cis_compliance_dashboard_prototype/tests/test_round_report.py": {
       "sha256": "17cb24d6e0dcec411892b7ec5431820e85145ac855ce55d0de73f1f12e2c272f",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/tests/test_server_access.py": {
-      "sha256": "b204f02f62daae7a1d0304010d56d39435b5c9806ee3b7269f4631d019505d64",
+      "sha256": "da18e6832623ac44d2cab09e27e247b0b27c3046a62ae0fdc7ebbb24f83d330b",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/tests/test_servers.py": {
       "category": "protected",
-      "sha256": "79d235e1af3dbbe9d254986dd1b72693b7699c3392430c2b5098ddbeb5273255"
+      "sha256": "1a4fc5da3d083bbc0ab6a00de15503e89e8254ef1a7ad2234f414a6859a286dc"
     },
     "cis_compliance_dashboard_prototype/tests/test_show_database.py": {
-      "sha256": "298457459dbabb00302a2794dbb560d0900d98cb02e9d0371b96d58798679778",
+      "sha256": "390d626d3622aabbe2569dee78a33bcf024f111a1c85d2ecce3dae50ab4ea577",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/tests/test_system_detect.py": {
       "category": "protected",
-      "sha256": "c03790a56db878df56612f0f22b9cc304d46249ca7290fcf1c5fdf7aabacfc3a"
+      "sha256": "5ff3b8148610ac0c8609344e29b643350f6dd5a7e03a90c3f80789091cf9393d"
     },
     "cis_compliance_dashboard_prototype/tests/test_winrm_channel.py": {
-      "sha256": "3d91f7da515344ff08f0c404d49add20ddc9a6fdaeb485d636de72972a3140b6",
+      "sha256": "898b5fbc9b1d4cd1c916917514bfc55adcd513e39d0d126bb93b1ee8e5eede64",
       "category": "protected"
     },
     "docs/archive/ADMIN_GOALS_DESIGN.md": {
-      "sha256": "1ae2d77c093174cde41b2d7e2877648a1f89d6cf6843b34e8ca1dabe3861b471",
+      "sha256": "56288608f08e2065b1ad8333ff8fd8fd5039f4db10d77fd4263bb301545a4422",
       "category": "metadata"
     },
     "docs/archive/DEVELOPMENT_PLAN.md": {
@@ -306,27 +306,27 @@
       "category": "metadata"
     },
     "docs/design/ARCHITECTURE.md": {
-      "sha256": "d072b0e49691ccd6cfa24c661fe4d58bd082ad55102af3f52c124f697ec226ba",
+      "sha256": "84f5c8c054dab4ae81855c727174628972c2c2ab1f5bc73b16a900124a6aa00f",
       "category": "metadata"
     },
     "docs/design/BENCHMARK_MAPPING.md": {
-      "sha256": "9abb5c284c9a360b7cd39965761bd831dfde49f284d2afce3e1a5e08a192720a",
+      "sha256": "f453389f772e48a542e62c98f6510ff115e7022325f870275e39ec0d4772dcd8",
       "category": "metadata"
     },
     "docs/design/DATABASE_SCHEMA.md": {
-      "sha256": "d2b2367335e103d47342a5b257e90ac5faab6b40c01d62c4a7f4bc113b294f89",
+      "sha256": "c8fb1ea9c929c690570b00ff22e7bf46604ceb05107ee769ac0d0790154701df",
       "category": "metadata"
     },
     "docs/design/LAN_PAIRING_DESIGN.md": {
       "category": "metadata",
-      "sha256": "743b743d1dbe3ad9cf180b8d82c9499b3acf4a553832f22927315a892c4a6ef7"
+      "sha256": "6cf99130de435e8f8bf5d3a340caf29a3ec00df88977a2e356e96296e974256b"
     },
     "docs/design/RISK_DERIVATION.md": {
-      "sha256": "de744011251f22bfdd0422a6570112b274f3a716e9e0354edb1e864efac4f468",
+      "sha256": "fccbba1d592abeea85c6b8042331f016e195e2445719358d601bec1579e11f5a",
       "category": "metadata"
     },
     "docs/evaluation/AGENTIC_ASSESSMENT.md": {
-      "sha256": "be831ef285e149b7ce6830309672125bc2cba1beb8a40de49c996e7aa0475dd5",
+      "sha256": "7999eedb20fae710d4aa8521478964b21284121cbb6b9373a40c64d983f8967e",
       "category": "metadata"
     },
     "docs/evaluation/FIRST_VM_IMPORT_VALIDATION.md": {
@@ -342,7 +342,7 @@
       "category": "metadata"
     },
     "docs/report/REPORT_REQUIREMENTS_AND_COVERAGE.md": {
-      "sha256": "6e460cb461887429b488a56fea137e38ab43b252cb89d1a2f2750b69391b4aee",
+      "sha256": "6e2f4aeb1c1bdd6cc1810a8c9b6edd4a4efbdb97ef66dd56ee1225d0790aa664",
       "category": "metadata"
     },
     "docs/report/REPORT_REVISIONS.md": {
@@ -350,15 +350,15 @@
       "category": "metadata"
     },
     "docs/vm/VM_CONNECTION_SETUP.md": {
-      "sha256": "601eb8381f9e084075b1c7f1acfb4651f0331cfe65da922f67ff04378d2625ce",
+      "sha256": "7a2d46051cb3e45004ee649a68913468493bbf04ca54963848306e16869a0f0e",
       "category": "metadata"
     },
     "docs/vm/VM_TRIAL_RUNBOOK.md": {
-      "sha256": "6f67ea34416bda913b6c92fb7f74888663767c4940bacb927ce64ec2a209531e",
+      "sha256": "86832f17f403e177430b8a72b550c3c56d8596bdad5cbf7005a3fa3aa15aa108",
       "category": "metadata"
     },
     "scripts/evaluation/evaluate_agentic_rounds.py": {
-      "sha256": "2faf143a2a149449e980a4ba4e48ede5c4b394324b428fffdcd4b993c2dda36f",
+      "sha256": "aa5c3ed088800bbd3291ac6c30ca4608fac1a09c141b9598fd4843142b70b971",
       "category": "protected"
     },
     "scripts/evaluation/make_report_figures.py": {
@@ -370,11 +370,11 @@
       "category": "protected"
     },
     "scripts/server_access/FYP-ServerAccess-README.txt": {
-      "sha256": "846f694b3afc01da2204783018ddaaa06321a28d7d97a44bf6e487e0b43813b4",
+      "sha256": "c0bd36357f053d7101a39bdd3b05e929cf190242130d7abcc3a34225e2e91072",
       "category": "protected"
     },
     "scripts/server_access/FYP-ServerAccess.ps1": {
-      "sha256": "3d7a1979b88b20f337ac0e842d4b4826c0c3787a2e0e0e024d089310e9799e08",
+      "sha256": "fe821134ca290d0524a35a0ef50b737fdb880a94b1845310707f9a186a10b8be",
       "category": "protected"
     },
     "scripts/server_access/Start-ServerAccess.cmd": {
@@ -383,14 +383,14 @@
     },
     "scripts/server_access/pairing_vectors.json": {
       "category": "protected",
-      "sha256": "1925bce7643266abb68c6c373db4cd9a75a4a41cb3d5ba03eddfe83107e0d43c"
+      "sha256": "bfea2ffa963d445a04594fb033d0cdaebb872543b48223a64a287a272bdb9563"
     },
     "scripts/server_access/test_server_access.ps1": {
-      "sha256": "8aa9e83b33eeea2adc08aebc5fceb0ea0d5fde07c2f8c97ab150c614f9fac2a0",
+      "sha256": "70c352207ba9378c3af249f46c5e2c90fbf0da0648bd6bf606c4c3dfcf5c8888",
       "category": "protected"
     },
     "scripts/tools/cross_check_controls.py": {
-      "sha256": "6497d59d79b8a9c27a6d4b35c47fcd6e9302f1fb3a34ba16592c46846aaf2034",
+      "sha256": "2b07b16aec1a1aa80556aa5d134059969fcbd56b71986d0e01d361c91d72e6b9",
       "category": "protected"
     },
     "scripts/tools/extract_benchmark_audit.py": {
@@ -398,15 +398,15 @@
       "category": "protected"
     },
     "scripts/tools/generate_risk_derivation.py": {
-      "sha256": "09ac626d2efd5ad3ef0d3c2e5554048611a6ffcfcb18e522e846ed3af11e20d3",
+      "sha256": "e1fd782f7038159e0157f7999dadb21daead8c20c722e8248eabcaf2f44ed382",
       "category": "protected"
     },
     "scripts/tools/show_approval_integrity.py": {
-      "sha256": "265086f472df9ef7e3646cd56939dcdedc8450a25520b98812aad62a5a6853d3",
+      "sha256": "64eb341e85447297fca0686baca7158a6f79eb6daae91ccabaad3f84c684a24e",
       "category": "protected"
     },
     "scripts/tools/show_database.py": {
-      "sha256": "d511075175722d8c0c7ec71ab37e366fadf9f9eb524b79cb90aeeec515673c31",
+      "sha256": "d401a5045650d9d72e010ac94df28c2750697a8f4cec10b0f67a86c51b86c8c1",
       "category": "protected"
     },
     "scripts/vm/Collect-Server2022Evidence.ps1": {
@@ -418,7 +418,7 @@
       "category": "protected"
     },
     "scripts/vm/Invoke-RemediationAction.ps1": {
-      "sha256": "45153612255642c9396e23b64108e8406ec19890d50839df4a9efb1ebb9eb15b",
+      "sha256": "d7530e6795ebfb6d270befa5f1b1a2a9336a9cfe7863c7f9d4714ebdbca6527e",
       "category": "protected"
     },
     "scripts/vm/test_collector_helpers.ps1": {
@@ -430,8 +430,9 @@
       "category": "protected"
     },
     "scripts/vm/test_remediation_runner.ps1": {
-      "sha256": "aeae2bacf4a25e2d544de091a4a5abb7bf6cb9f7db91761cf58fa6c596471af1",
+      "sha256": "c9235724d6c16b6924c13251e8f332566a00c792ba194df1e31072fc154a14a8",
       "category": "protected"
     }
-  }
+  },
+  "hashing": "SHA-256 of each file with CRLF read as LF (tools/baseline.content_sha256), so the line endings of a checkout do not matter. authorized_ui entries keep the original pre-integration raw-byte hashes."
 }

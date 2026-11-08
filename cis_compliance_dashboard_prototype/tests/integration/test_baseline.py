@@ -20,6 +20,9 @@ class BaselineTests(unittest.TestCase):
             (root/'app.py').write_bytes(b'integrated')
             self.assertEqual(verify_baseline(root,manifest),())
             self.assertEqual(edit_report(root,manifest)['authorized_ui'],('app.py',))
+            (root/'eol.py').write_bytes(b'a\r\nb\r\n')  # A Windows checkout of the same text.
+            eol={'files':{'eol.py':{'sha256':hashlib.sha256(b'a\nb\n').hexdigest(),'category':'protected'}}}
+            self.assertEqual(verify_baseline(root,eol),())
             (root/'engine.py').write_bytes(b'changed')
             self.assertEqual(verify_baseline(root,manifest),('protected:engine.py',))
             (root/'engine.py').unlink()
