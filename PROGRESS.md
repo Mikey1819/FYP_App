@@ -245,7 +245,7 @@ Source: `data/preview_imports_agentic.sqlite3`. Target: `WIN-VFT30DUDRHQ`, UUID 
 
 ## 30 October 2026, afternoon: administrator goals (AGENTIC_ASSESSMENT Recommendation 1, revisited)
 
-- **Why now:** set aside on 29 October because free text has endless inputs. The user approved the redesign in [docs/ADMIN_GOALS_DESIGN.md](docs/design/ADMIN_GOALS_DESIGN.md): the model only turns the text into a closed set of constraints, code enforces them, and the administrator sees the reading before approving.
+- **Why now:** set aside on 29 October because free text has endless inputs. The user approved the redesign in [docs/archive/ADMIN_GOALS_DESIGN.md](docs/archive/ADMIN_GOALS_DESIGN.md): the model only turns the text into a closed set of constraints, code enforces them, and the administrator sees the reading before approving.
 - **Built:**
   - `interpret_goal` is offered first and only when a goal is given. Its fields: only/exclude areas, exclude controls (library controls only), focus, max_fixes, unclear.
   - Fix code `serves_goal` and skip code `outside_goal`, fact-checked like the others.
@@ -326,7 +326,7 @@ Source: `data/preview_imports_agentic.sqlite3`. Target: `WIN-VFT30DUDRHQ`, UUID 
   - Not changed: about two dozen small SQLite reads per Overview render, which is acceptable for a local database.
   - Python suite: **181 passed**.
 - **Report:** REPORT_REVISIONS **A6** maps the §4.7 mock-ups (Figures 4.11–4.16) to the delivered interface, with replacement text and the screenshots to take.
-- **Proposal:** [docs/ADMIN_GOALS_DESIGN.md](docs/design/ADMIN_GOALS_DESIGN.md), administrator goals for the Orchestrator, redesigned to answer the 29 October objection. Awaiting the user's decision; not built.
+- **Proposal:** [docs/archive/ADMIN_GOALS_DESIGN.md](docs/archive/ADMIN_GOALS_DESIGN.md), administrator goals for the Orchestrator, redesigned to answer the 29 October objection. Awaiting the user's decision; not built.
 - **Next:** the first real VM remediation (VM_TRIAL_RUNBOOK), now through the confirmation step.
 
 ## 29 October 2026, evening: judgement scenarios evaluated (hypothesis not supported)

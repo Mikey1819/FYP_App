@@ -70,7 +70,7 @@ Switching pages keeps the connection, the session and its results. After a brows
 
 ## Checks
 
-From `cis_compliance_dashboard_prototype` (744 tests on 8 November 2026, Windows and Ubuntu together; fixtures, simulated VMs and UDP on this laptop's own address only, nothing touches a real server or the firewall):
+From `cis_compliance_dashboard_prototype` (765 tests on 9 November 2026, Windows and Ubuntu together; fixtures, simulated VMs and UDP on this laptop's own address only, nothing touches a real server or the firewall):
 
 ```powershell
 $env:TEMP = Join-Path (Get-Location) 'data\test_tmp'; $env:TMP = $env:TEMP
