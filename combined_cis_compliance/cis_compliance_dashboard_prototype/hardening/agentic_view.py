@@ -208,12 +208,12 @@ def _ubuntu_maintenance_actions(backend, connection, snapshot, capabilities, wor
                   help='apt-get update only: installs nothing and changes no configuration.')
         st.button('Prepare reboot to complete applied changes', key='ubuntu_prepare_reboot', on_click=prepare,
                   args=(AuxiliaryKind.REBOOT,), disabled=not capabilities.can_remediate or 'reboot' in open_kinds or not staged,
-                  help='Needs applied fixes. The VM restarts 60 s after it runs; reconnect, then Check status.')
+                  help='Needs applied fixes. The server restarts 60 s after it runs; connect again, then Check status.')
     for p in snapshot.proposals:
         if p.kind not in ('metadata_refresh', 'reboot') or p.decision != 'approved' or p.reference in executed:
             continue
         key = p.reference.record_id
-        label = 'package-list refresh' if p.kind == 'metadata_refresh' else 'reboot of the VM'
+        label = 'package-list refresh' if p.kind == 'metadata_refresh' else 'reboot of the server'
         confirmed = st.checkbox('I confirm running the approved ' + label, key='ubuntu_confirm_maintenance_' + key)
 
         def run(reference=p.reference, key=key):
@@ -439,7 +439,7 @@ def _ubuntu_restore_actions(backend, connection, proposals, capabilities, workfl
         if p.kind != 'recovery' or p.decision != 'approved' or p.reference in executed:
             continue
         key = p.reference.record_id
-        confirmed = st.checkbox('I confirm restoring the recorded before-state of ' + p.control_id + ' on the VM',
+        confirmed = st.checkbox('I confirm restoring the recorded before-state of ' + p.control_id + ' on the server',
                                 key='ubuntu_confirm_restore_' + key)
 
         def run(reference=p.reference, key=key):
@@ -542,8 +542,7 @@ def _confirm_execution(hardening, session_id, state, target):
         st.markdown(f'**Confirm: change {len(rows)} setting(s) on {md_escape(target.hostname)}**')
         st.dataframe(rows, hide_index=True)
         st.caption('The Remediation Agent prechecks each value and skips anything that changed since the scan. '
-                   'A fresh Scanner rescan verifies the result. Expired approvals are refused. '
-                   'If the server is a virtual machine, take a snapshot first for a quick way back.')
+                   'A fresh Scanner rescan verifies the result. Expired approvals are refused.')
         with st.container(horizontal=True):
             if st.button('Confirm and execute', type='primary', key='agentic_execute'):
                 st.session_state.pop(CONFIRM, None)
@@ -796,14 +795,41 @@ def render_agentic(database_path: Path):
             if backend.session.identity.platform == 'ubuntu':
                 _ubuntu_pending_changes(backend, connection)
                 _ubuntu_acceptance(backend, connection)
-                snapshot = backend.snapshot(connection, st.session_state.get(WORKFLOW_KEY))
+                workflow = st.session_state.get(WORKFLOW_KEY)
+                snapshot = backend.snapshot(connection, workflow)
+                previous = None if workflow else backend.previous_workflow(connection)
+                if previous:  # After a reconnect, as on Windows: the last session on this server can be resumed.
+                    earlier, at, open_count = previous
+                    st.caption(f'Earlier session on {md_escape(backend.session.identity.hostname)}: last round {myt(at)}'
+                               + (f', {open_count} fix(es) still open.' if open_count else '.'))
                 _show_progress(dict(zip(STEPS, snapshot.step_states)), None)
-                with st.container(horizontal=True):
-                    if st.button('Start agentic round', key='agentic_run', disabled=not capabilities.can_use_model):
+                undecided, pending = _ubuntu_open_fixes(snapshot)
+                with st.container(horizontal=True, vertical_alignment='center'):
+                    # As on Windows, a new round is offered once nothing in this one awaits a decision or execution,
+                    # so approvals are never left behind in an older round.
+                    held = undecided or pending or (previous and previous[2])  # previous[2]: its open fixes
+                    if previous and previous[2]:
+                        st.markdown('Resume the earlier session to decide or execute its open fixes first.')
+                    if not held and st.button(
+                            'Start agentic round' if snapshot.current_round_reference is None else 'Run next round',
+                            key='agentic_run', type='primary', disabled=not capabilities.can_use_model,
+                            help='Scan the server, rank the findings and propose fixes. Nothing changes until you '
+                                 'approve and execute.'):
                         # Bounded Ubuntu agents through the backend; the orchestrator plans, the administrator approves.
                         _run_round(None, None)
+                    if previous and st.button('Resume earlier session', key='agentic_resume'):
+                        st.session_state[WORKFLOW_KEY] = earlier
+                        st.session_state.pop(UBUNTU_CONFIRM, None)
+                        st.rerun()
                     st.button('Refresh status', key='ubuntu_refresh', icon=':material/refresh:',
                               help='Reload this page from the stored records; the server connection stays open.')
+                    if undecided:
+                        st.markdown(f'{len(undecided)} proposed fix(es) need your decision in **Fixes**.')
+                    if workflow and st.button('New session', key='agentic_reset', type='tertiary',
+                                              help='Leave this session; its records stay and it can be resumed.'):
+                        st.session_state.pop(WORKFLOW_KEY, None)
+                        st.session_state.pop(UBUNTU_CONFIRM, None)
+                        st.rerun()
                 _ubuntu_execute_bar(backend, connection, snapshot, capabilities)
                 render_snapshot_tabs(snapshot, fixes_panel=lambda: _ubuntu_show_fixes(backend, connection, snapshot,
                                                                                      capabilities))
@@ -872,6 +898,18 @@ UBUNTU_DONE = {'Fixed, re-scan: Compliant': ('Verified compliant', 'green'), 'Ru
 UBUNTU_CONFIRM = 'ubuntu_confirm_execution'
 
 
+def _ubuntu_open_fixes(snapshot):
+    """Fixes of the shown round still awaiting a decision, and approved ones not yet executed whose approval is still
+    valid (an expired approval can never run, so it does not hold the next round back)."""
+    executed = {r.proposal_reference for r in snapshot.results}
+    now = datetime.now(timezone.utc)
+    fixes = [p for p in snapshot.proposals if p.kind == 'control_remediation' and p.reference not in executed]
+    undecided = [p for p in fixes if p.decision is None and p.eligible_commands]
+    pending = [p for p in fixes if p.decision == 'approved' and p.approved_request_id
+               and not (p.expiry and datetime.fromisoformat(p.expiry) <= now)]
+    return undecided, pending
+
+
 def _ubuntu_now_line(p):
     """The Windows row's "Now X → Y" line: the preview's readable lines, then the action and its version."""
     lines = [line.strip() for line in p.exact_preview.splitlines() if line.strip()]
@@ -901,6 +939,8 @@ def _ubuntu_decision_cell(backend, connection, card, p, operator, comment):
                    + (f'valid until {myt(p.expiry)}' if p.expiry else ''))
     elif p.decision == 'rejected':
         st.markdown(badge('Rejected'))
+        if p.rejected_by:
+            st.caption('by ' + md_escape(p.rejected_by))
     elif not p.eligible_commands:
         st.markdown(badge('No decision'))
     else:
@@ -918,6 +958,8 @@ def _ubuntu_decision_cell(backend, connection, card, p, operator, comment):
                 _ubuntu_decide(backend, connection, p, False, operator, comment)
                 st.session_state.pop('agentic_comment', None)
                 st.rerun()
+    for author, text in p.comments:
+        st.caption('Comment: ' + md_escape(text) + ' (' + md_escape(author) + ')')
 
 
 def _ubuntu_verification_box(backend, connection, snapshot):
@@ -1005,6 +1047,8 @@ def _ubuntu_show_fixes(backend, connection, snapshot, capabilities):
             'Fix proposed, but the read-only check on the server refused it (a prerequisite is missing, for example '
             'an SSH allow rule before the firewall is enabled)' if c['state'] == NO_PLAN
             else c['decision'] + ': ' + c['reason'])} for c in skipped], hide_index=True)
+    if snapshot.current_round_reference is None:
+        return  # Maintenance belongs to a round's applied fixes: nothing to offer before the first round.
     with st.container(border=True):
         st.markdown('**Maintenance**')
         carded = {q.reference for c in cards for q in c['proposals']}

@@ -39,6 +39,9 @@ class LibraryAction:
 _ACCOUNT = 'Applies when local passwords are next set or changed; existing passwords are not rotated. '
 _AUDIT = 'Adds Security event log entries for this subcategory; increases log volume slightly. Nothing is disabled.'
 _RDP = 'Sets the local Remote Desktop policy value; existing sessions are unaffected until reconnect. '
+# 1.1.5, 1.1.7 and 2.3.10.1 exist only in the local security policy database, so they are written with secedit.
+_SECPOL = ('Written with secedit from a template that holds only this setting; the runner checks that no other '
+           'security policy setting changed.')
 # Firewall logging only: which traffic is allowed never changes, so the agents' WinRM channel cannot be cut. Firewall
 # on/off and inbound-block policy (9.2.1, 9.2.2, 9.3.1, 9.3.2) stay assessment-only for that reason.
 _FWLOG = ('Sets the local firewall policy logging value; it only records traffic. Which connections are allowed does not '
@@ -59,10 +62,19 @@ LIBRARY = MappingProxyType({a.action_id: a for a in (
                   'Locked accounts unlock after 15 minutes.', requires_compliant=('1.2.2',)),
     LibraryAction('REM-1.2.4', '1.2.4', 'Reset lockout counter after: 15 minutes', 15,
                   'Failed-logon counter resets after 15 minutes.', requires_compliant=('1.2.2', '1.2.1')),
+    LibraryAction('REM-1.1.5', '1.1.5', 'Password complexity: enabled', 1,
+                  _ACCOUNT + 'New passwords must use three of upper case, lower case, digits and symbols, and must not '
+                  'contain the account name. ' + _SECPOL),
+    LibraryAction('REM-1.1.7', '1.1.7', 'Store passwords using reversible encryption: disabled', 0,
+                  'Passwords set from now on are no longer stored in a reversible form; applications that need the '
+                  'plain password (CHAP, Digest authentication) stop working for those accounts. ' + _SECPOL),
     LibraryAction('REM-2.3.1.1', '2.3.1.1', 'Disable the built-in Guest account', False,
                   'The Guest account (SID RID 501) can no longer log on.'),
     LibraryAction('REM-2.3.1.2', '2.3.1.2', 'Limit blank-password accounts to console logon', 1,
                   'Local accounts with blank passwords cannot log on over the network.'),
+    LibraryAction('REM-2.3.10.1', '2.3.10.1', 'Allow anonymous SID/name translation: disabled', 0,
+                  'Anonymous users can no longer turn account SIDs into names or names into SIDs; signed-in users '
+                  'and services are unaffected, very old anonymous tools may stop working. ' + _SECPOL),
     LibraryAction('REM-2.3.10.2', '2.3.10.2', 'Block anonymous enumeration of SAM accounts', 1,
                   'Anonymous users can no longer list local account names.'),
     LibraryAction('REM-2.3.10.3', '2.3.10.3', 'Block anonymous enumeration of SAM accounts and shares', 1,

@@ -10,9 +10,22 @@ Full run-by-run history up to 26 October 2026: [docs/archive/PROGRESS_LOG_2026-1
 | Scanner Agent | LLM tool loop with its own WinRM channel. It also runs verification rescans. **Collector v5 ran on the real VM on 30 October:** all 32 controls were collected (state `ok`), including real values for the 5 audit controls. |
 | Analysis Agent | **LLM tool loop (new).** It reads the deterministic ranking, investigates up to 2 findings, flags up to 3 for attention and triages every gap, all with fact-checked codes. It can never change a score (D2). If it fails, the same deterministic ranking is used. |
 | Orchestrator | Assessment phase: delegates Scanner and Analysis, may send the Scanner back once on a rescan request, then makes one `submit_plan` (one decision per finding; since 1 November a finding it leaves out is deferred by code as `not_decided`, while fixes stay strictly checked). **Remediation phase (new):** delegates the Remediation Agent and a verification rescan, then decides `finish` / `next_round` / `remediation_review`. |
-| Remediation Agent | **LLM tool loop (new).** It prechecks the VM read-only, then executes (as a list, in its chosen order) or skips each *approved* request, and stops after an uncertain outcome. 25 library actions (21 until the four firewall logging fixes of 7 November). **First real VM remediation on 30 October:** 1.2.2, 1.1.1 and 1.1.3 were approved, executed and verified compliant. |
+| Remediation Agent | **LLM tool loop (new).** It prechecks the VM read-only, then executes (as a list, in its chosen order) or skips each *approved* request, and stops after an uncertain outcome. 28 library actions (21 until the four firewall logging fixes of 7 November; 25 until the three secedit fixes of 9 November). **First real VM remediation on 30 October:** 1.2.2, 1.1.1 and 1.1.3 were approved, executed and verified compliant. |
 | Evaluation | **Latest: 16-run evaluation of the 1 November code** (real `qwen3:8b`, simulated VM, 8 scenarios × 2, `20261101_185014`, code frozen by SHA-256 before the run): **16/16 assessment rounds produced an accepted plan and both phases ran; 0 safety failures.** 8/16 plans left out the two lowest-ranked findings, which code deferred as `not_decided`. Assessment 221–409 s, remediation 110–168 s (NFR06). Judgement scenarios unchanged: no better than a fixed rule. Earlier: 20-run evaluation on `468b9a6` (`20261027_144751`), 20/20 completed. Real VM: one round with remediation on 30 October. |
 | Legacy | Removed. The upload/manual-exchange page went on 27 October (last commit with it: `81b9d52`); the shared-folder building blocks went on 29 October (last commit with them: `0ddd3ba`). Docs: [docs/archive/legacy/](docs/archive/legacy/). The staged non-AI pipeline (`hardening/agents.py`, `hardening/actions.py`) went on 1 November; `framework.py` is now only the run register (`AssessmentRuns`). On 3 November the preview-era modules and every manual "run it inside the VM" mode went too (entry below). |
+
+## 9 November 2026 (later): Ubuntu page gaps closed, server wording
+- **Resume after a reconnect:** the Ubuntu Agentic page offers **Resume earlier session** (newest round of this server and registration epoch), with how many fixes are still open, as the Windows page does. **New session** leaves a session.
+- **No stranded approvals:** a new round is offered only once no fix awaits a decision or execution with a valid approval; after a reconnect, an earlier session with open fixes must be resumed first.
+- **Comments shown:** each Ubuntu fix row shows its decision comments and who rejected it (`ProposalRow.rejected_by`, `comments`).
+- **Maintenance after the first round only.**
+- **Wording:** on-screen text says "server" instead of "VM", and the "take a snapshot first" advice is gone (Windows execution confirmation, Ubuntu setup message, undo text). Agent prompts are unchanged.
+
+## 9 November 2026: three more Windows fixes (25 → 28 library actions)
+- **REM-1.1.5, REM-1.1.7, REM-2.3.10.1:** password complexity on, reversible encryption off, anonymous SID/name translation off. Only the local security policy database holds them, so the runner writes them with `secedit /configure` from a template holding only that one line, into a new empty database. It exports the policy before and after and fails if any other `[System Access]` line changed.
+- Only the four firewall controls that decide which traffic is allowed (9.2.1, 9.2.2, 9.3.1, 9.3.2) remain assessment-only, for channel safety.
+- **Tests:** both runner tables agree; each secedit action writes the line the collector reads; template and comparison checks in `test_remediation_runner.ps1`. Not yet run on the real VM.
+- **Ubuntu:** a waiting SSH or UFW change is confirmed over a fresh login the dashboard makes itself (login kept in session memory only), and **Run safety check** runs both execution acceptance tests in one click.
 
 ## 8 November 2026 (later): pairing by code for both systems, no typed server details, final check
 
@@ -239,7 +252,7 @@ Source: `data/preview_imports_agentic.sqlite3`. Target: `WIN-VFT30DUDRHQ`, UUID 
 
 ## 30 October 2026, afternoon: administrator goals (AGENTIC_ASSESSMENT Recommendation 1, revisited)
 
-- **Why now:** set aside on 29 October because free text has endless inputs. The user approved the redesign in [docs/ADMIN_GOALS_DESIGN.md](docs/design/ADMIN_GOALS_DESIGN.md): the model only turns the text into a closed set of constraints, code enforces them, and the administrator sees the reading before approving.
+- **Why now:** set aside on 29 October because free text has endless inputs. The user approved the redesign in [docs/archive/ADMIN_GOALS_DESIGN.md](docs/archive/ADMIN_GOALS_DESIGN.md): the model only turns the text into a closed set of constraints, code enforces them, and the administrator sees the reading before approving.
 - **Built:**
   - `interpret_goal` is offered first and only when a goal is given. Its fields: only/exclude areas, exclude controls (library controls only), focus, max_fixes, unclear.
   - Fix code `serves_goal` and skip code `outside_goal`, fact-checked like the others.
@@ -320,7 +333,7 @@ Source: `data/preview_imports_agentic.sqlite3`. Target: `WIN-VFT30DUDRHQ`, UUID 
   - Not changed: about two dozen small SQLite reads per Overview render, which is acceptable for a local database.
   - Python suite: **181 passed**.
 - **Report:** REPORT_REVISIONS **A6** maps the §4.7 mock-ups (Figures 4.11–4.16) to the delivered interface, with replacement text and the screenshots to take.
-- **Proposal:** [docs/ADMIN_GOALS_DESIGN.md](docs/design/ADMIN_GOALS_DESIGN.md), administrator goals for the Orchestrator, redesigned to answer the 29 October objection. Awaiting the user's decision; not built.
+- **Proposal:** [docs/archive/ADMIN_GOALS_DESIGN.md](docs/archive/ADMIN_GOALS_DESIGN.md), administrator goals for the Orchestrator, redesigned to answer the 29 October objection. Awaiting the user's decision; not built.
 - **Next:** the first real VM remediation (VM_TRIAL_RUNBOOK), now through the confirmation step.
 
 ## 29 October 2026, evening: judgement scenarios evaluated (hypothesis not supported)

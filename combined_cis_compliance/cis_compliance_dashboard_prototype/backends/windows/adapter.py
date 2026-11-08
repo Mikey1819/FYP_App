@@ -126,7 +126,7 @@ class WindowsBackend(BoundBackend):
             p = item['proposal']; action = LIBRARY[p['action_id']]; decision = item['decision_record'] or {}
             ref = self._ref(p['request_id'])
             proposals.append(ProposalRow(ref, 'control_remediation', p['control_id'], p['action_id'], action.title,
-                'schema2', f"{p['expected_before']!r} → {p['value']!r}", (action.impact,), 'Registered VM recovery snapshot',
+                'schema2', f"{p['expected_before']!r} → {p['value']!r}", (action.impact,), 'Restore from your own backup of the server',
                 (), item['decision'], decision.get('expires_at'), p['reason'],
                 ('approve', 'reject') if latest and item['decision'] is None else ()))
             if item['verdict']:

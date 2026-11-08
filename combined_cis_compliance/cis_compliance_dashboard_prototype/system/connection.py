@@ -72,7 +72,7 @@ class ConnectionService:
         credentials = self.vault.take(request.credential_ref)
         try:
             if self._sessions:
-                raise ValueError('Disconnect the active VM before connecting another target')
+                raise ValueError('Disconnect the active server before connecting another one')
             started = datetime.now(timezone.utc).isoformat()
             discovery = self._discover(request.endpoint)
             if discovery.transport is None:
@@ -137,7 +137,7 @@ class ConnectionService:
                                                'cleared.')
             if isinstance(exc, PendingChangeElsewhere):
                 code = 'pending_change_elsewhere'
-                detail = ('Another VM has a running or unresolved change. Reconnect to that VM and settle it '
+                detail = ('Another server has a running or unresolved change. Connect to that server and settle it '
                           '(check its status or confirm it) first. Credentials were cleared.')
             return ConnectionResult('disconnected', diagnostic_code=code, detail=detail)
         finally:

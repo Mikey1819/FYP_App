@@ -217,6 +217,9 @@ class ProposalRow:
     before_state_sha256: str | None = None
     # Who approved it, as recorded in the approved request (shown like the Windows page).
     approved_by: str | None = None
+    # Who rejected it, and the optional decision comments as (operator, text), as the Windows page shows them.
+    rejected_by: str | None = None
+    comments: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)

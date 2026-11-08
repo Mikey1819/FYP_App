@@ -120,7 +120,7 @@ NEXT_STEP = {
                    'remaining_findings': 'fixable findings remain ({remaining}); run a new round to review them'},
     'remediation_review': {'verification_failed': 'verification failed for {failed}; a new proposal and approval are '
                                                   'required before any further attempt',
-                           'uncertain_outcome': 'the outcome of {uncertain} is uncertain; review the VM state before '
+                           'uncertain_outcome': 'the outcome of {uncertain} is uncertain; review the server state before '
                                                 'any further attempt',
                            'remediation_incomplete': 'the Remediation Agent did not decide {not_attempted}; execute '
                                                      'again or without AI while the approval is valid'}}
@@ -674,7 +674,7 @@ class RemediationTools(_RoleTools):
         try:
             observed = self.rounds.scanner.observe()
         except ChannelError as exc:
-            self.facts, self.stopped = {}, 'VM could not be observed'
+            self.facts, self.stopped = {}, 'server could not be observed'
             return dict(state=exc.state, detail=exc.detail, must_stop=True)
         results = observed.results
         by_id = {r.control.control_id: r for r in results}
@@ -727,8 +727,8 @@ class RemediationTools(_RoleTools):
         try:
             verdict = self.executor.execute(request_id)
         except ChannelError as exc:  # Identity check failed before the runner was sent: nothing was written.
-            self.stopped = 'VM channel ' + exc.state
-            verdict = 'Refused before execution: VM channel ' + exc.state
+            self.stopped = 'server channel ' + exc.state
+            verdict = 'Refused before execution: server channel ' + exc.state
         except ValueError as exc:  # Executor refusal before any VM call, e.g. the approval expired meanwhile.
             verdict = 'Refused before execution: ' + str(exc)[:200]
         kind = verdict_kind(verdict)
@@ -1315,7 +1315,7 @@ class AgenticHardening:
             observed = self.scanner.observe().results
         except ChannelError as exc:  # Nothing is executed and every approval stays open.
             return [dict(proposal_id=None, control_id=None, action_id=None,
-                         verdict='Refused before execution: the VM could not be prechecked (' + exc.state + ')')]
+                         verdict='Refused before execution: the server could not be prechecked (' + exc.state + ')')]
         by_id = {r.control.control_id: r for r in observed}
         for record in self.store.for_run(run_id):
             if record['decision'] == 'approved' and record['verdict'] is None:

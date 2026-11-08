@@ -143,3 +143,75 @@ class FixUiTests(StoreFixture):
         self.assertEqual(len([c for c in channel.runner_calls if c.startswith(b'{"op":"execute"}')]), 2)
         for database in self.root.rglob('*.sqlite3'):
             self.assertNotIn(b'FIXTURE-SECRET-SENTINEL', database.read_bytes())
+
+    def test_open_fixes_hold_the_next_round_comments_show_and_a_reconnect_resumes(self):
+        """As on Windows: no new round while a fix awaits a decision or execution (so no approval is left behind),
+        decision comments are shown, maintenance waits for a round, and after a reconnect the session is resumed."""
+        from streamlit.testing.v1 import AppTest
+        from tests.integration.test_system_acceptance import existing_page
+        from tests.integration.test_ubuntu_agents import call, plan_call, team, scanner_ok, RankingAware, Scripted
+        from tests.integration.test_ubuntu_live_path import open_gate, TARGET as LIVE
+        from backends.ubuntu.actions import ActionSpec
+        from backends.ubuntu.adapter import UbuntuBackend
+        from system.bootstrap import SERVICE_KEY, WORKFLOW_KEY
+        from system.connection import ConnectionService
+        from system.ledger import CoordinationLedger
+        self.addCleanup(setattr, RankingAware, 'target', 'ubuntu:fixture')
+        spec = ActionSpec(self.family.action_id, 1, self.family.implementation_sha256, ('1.5.1',), self.family.validate, 60,
+                          propose=lambda cid, evidence: {'name': 'alpha', 'value': 'new'}, title='TEST-ONLY fixture value',
+                          recovery={'kind': 'restore_backup', 'scope': ['fixture:alpha']})
+        ledger = CoordinationLedger(self.root / 'integration.sqlite3')
+
+        def backend_factory(session):
+            fix = {'control_id': '1.5.1', 'decision': 'fix', 'action_id': spec.action_id, 'reason_code': 'highest_risk'}
+            clients = team([call('delegate_scanner'), call('delegate_analysis'), plan_call([fix])],
+                           scanner_ok(), RankingAware())
+            for client in clients.values():
+                if isinstance(client, Scripted):
+                    for item in client.script:
+                        item['tool_calls'][0]['function']['arguments']['target_id'] = session.target_id
+            RankingAware.target = session.target_id
+            return UbuntuBackend(self.root / 'ubuntu' / 'imports.sqlite3', session=session, ledger=ledger,
+                                 families={spec.action_id: spec}, model_client_factory=clients.__getitem__,
+                                 model_probe=lambda: True)
+
+        service = ConnectionService(ledger, ssh_factory=lambda *a: self.make_channel(), backend_factory=backend_factory)
+        app = AppTest.from_function(existing_page, default_timeout=60)
+        app.session_state['fixture_database'] = str(self.root / 'windows' / 'imports.sqlite3')
+        app.session_state[SERVICE_KEY] = service
+
+        def keys():
+            return {b.key for b in app.button if b.key}
+        with open_gate():
+            app.run()
+            self.assertEqual(paired_connect(app, platform='ubuntu', hostname=LIVE[1], identity=LIVE[0]).state, 'connected')
+            self.assertEqual(app.button(key='agentic_run').label, 'Start agentic round')
+            self.assertNotIn('ubuntu_prepare_refresh', keys())  # no maintenance before the first round
+            self.assertNotIn('agentic_resume', keys())  # nothing to resume yet
+            app.button(key='agentic_run').click().run()
+            self.assertFalse(list(app.error), [e.value for e in app.error])
+            self.assertNotIn('agentic_run', keys())  # a fix awaits a decision: no new round yet
+            self.assertIn('1 proposed fix(es) need your decision', self.text(app))
+            self.assertIn('ubuntu_prepare_refresh', keys())  # the round exists, so maintenance is offered
+            app.text_input(key='agentic_operator').input('fixture-operator').run()
+            app.text_input(key='agentic_comment').input('Approved for the Saturday window').run()
+            self.approve_buttons(app)[0].click().run()
+            self.assertFalse(list(app.error), [e.value for e in app.error])
+            self.assertIn('Comment: Approved for the Saturday window (fixture-operator)', self.text(app))
+            self.assertNotIn('agentic_run', keys())  # approved but not executed: still no new round
+            workflow = app.session_state[WORKFLOW_KEY]
+            # Disconnect and connect again: the page offers the earlier session instead of a fresh round.
+            app.button(key='agentic_disconnect').click().run()
+            self.assertEqual(paired_connect(app, platform='ubuntu', hostname=LIVE[1], identity=LIVE[0]).state, 'connected')
+            self.assertNotIn(WORKFLOW_KEY, app.session_state)
+            self.assertIn('1 fix(es) still open', self.text(app))
+            self.assertNotIn('agentic_run', keys())
+            app.button(key='agentic_resume').click().run()
+            self.assertFalse(list(app.error), [e.value for e in app.error])
+            self.assertEqual(app.session_state[WORKFLOW_KEY], workflow)
+            self.assertIn('by fixture-operator, valid until', self.text(app))
+            self.assertIn('Comment: Approved for the Saturday window (fixture-operator)', self.text(app))
+            self.assertIn('ubuntu_execute_review', keys())
+        self.assertEqual(self.writes(), [])
+        for database in self.root.rglob('*.sqlite3'):
+            self.assertNotIn(b'FIXTURE-SECRET-SENTINEL', database.read_bytes())

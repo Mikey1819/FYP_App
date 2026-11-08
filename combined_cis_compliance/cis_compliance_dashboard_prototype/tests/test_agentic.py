@@ -17,7 +17,7 @@ from hardening.import_storage import ImportedEvidenceStore
 from hardening.remediation import RUNNER, ApprovedActionExecutor, RemediationStore
 from hardening.domain import Status
 from hardening.risk import analyse
-from hardening.server2022_catalogue import SOURCES
+from hardening.server2022_catalogue import CATALOGUE, SOURCES
 from hardening.winrm_channel import IDENTITY_SCRIPT, LiveScanner
 from test_investigation import MockClient
 from evidence_fixture import evidence_fixture
@@ -899,7 +899,7 @@ class RemediationPhaseTests(AgenticTestCase):
         hardening.scanner.session_factory = lambda _: (_ for _ in ()).throw(ConnectionError('Connection refused'))
         executed = hardening.execute_approved(result['session_id'], deterministic=True)
         self.assertEqual(vm.writes, [])
-        self.assertTrue(executed['verdicts'][0]['verdict'].startswith('Refused before execution: the VM could not'))
+        self.assertTrue(executed['verdicts'][0]['verdict'].startswith('Refused before execution: the server could not'))
         self.assertTrue(all(r['verdict'] is None for r in self.store.for_run(result['framework_run_id'])))  # Still open.
 
     def test_uncertain_outcome_stops_the_agent_and_forces_review(self):
@@ -1308,6 +1308,20 @@ class LibraryParityTests(unittest.TestCase):
                 self.assertEqual(written, SOURCES[entry['control_id']])
                 self.assertTrue(written.endswith(sources[entry['control_id']]))
                 self.assertEqual((entry['kind'], entry['value']), ('reg_dword', 1))
+
+    def test_secedit_actions_write_exactly_the_policy_line_the_collector_reads(self):
+        output = subprocess.run(['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', str(RUNNER),
+                                 '-ListActions'], capture_output=True, text=True, timeout=60, check=True).stdout
+        secedit = {e['control_id']: e for e in json.loads(output).values() if e['kind'] == 'secedit'}
+        self.assertEqual(sorted(secedit), ['1.1.5', '1.1.7', '2.3.10.1'])
+        for control_id, entry in secedit.items():
+            # The read-back after the write checks the same value the scan reads.
+            self.assertEqual('secedit-export:System Access/' + entry['setting'], SOURCES[control_id])
+            control = next(c for c in CATALOGUE if c.control_id == control_id)
+            self.assertTrue(control.rule.matches(entry['value']))
+        # Every control has a library action except the four that decide which traffic the firewall allows.
+        self.assertEqual(sorted({c.control_id for c in CATALOGUE} - {a.control_id for a in LIBRARY.values()}),
+                         ['9.2.1', '9.2.2', '9.3.1', '9.3.2'])
 
 
 if __name__ == '__main__':

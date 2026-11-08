@@ -164,6 +164,9 @@ class StoredProposal:
     decision: str | None
     approved_raw: bytes | None
     receipts: tuple
+    # Who rejected it (from the rejection record), and the optional comments in the order written: (operator, text).
+    rejected_by: str | None = None
+    comments: tuple = ()
 
 
 class AgentLogStore:
@@ -494,6 +497,7 @@ class UbuntuStore:
             rows = db.execute('SELECT id, payload FROM rem_proposals ORDER BY rowid').fetchall()
             decisions = {r['id']: (r['decision'], bytes(r['payload'])) for r in db.execute('SELECT * FROM rem_decisions')}
             receipts = [parse_receipt(bytes(r['payload'])) for r in db.execute('SELECT payload FROM rem_receipts ORDER BY rowid')]
+            notes = [json.loads(r['payload']) for r in db.execute('SELECT payload FROM rem_comments ORDER BY rowid')]
         result = []
         for row in rows:
             payload = json.loads(bytes(row['payload']))
@@ -502,8 +506,11 @@ class UbuntuStore:
             decision, data = decisions.get(row['id'], (None, None))
             approved = data if decision == 'approved' else None
             request_id = json.loads(approved)['request_id'] if approved else None
+            rejected_by = json.loads(data)['operator'] if decision == 'rejected' else None
             result.append(StoredProposal(row['id'], payload, decision, approved,
-                                         tuple(r for r in receipts if request_id and r['request_id'] == request_id)))
+                                         tuple(r for r in receipts if request_id and r['request_id'] == request_id),
+                                         rejected_by, tuple((n['operator'], n['text']) for n in notes
+                                                            if n['proposal_id'] == row['id'])))
         return tuple(result)
 
     # ---- consistency ------------------------------------------------------------------------

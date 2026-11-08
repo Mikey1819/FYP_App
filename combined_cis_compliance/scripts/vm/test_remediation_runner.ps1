@@ -55,6 +55,30 @@ foreach ($id in $Library.Keys) {
     }
 }
 Assert-Refused @{ expected_before = $null } 'not-configured precondition for a net accounts action'
+# secedit actions: the table resolves each to its one policy line, and a "Not configured" precondition is refused.
+foreach ($case in @(@('1.1.5', 'REM-1.1.5', 1, 0, 'PasswordComplexity'), @('1.1.7', 'REM-1.1.7', 0, 1, 'ClearTextPassword'),
+                    @('2.3.10.1', 'REM-2.3.10.1', 0, 1, 'LSAAnonymousNameLookup'))) {
+    $sec = Assert-RemediationRequest (New-Request @{ control_id = $case[0]; action_id = $case[1]; value = $case[2]; expected_before = $case[3] }) 'WIN-LAB' 'e5d10741-f200-4292-a099-e6be76032f4e' $now
+    if ($sec.kind -ne 'secedit' -or $sec.setting -cne $case[4]) { throw "$($case[1]) resolved incorrectly." }
+    Assert-Refused @{ control_id = $case[0]; action_id = $case[1]; value = $case[2]; expected_before = $null } "$($case[1]) not-configured precondition"
+    Assert-Refused @{ control_id = $case[0]; action_id = $case[1]; value = $case[3]; expected_before = $case[3] } "$($case[1]) value differs from library"
+}
+# The template holds exactly one setting line, so secedit has nothing else to apply.
+$template = @(New-OneSettingTemplate 'PasswordComplexity' 1)
+$settingLines = @(Get-SystemAccessLines $template)
+if ($settingLines.Count -ne 1 -or $settingLines[0] -cne 'PasswordComplexity = 1') { throw 'Template must hold only the one setting.' }
+if ($template[0] -cne '[Unicode]' -or $template -notcontains 'signature="$CHICAGO$"') { throw 'Template header is malformed.' }
+# Reading an export: only [System Access] lines count, and every line other than the setting is compared.
+$export = @('[Unicode]', 'Unicode=yes', '[System Access]', 'MinimumPasswordAge = 0', 'PasswordComplexity = 0',
+            'ClearTextPassword = 0', '', '[Event Audit]', 'AuditLogonEvents = 0', '[Version]', 'signature="$CHICAGO$"')
+$access = @(Get-SystemAccessLines $export)
+if ($access.Count -ne 3) { throw 'Only [System Access] lines must be read.' }
+if ((Get-SettingValue $access 'PasswordComplexity') -cne '0') { throw 'Setting value read incorrectly.' }
+if ($null -ne (Get-SettingValue $access 'LSAAnonymousNameLookup')) { throw 'An absent setting must read as null.' }
+$changed = @($access | ForEach-Object { $_ -replace '^PasswordComplexity = 0$', 'PasswordComplexity = 1' })
+if ((Get-OtherSettings $access 'PasswordComplexity') -cne (Get-OtherSettings $changed 'PasswordComplexity')) { throw 'Changing only the setting must leave the others equal.' }
+$alsoOther = @($changed | ForEach-Object { $_ -replace '^MinimumPasswordAge = 0$', 'MinimumPasswordAge = 3' })
+if ((Get-OtherSettings $access 'PasswordComplexity') -ceq (Get-OtherSettings $alsoOther 'PasswordComplexity')) { throw 'A second changed setting must be detected.' }
 $missing = [pscustomobject]@{ observations = @([pscustomobject]@{ control_id = '18.10.57.3.9.4'; state = 'missing'; value = $null }) }
 $setTo0 = [pscustomobject]@{ observations = @([pscustomobject]@{ control_id = '18.10.57.3.9.4'; state = 'ok'; value = 0 }) }
 if (-not (Test-Precondition $missing '18.10.57.3.9.4' $null)) { throw 'Still not configured must satisfy a null precondition.' }

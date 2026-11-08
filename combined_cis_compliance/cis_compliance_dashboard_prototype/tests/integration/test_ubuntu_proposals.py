@@ -326,8 +326,13 @@ class BackendRemediationTests(StoreFixture):
         backend = self.backend(self.FIX)
         handle, snap = self.round(backend)
         workflow = handle.binding.workflow_session_id
-        state = backend.decide('c', workflow, snap.proposals[0].reference, False, 'fixture-operator', '', 'op-r').state
+        state = backend.decide('c', workflow, snap.proposals[0].reference, False, 'fixture-operator',
+                               'Not in this window', 'op-r').state
         self.assertEqual(state, 'rejected')
+        [row] = backend.snapshot('c', workflow).proposals
+        # As on the Windows page: who rejected it and the comment are shown.
+        self.assertEqual((row.decision, row.rejected_by), ('rejected', 'fixture-operator'))
+        self.assertEqual(row.comments, (('fixture-operator', 'Not in this window'),))
         with mock.patch('backends.ubuntu.adapter.execution_gate', return_value=()):
             with self.assertRaises(ValueError):
                 backend.execute_approved('c', workflow, snap.current_round_reference, (), True, 'op-exec')
