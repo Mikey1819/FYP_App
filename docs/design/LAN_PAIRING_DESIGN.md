@@ -150,3 +150,14 @@ Each step ends with its tests passing before the next starts.
 ## Proposed decision D7
 
 > Servers are paired by a one-time code over the local network. The server helper shows the code and opens WinRM to paired laptops only. The main program lists them and can disconnect any of them. Identity is fixed by the machine UUID saved at pairing. No internet relay and no permanent remote-access service: pairing works only while the helper window is open.
+
+## Ubuntu 22.04 (unified system, 8 November 2026)
+
+The unified Windows and Ubuntu system pairs Ubuntu servers by code too, so no server detail is typed for either system.
+
+- **Helper:** `scripts/server_access/fyp-pair-ubuntu.py`, Python 3.10 standard library, run with `sudo` on the server. It answers the same `find` message with a `found` message whose fields are those of the Windows answer plus `host_key`, the SHA256 fingerprint of the SSH host key the dashboard will meet (the first key type in the SSH library's preference that `sshd -T` offers). `machine_uuid` carries `/etc/machine-id` written as a dashed UUID. The MAC covers `host_key`, appended after the Windows fields, so Windows messages and `pairing_vectors.json` are unchanged.
+- **Laptop check:** an answer with `os = ubuntu` must carry a well-formed `host_key`, and a Windows answer must not. The connection passes the signed fingerprint as the confirmed host key: the SSH login is refused before any password is sent if the server shows another key. Hostname and machine ID are checked after login.
+- **Trust argument:** reading the code on the server's own console and typing it here proves the answer came from that console's machine, which stands for reading the fingerprint from the console as the earlier manual form required. The residual risk is the one already accepted for Windows in D7 (an overheard question could let an attacker on the same network try codes offline within the 10-minute window); the first login also needs the server's own password, and later logins use the pinned key.
+- **No server-side record or access control:** SSH is already the server's own access path, so the Ubuntu helper keeps no pairing file and the Servers page shows no paired-laptops list for Ubuntu. Its only change is the temporary UFW rule for UDP 47815 from private networks, deleted when it stops.
+- **Address changes:** the integration ledger's registrations are append-only, so a re-pair at a new address adds an `endpoint_moves` row (proof `pairing_code`) for the same machine, hostname and host key; a changed host key is still refused.
+- **Supported systems:** `system_detect.py` supports only Windows Server 2022 (stand-alone) and Ubuntu 22.04 (built and tested on 22.04.5 LTS; every 22.04 point release reports VERSION_ID 22.04 and has the same benchmark).

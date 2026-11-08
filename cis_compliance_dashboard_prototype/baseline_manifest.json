@@ -1,7 +1,7 @@
 {
-  "created_at": "2026-11-08T10:44:07.937869+00:00",
+  "created_at": "2026-11-08T11:28:55.679149+00:00",
   "root": "C:\\Users\\User\\Documents\\Degree\\FYP 1\\FYP_App\\combined_cis_compliance",
-  "basis": "Windows source after syncing the non-pairing commits of the Windows branch lan-pairing (643376f..b0b6291, up to 7 November 2026) on branch sync-windows-lan-pairing. Protected and metadata hashes are the synced bytes; authorized_ui hashes stay the original pre-integration bytes.",
+  "basis": "Windows source after syncing the Windows branch lan-pairing (643376f..b0b6291, up to 7 November 2026) on branch sync-windows-lan-pairing, including LAN pairing (D7) extended to Ubuntu 22.04. Protected and metadata hashes are the synced bytes; authorized_ui hashes stay the original pre-integration bytes.",
   "previous": {
     "created_at": "2026-11-05T13:25:35.351168+00:00",
     "root": "C:\\Users\\teohk\\OneDrive\\Desktop\\FYP_App-main\\window_cis_compliance_dashboard_prototype",
@@ -14,19 +14,23 @@
   },
   "files": {
     "AGENTS.md": {
-      "sha256": "81f51511b7a66449ee44b3925a949065ef18daf143719ff15e0d504d6fd90578",
+      "sha256": "964da0cc7f780739bbb24d529f89ce049516c38db1d712ed5a8da0f7a1934c3d",
       "category": "metadata"
     },
     "PROGRESS.md": {
-      "sha256": "9fb12d231a99e813e4162b4687f38cc6e703c99bfb777c66c7cececb4ab05bf7",
+      "sha256": "1a4b3026f148d5856b36ce09a019512a73deda46a0255970c5bf785dcdad1c7a",
       "category": "metadata"
     },
     "README.md": {
-      "sha256": "b9d5fda5d8391425a8eac3ae45230d544e2d91b9c3ecaa2dee9fa800ef8bf7db",
+      "sha256": "bef06899a7c652e9e5e34d929810e4782c6d90e96b310165d8f9b4acfbc9ea46",
       "category": "metadata"
     },
+    "Run-Dashboard.cmd": {
+      "category": "metadata",
+      "sha256": "c61a6c1d0d2794703f1e432d1729bb0b95f2e117dedcca2b99e73473d42cf4b6"
+    },
     "cis_compliance_dashboard_prototype/.gitignore": {
-      "sha256": "3292bbb9b3475ea7a08c6e65e578f51d96459a558ccb44cc4de8f006a3ea5706",
+      "sha256": "1c64ce3aea57fe6fd176bcdeb8f954ef36dd511cd9381952b483d2678c94c071",
       "category": "metadata"
     },
     "cis_compliance_dashboard_prototype/app.py": {
@@ -93,6 +97,14 @@
       "sha256": "1b370705f605bafd3d7cec770e26786b971eaab69a43bbf5f1af6a1c5636ca84",
       "category": "authorized_ui"
     },
+    "cis_compliance_dashboard_prototype/hardening/pairing.py": {
+      "category": "protected",
+      "sha256": "f84d166c56a64a61decce2cf0ef347541a2f8fd1d2bd70f4e386f6fa17266901"
+    },
+    "cis_compliance_dashboard_prototype/hardening/pairing_client.py": {
+      "category": "protected",
+      "sha256": "382963a745d821a180a259246edfcae9e49b5b782050b91f4b1a45fb786062b4"
+    },
     "cis_compliance_dashboard_prototype/hardening/remediation.py": {
       "sha256": "ebb2f3f79736ee2b212b87f23181680ed53b5f9e577ed633ce72528477953ce2",
       "category": "protected"
@@ -110,16 +122,36 @@
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/server_access.py": {
-      "sha256": "3347502406bb6f84be598259fd3af6501ec9b05020f5e5030a14768f2af0854b",
+      "sha256": "ef5903cc76cafa6f42dce773546c154f8f3e6dbc4d78c3a1880ca01907468145",
       "category": "protected"
+    },
+    "cis_compliance_dashboard_prototype/hardening/server_control.py": {
+      "category": "protected",
+      "sha256": "4d010c1ce0b7165ec27bd84a585d8ed0b6645dbc6aefb7aeca177d10fadde25e"
+    },
+    "cis_compliance_dashboard_prototype/hardening/servers.py": {
+      "category": "protected",
+      "sha256": "f9fb04546795417cbad7fc722299f465b049ef971246b49169d9613fe67fd454"
+    },
+    "cis_compliance_dashboard_prototype/hardening/servers_view.py": {
+      "category": "protected",
+      "sha256": "2242da26f624e3822e5fa167ac8cd2538628a231a6bd8b2d817773871d8d3400"
+    },
+    "cis_compliance_dashboard_prototype/hardening/system_detect.py": {
+      "category": "protected",
+      "sha256": "a0dc47abaa4f615cb3c7e1ab77f510102133533f09ba35f3828366b24d665ed8"
     },
     "cis_compliance_dashboard_prototype/hardening/ui.py": {
       "sha256": "e3dd45efb794417ebf09b66f8ff54a83d4f8f5f27cb14ec8f87ba980bf91405c",
       "category": "authorized_ui"
     },
     "cis_compliance_dashboard_prototype/hardening/winrm_channel.py": {
-      "sha256": "9d9934574bc0bf895c60a001eda4d868665f60b00e24934b7ba6fb276629c8cf",
+      "sha256": "f1304eb2bccdf58c64d0b6ba782e2ee5c6a346a926fe2c20cbf4189d1efae457",
       "category": "protected"
+    },
+    "cis_compliance_dashboard_prototype/launch.py": {
+      "category": "protected",
+      "sha256": "8b54696589e3621c471e3ac1bd6eb074a7c8d35e7f0f9d22ae3a7fb934be0e16"
     },
     "cis_compliance_dashboard_prototype/requirements.txt": {
       "sha256": "c07ad2a8f356c12629a268ab7ce7e0f2053e4e8b927872de29851c559c98fcfa",
@@ -142,15 +174,19 @@
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/tests/test_agentic_view.py": {
-      "sha256": "12b892e23a4c9ad0fa60aa59b95b80926cac6d058d599abd12936e83857de4a8",
+      "sha256": "920144dea63957bc726b780bb3e1e228c2838acb829ea8e8293123a2e850a3a7",
       "category": "protected"
+    },
+    "cis_compliance_dashboard_prototype/tests/test_app_navigation.py": {
+      "category": "protected",
+      "sha256": "dc272ac39ec568a30920d27877ed59125c0b6d4da961b90e065f4cc6854fbe59"
     },
     "cis_compliance_dashboard_prototype/tests/test_catalogue.py": {
       "sha256": "c53745083a428ec2059c928898b44072121539d25d3a4e1b2fb66d5657fc9df6",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/tests/test_cross_check.py": {
-      "sha256": "c0151e858b1da5aa78c36283fcbd5cae84c2d62dd7ca91ef7aa468919b7b9a7b",
+      "sha256": "916f8308c9f7a854e50762541b6469027e1bccd86ce3f410a1730b5f9c7b4033",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/tests/test_domain.py": {
@@ -185,20 +221,36 @@
       "sha256": "40fe5ada1b75ce6fb4cd5516fda92aa0f01e563411a8c21efa8111afa20a5d8c",
       "category": "protected"
     },
+    "cis_compliance_dashboard_prototype/tests/test_pairing.py": {
+      "category": "protected",
+      "sha256": "25c8cce9be79840f20ab36fe803b504d29286b8780c2d3a1ef8c0e8e42cee44e"
+    },
+    "cis_compliance_dashboard_prototype/tests/test_pairing_flow.py": {
+      "category": "protected",
+      "sha256": "57bb410340f1733f0b37cbfcb5a2a1a9472103a40d55c1cc6536cecabdf87ca1"
+    },
     "cis_compliance_dashboard_prototype/tests/test_round_report.py": {
       "sha256": "17cb24d6e0dcec411892b7ec5431820e85145ac855ce55d0de73f1f12e2c272f",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/tests/test_server_access.py": {
-      "sha256": "2ab07b02c60d7035a03a1e397996efb8ed8899eb2d99d429fdc4951e2ef62901",
+      "sha256": "b204f02f62daae7a1d0304010d56d39435b5c9806ee3b7269f4631d019505d64",
       "category": "protected"
+    },
+    "cis_compliance_dashboard_prototype/tests/test_servers.py": {
+      "category": "protected",
+      "sha256": "79d235e1af3dbbe9d254986dd1b72693b7699c3392430c2b5098ddbeb5273255"
     },
     "cis_compliance_dashboard_prototype/tests/test_show_database.py": {
-      "sha256": "54ad16f2d8667140e613c55e0921daea097d598507ac72388e6a425dd909406e",
+      "sha256": "298457459dbabb00302a2794dbb560d0900d98cb02e9d0371b96d58798679778",
       "category": "protected"
     },
+    "cis_compliance_dashboard_prototype/tests/test_system_detect.py": {
+      "category": "protected",
+      "sha256": "c03790a56db878df56612f0f22b9cc304d46249ca7290fcf1c5fdf7aabacfc3a"
+    },
     "cis_compliance_dashboard_prototype/tests/test_winrm_channel.py": {
-      "sha256": "612e1a535da99540fcacc8974bf8dde9c3b4b7bcbdf5866823fccdd4188b3a5f",
+      "sha256": "3d91f7da515344ff08f0c404d49add20ddc9a6fdaeb485d636de72972a3140b6",
       "category": "protected"
     },
     "docs/archive/ADMIN_GOALS_DESIGN.md": {
@@ -254,7 +306,7 @@
       "category": "metadata"
     },
     "docs/design/ARCHITECTURE.md": {
-      "sha256": "80d763cf13e896812b59d4ff1548db673bca830fcb81e847560ea29b9da6bdbb",
+      "sha256": "96eb2be40c4cda8eacacaa33b39dd4d59a8ed420aebc2655de3f29a639566b5d",
       "category": "metadata"
     },
     "docs/design/BENCHMARK_MAPPING.md": {
@@ -262,8 +314,12 @@
       "category": "metadata"
     },
     "docs/design/DATABASE_SCHEMA.md": {
-      "sha256": "943cfac353e4fb3d0fd4bc447501b7add2c9979f65eb2da4209bb3b4e3f24e7d",
+      "sha256": "d2b2367335e103d47342a5b257e90ac5faab6b40c01d62c4a7f4bc113b294f89",
       "category": "metadata"
+    },
+    "docs/design/LAN_PAIRING_DESIGN.md": {
+      "category": "metadata",
+      "sha256": "743b743d1dbe3ad9cf180b8d82c9499b3acf4a553832f22927315a892c4a6ef7"
     },
     "docs/design/RISK_DERIVATION.md": {
       "sha256": "de744011251f22bfdd0422a6570112b274f3a716e9e0354edb1e864efac4f468",
@@ -294,11 +350,11 @@
       "category": "metadata"
     },
     "docs/vm/VM_CONNECTION_SETUP.md": {
-      "sha256": "fc4c24a7016cdab53477f69b83187eec1337856ff15268ff1f570a239f858904",
+      "sha256": "601eb8381f9e084075b1c7f1acfb4651f0331cfe65da922f67ff04378d2625ce",
       "category": "metadata"
     },
     "docs/vm/VM_TRIAL_RUNBOOK.md": {
-      "sha256": "fb1f01c0eb011a10e032722ead2ba573b348dd5f4584b62a25071f57fe482316",
+      "sha256": "6f67ea34416bda913b6c92fb7f74888663767c4940bacb927ce64ec2a209531e",
       "category": "metadata"
     },
     "scripts/evaluation/evaluate_agentic_rounds.py": {
@@ -314,23 +370,27 @@
       "category": "protected"
     },
     "scripts/server_access/FYP-ServerAccess-README.txt": {
-      "sha256": "c067a86c4b3ee43ae69fef61e3fe1dc5bf84df1c1e6ff0216bdb0c32c9022492",
+      "sha256": "846f694b3afc01da2204783018ddaaa06321a28d7d97a44bf6e487e0b43813b4",
       "category": "protected"
     },
     "scripts/server_access/FYP-ServerAccess.ps1": {
-      "sha256": "4f977ebd8919cc58b613cc83b896cb2ada4931b494c31daa1b8eae6bfa83abb2",
+      "sha256": "fa0f892ae23fe57a62383c0f03fa8df9d0b73de6c01db64a4806a91809accac2",
       "category": "protected"
     },
     "scripts/server_access/Start-ServerAccess.cmd": {
       "sha256": "7582d24d9f422e95d71c8e5c7b21595394eb00596bdd0f3265a15519e86a7b9d",
       "category": "protected"
     },
+    "scripts/server_access/pairing_vectors.json": {
+      "category": "protected",
+      "sha256": "1925bce7643266abb68c6c373db4cd9a75a4a41cb3d5ba03eddfe83107e0d43c"
+    },
     "scripts/server_access/test_server_access.ps1": {
-      "sha256": "969e4aae65d6846adf5717c4c133aaf80e51c827688aa082e35e16a2428c5539",
+      "sha256": "1ec52803480dc3534bda855ccaf5d9beb2c0b8f318c8994650a32f117339dad5",
       "category": "protected"
     },
     "scripts/tools/cross_check_controls.py": {
-      "sha256": "95a51887681a7f54524c1637a833b7bbeb84b165d560669f376d88aaa55c1fd8",
+      "sha256": "6497d59d79b8a9c27a6d4b35c47fcd6e9302f1fb3a34ba16592c46846aaf2034",
       "category": "protected"
     },
     "scripts/tools/extract_benchmark_audit.py": {
@@ -342,11 +402,11 @@
       "category": "protected"
     },
     "scripts/tools/show_approval_integrity.py": {
-      "sha256": "08740536b96782af65caccea756696be09e13b00823223358fb05d234eb191fb",
+      "sha256": "265086f472df9ef7e3646cd56939dcdedc8450a25520b98812aad62a5a6853d3",
       "category": "protected"
     },
     "scripts/tools/show_database.py": {
-      "sha256": "9c0a75e3eb0182529e277e035791a2391e6551ffdc97d9f718285da4e39aac4d",
+      "sha256": "d511075175722d8c0c7ec71ab37e366fadf9f9eb524b79cb90aeeec515673c31",
       "category": "protected"
     },
     "scripts/vm/Collect-Server2022Evidence.ps1": {

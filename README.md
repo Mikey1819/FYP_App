@@ -2,17 +2,17 @@
 
 Final Year Project (Khoo Teng Yi, TAR UMT). Four local-LLM agents assess one standalone Windows Server 2022 VM against 32 CIS controls. They rank the findings with a deterministic risk engine, propose fixes from a pre-approved library, execute only what an administrator approves, and verify the result.
 
-The target is always the registered lab VM. **The development laptop is never hardened.** It runs Streamlit, Python and Ollama (`qwen3:8b`) only.
+**Supported systems: Windows Server 2022 (stand-alone) and Ubuntu 22.04.5 LTS only.** A server is added by its one-time pairing code; no server name, identity, address or SSH fingerprint is typed or built into the program. **The development laptop is never hardened.** It runs Streamlit, Python and Ollama (`qwen3:8b`) only.
 
 ## Unified Windows and Ubuntu system (integration branch)
 
-The same application and connection form now also assess and harden one Ubuntu Server 22.04 VM (30 CIS controls). The Windows framework described below is unchanged (`cis_compliance_dashboard_prototype/docs/BASELINE.md`). Start it from `cis_compliance_dashboard_prototype` with the integration environment:
+The same application now also assesses and hardens Ubuntu Server 22.04 (30 CIS controls). Both systems are paired by code on the **Servers** page: the Windows server access helper or the Ubuntu pairing helper shows the code, and the server's signed answer gives its name, machine identity, address and (Ubuntu) SSH host key ([VM_CONNECTION_SETUP.md](docs/vm/VM_CONNECTION_SETUP.md), [LAN_PAIRING_DESIGN.md](docs/design/LAN_PAIRING_DESIGN.md)). The Windows framework described below is the Windows project's, synced up to its 7 November state (`cis_compliance_dashboard_prototype/docs/BASELINE.md`). Start it from `cis_compliance_dashboard_prototype` with the integration environment:
 
 ```powershell
 ..\.venv-integration\Scripts\python.exe -m streamlit run app.py
 ```
 
-`Run-Dashboard.cmd` in the project folder does the same from any folder (double-click it, or type its path; extra Streamlit options follow it).
+`Run-Dashboard.cmd` in the project folder does the same from any folder (double-click it, or type its path; extra Streamlit options follow it). `launch.py` (in the app folder) starts it on this laptop only (127.0.0.1), on the first free port from 8501, and opens the browser once it answers.
 
 **First time on a fresh copy** (the environment, the VM helper bundle and the app's data are not included; they are rebuilt or created locally). From the project folder, with Python 3.13 (Python 3.15 also passes the suite, 8 November 2026):
 
@@ -20,9 +20,10 @@ The same application and connection form now also assess and harden one Ubuntu S
 python -m venv .venv-integration
 .\.venv-integration\Scripts\python.exe -m pip install -r cis_compliance_dashboard_prototype\requirements.integration.lock.txt
 cd cis_compliance_dashboard_prototype
-..\.venv-integration\Scripts\python.exe -B -m tools.build_ubuntu_bundle      # VM helper bundle -> ..\dist\ubuntu-helper
-..\.venv-integration\Scripts\python.exe -m unittest discover -s tests        # 663 tests
+..\.venv-integration\Scripts\python.exe -m unittest discover -s tests        # 744 tests
 ```
+
+For an Ubuntu server, build its helper bundle once it is paired: the **Servers** page shows the command with that server's own values, `python -B -m tools.build_ubuntu_bundle --machine-id … --hostname … --user …` (output `..\dist\ubuntu-helper`).
 
 The app creates its empty stores under `cis_compliance_dashboard_prototype\data\` on first use. Ollama with `qwen3:8b` is needed for agentic rounds; **Assess without AI** works without it.
 
@@ -37,7 +38,7 @@ Ubuntu runbook, backup and recovery: [OPERATIONS.md](cis_compliance_dashboard_pr
 | **Analysis Agent** | Which findings to investigate (factor derivation, history). Which findings to flag for your attention. How to triage each Unknown/Error gap. | Change any risk factor or score (decision D2) |
 | **Remediation Agent** | Prechecks the VM read-only, then executes or skips each *approved* request. Stops after an uncertain outcome. | Approve, choose values, write commands, retry |
 
-Every choice is a structured tool call that code validates. Reasons are fixed codes that code checks against the facts, and code writes every outcome sentence you read. The only model-written text on the page is the optional, labelled **Explain with local AI** answer and the raw tool arguments in the Agent log. The full design and its guarantees are in [ARCHITECTURE.md](docs/design/ARCHITECTURE.md). The decisions behind the design (D1–D6) are in [AGENTS.md](AGENTS.md).
+Every choice is a structured tool call that code validates. Reasons are fixed codes that code checks against the facts, and code writes every outcome sentence you read. The only model-written text on the page is the optional, labelled **Explain with local AI** answer and the raw tool arguments in the Agent log. The full design and its guarantees are in [ARCHITECTURE.md](docs/design/ARCHITECTURE.md). The decisions behind the design (D1–D7) are in [AGENTS.md](AGENTS.md).
 
 ## Scope
 
@@ -58,7 +59,7 @@ For a fresh checkout, create a virtual environment and install `requirements.txt
 
 ## Using the dashboard
 
-1. **Agentic hardening** → enter the VM computer name and UUID, then connect over WinRM with the built-in Administrator account. Once connected, the form folds into a status line with **Disconnect**; the sidebar shows the VM connection and whether `qwen3:8b` is ready on every page.
+1. **Servers** (the page the app opens on) → on the server run its pairing helper (Windows: the server access helper, **Start pairing**; Ubuntu: `sudo python3 fyp-pair-ubuntu.py`), type the code it shows under **Add a server**, then the account and password. The program finds the server, shows which system it runs, checks after login that it is the same machine, and saves it under **My servers** (passwords are never saved). Next time, pick it there and **Connect**. The workspace then opens on **Overview**; the sidebar shows the server, whether `qwen3:8b` is ready, a **Servers** link and **Disconnect**.
 2. Click **Start agentic round** (or **Assess without AI** for a deterministic scan and ranking with no proposals). The Orchestrator delegates the Scanner and Analysis agents and submits a plan. A step bar (Scan → Analyse → Plan → Approve → Execute → Verify) shows where the round stands, and the tabs hold the detail: **Fixes**, **Risk ranking**, **Controls**, **Results** and **Agent log**.
 3. In **Fixes**, enter your name once (and optionally a comment for the next decision), then approve or reject each proposal (or all undecided at once). An approval is bound to the exact request and expires after one hour. Findings the Orchestrator deferred are listed with their reasons; one it left out of its plan is shown as *not decided*.
 4. **Execute approved fixes…** opens a confirmation listing each change, its current value and the approval expiry. **Confirm and execute** delegates the Remediation Agent and then a verification rescan; the page opens on **Results** with the verdicts and the next step.
@@ -69,7 +70,7 @@ Switching pages keeps the connection, the session and its results. After a brows
 
 ## Checks
 
-From `cis_compliance_dashboard_prototype` (663 tests on 8 November 2026, Windows and Ubuntu together; fixtures and simulated VMs only, nothing touches a real machine):
+From `cis_compliance_dashboard_prototype` (744 tests on 8 November 2026, Windows and Ubuntu together; fixtures, simulated VMs and UDP on this laptop's own address only, nothing touches a real server or the firewall):
 
 ```powershell
 $env:TEMP = Join-Path (Get-Location) 'data\test_tmp'; $env:TMP = $env:TEMP
@@ -108,7 +109,7 @@ The SQLite files live under `cis_compliance_dashboard_prototype/data/`. `CIS_DAS
 - `preview_imports_framework.sqlite3`: assessment runs.
 - `preview_imports_agentic.sqlite3`: rounds, proposals, decisions, receipts, drift records and every agent trace.
 
-In the unified app the Windows files are `data\windows\integration_imports*.sqlite3` instead (`system/config.py`). Every column and JSON field is described in [DATABASE_SCHEMA.md](docs/design/DATABASE_SCHEMA.md).
+In the unified app the Windows files are `data\windows\integration_imports*.sqlite3` instead (`system/config.py`). Saved servers for both systems ("My servers", no passwords) are in `data\servers.sqlite3`, and the coordination ledger (registrations, pinned SSH host keys, code-proven address moves) in `data\integration.sqlite3`. Every column and JSON field is described in [DATABASE_SCHEMA.md](docs/design/DATABASE_SCHEMA.md).
 
 Audit tables refuse updates and deletes. VM passwords stay in session memory only.
 
@@ -130,9 +131,9 @@ scripts/
   vm/              PowerShell sent to the VM over WinRM (collector, remediation runner, cross-check) + their tests
   tools/           laptop tools: cross-check, benchmark extraction, risk derivation, approval proof, database viewer
   evaluation/      real-model probe and repeated evaluation, report figures
-  server_access/   OPTIONAL helper run on a server to allow and revert WinRM access (scanning by network address only)
+  server_access/   pairing helpers run on a server: FYP-ServerAccess.ps1 (Windows: code, WinRM access, revert) and fyp-pair-ubuntu.py (Ubuntu: code and SSH host key)
 docs/
-  design/          architecture, benchmark mapping, risk derivation, database schema
+  design/          architecture, benchmark mapping, risk derivation, pairing, database schema
   vm/              VM connection setup and the real VM trial runbook
   evaluation/      agentic assessment, first VM import validation
   report/          original report text, requirements coverage, revisions, alignment plan
@@ -144,15 +145,16 @@ docs/
 
 | Document | Use it for |
 | --- | --- |
-| [AGENTS.md](AGENTS.md) | Decisions D1–D6, the target and safety boundaries, working rules |
+| [AGENTS.md](AGENTS.md) | Decisions D1–D7, the target and safety boundaries, working rules |
 | [PROGRESS.md](PROGRESS.md) | Current status, checks run, next tasks |
 | **Design** | |
 | [ARCHITECTURE.md](docs/design/ARCHITECTURE.md) | Agent design, tools, guarantees, evidence |
 | [BENCHMARK_MAPPING.md](docs/design/BENCHMARK_MAPPING.md) | The 32 controls, rules, benchmark pages, report ID corrections |
 | [RISK_DERIVATION.md](docs/design/RISK_DERIVATION.md) | Generated risk-factor derivation for every control (`scripts\tools\generate_risk_derivation.py`) |
 | [DATABASE_SCHEMA.md](docs/design/DATABASE_SCHEMA.md) | Every SQLite table, column and JSON field |
+| [LAN_PAIRING_DESIGN.md](docs/design/LAN_PAIRING_DESIGN.md) | Pairing a server by code (Windows and Ubuntu): messages, checks, security limits |
 | **VM** | |
-| [VM_CONNECTION_SETUP.md](docs/vm/VM_CONNECTION_SETUP.md) | WinRM setup, failure states and the optional server access helper |
+| [VM_CONNECTION_SETUP.md](docs/vm/VM_CONNECTION_SETUP.md) | Pairing and connecting a server (WinRM for Windows, SSH for Ubuntu), failure states |
 | [VM_TRIAL_RUNBOOK.md](docs/vm/VM_TRIAL_RUNBOOK.md) | Step-by-step real VM trial, with the records to keep |
 | **Evaluation** | |
 | [AGENTIC_ASSESSMENT.md](docs/evaluation/AGENTIC_ASSESSMENT.md) | How agentic the system is: evaluations, judgement scenarios, examiner questions |

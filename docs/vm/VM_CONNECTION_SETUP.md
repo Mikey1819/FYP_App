@@ -7,7 +7,7 @@ Laptop: Streamlit + agents (Python, pypsrp)  --NTLM-encrypted WinRM-->  server 1
         found by its pairing code on the same network (UDP 47815); the address is never typed
 ```
 
-**Servers are added by pairing code only** (since 5 November 2026). The administrator never types an address or a port. The server's pairing answer also says which operating system it runs, and the dashboard shows that as a note (`hardening/system_detect.py`). Only Windows Server 2022 goes on to the login; Ubuntu Linux is recognised but its checks are not linked yet.
+**Servers are added by pairing code only** (since 5 November 2026). The administrator never types an address or a port. The server's pairing answer also says which operating system it runs, and the dashboard shows that as a note (`hardening/system_detect.py`). The program supports only **Windows Server 2022 (stand-alone) and Ubuntu 22.04.5 LTS**; only those go on to the login. Ubuntu servers are reached over SSH with their own pairing helper (section *Ubuntu 22.04 servers* below).
 
 ## Already done on the laptop (26 October 2026)
 
@@ -103,3 +103,25 @@ The password stays in the Streamlit session's memory only. It is never written t
 - The Remediation Agent runs [Invoke-RemediationAction.ps1](../../scripts/vm/Invoke-RemediationAction.ps1) over this channel for approved library actions, as described in [ARCHITECTURE.md](../design/ARCHITECTURE.md). Its precheck runs the same read-only collector without storing a new assessment. The manual file exchange of the retired upload page is documented in [archived VM_BRIDGE.md](../archive/legacy/VM_BRIDGE.md).
 - Nothing needs to be copied into the VM for the agentic page: the collector and runner are sent over the channel on every call.
 - Nothing is run by hand inside the VM. The shared-folder worker ([archived SCANNER_CONNECTION.md](../archive/legacy/SCANNER_CONNECTION.md)) was removed on 29 October, and the collector's and cross-check's save-to-file modes on 3 November: they needed a person inside the VM, so they did not satisfy D6.
+
+## Ubuntu 22.04 servers (unified system, 8 November 2026)
+
+Ubuntu servers are paired the same way, with their own small helper, and reached over SSH instead of WinRM.
+
+```text
+Laptop: Streamlit + agents (Python, paramiko)  --SSH-->  server 192.168.x.y:22
+        found by its pairing code on the same network (UDP 47815); address, name, machine ID and host key never typed
+```
+
+1. On the **Servers** page, open **Ubuntu 22.04: pairing helper** and download `fyp-pair-ubuntu.py`. Copy it to the server and check it: `sha256sum fyp-pair-ubuntu.py` must print the value shown on the page.
+2. On the server: `sudo python3 fyp-pair-ubuntu.py`. It prints the server name, the SSH port and host key fingerprint it vouches for, and a 9-digit code (10 minutes, one use). While the code is shown, if UFW is active it allows UDP 47815 from private networks only (rule comment `fyp-pairing`) and deletes those rules when it stops. It changes nothing else and keeps no record on the server.
+3. On the laptop: **Servers > Add a server**, type the code, then the server account and its password (or one SSH private key file). The login is refused before the password is sent if the server's host key is not the one in the signed answer; after login the hostname and `/etc/machine-id` must match too.
+4. The server is saved under **My servers** and its host key is pinned in the integration ledger. Later connections need only the password; a changed host key is refused, never accepted silently. If the server's address changes, run the helper again and use **Re-pair**.
+
+Assessment and approved fixes also need the FYP helper bundle installed once on the server (`cis_compliance_dashboard_prototype/docs/VM_SETUP.md`); the Servers page shows the exact build command for each saved Ubuntu server.
+
+| Message | Meaning and action |
+| --- | --- |
+| No server answered | Wrong or expired code, the helper has stopped, or the laptop is on another network. The helper prints "Wrong code" for each wrong attempt and stops after 5 from one address. |
+| This Ubuntu version is not checked | Only Ubuntu 22.04 (22.04.5 LTS) is supported. |
+| `verification_failed` | The host key, hostname or machine ID differs from the signed answer or from the pinned record. Check you are reaching the right server; pair again if it was reinstalled. |

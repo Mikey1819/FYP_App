@@ -1227,3 +1227,12 @@ The execution gate was a hard-coded "closed". It now opens only on evidence.
 - Windows preservation baseline re-taken (`BASELINE.md`).
 - Not applied: LAN pairing (D7), Servers page, client package. They replace the shared connection form, so they need an administrator decision.
 - Python 3.15.2 `.venv-integration` from `requirements.integration.lock.txt`: 663 passed (1 skipped); four PowerShell fixture suites pass; `tools.baseline` clean.
+
+## 2026-11-08 Pairing by code for both platforms (administrator request)
+
+- The shared connection form is replaced by the Windows project's pairing (D7), extended to Ubuntu with `scripts/server_access/fyp-pair-ubuntu.py` (signed answer carries the SSH host key fingerprint). No server name, identity, address or fingerprint is typed. Supported: Windows Server 2022 (stand-alone) and Ubuntu 22.04.5 LTS.
+- `ConnectionService.connect(request, paired=True)`; `CoordinationLedger.register(..., readdress=True)` appends an `endpoint_moves` row for a code-proven move of the same machine (registrations stay immutable; a changed host key is refused).
+- `build_ubuntu_bundle` takes the server's machine ID, hostname and account; the live VM's bundle is byte-identical.
+- Live Windows dispatch enabled (`allow_mutation=True` in `system/connection.py`), as the plan allowed after task 7.
+- Page tests that typed into the old form now connect through `tests/integration/pairing_fixture.py`, which hands the service exactly what a pairing hands it; the pairing UI itself is tested in `test_pairing_flow.py` and `test_servers.py`, and the whole program in `test_end_to_end.py`.
+- Python suite: 744 passed (1 skipped: a symbolic-link test Windows cannot run); four PowerShell suites pass; `tools.baseline` clean after re-baseline (`BASELINE.md`).

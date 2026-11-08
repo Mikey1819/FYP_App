@@ -59,10 +59,10 @@ The preview above was approved by the user in chat on 2026-11-06. The bundle imp
 1. Build it on the host, from the application directory:
 
    ```powershell
-   ..\.venv-integration\Scripts\python.exe -B -m tools.build_ubuntu_bundle
+   ..\.venv-integration\Scripts\python.exe -B -m tools.build_ubuntu_bundle --machine-id f1d16ae7e6bc4d2488f9410fcd858e36 --hostname FYP-Ubuntu2204 --user vboxuser
    ```
 
-   This writes `dist\ubuntu-helper\` (git-ignored).
+   Since 8 November 2026 the builder takes the server's machine ID, hostname and account instead of having them built in; the **Servers** page shows this command, filled in, for each saved Ubuntu server. The bundle above is byte-identical to the one built before. This writes `dist\ubuntu-helper\` (git-ignored).
 2. In VirtualBox, take a snapshot of `FYP-Ubuntu2204` (for example `before-fyp-helper`), and confirm you can log in on the VM console.
 3. Copy the folder to the VM from a host terminal (you type your own password):
 

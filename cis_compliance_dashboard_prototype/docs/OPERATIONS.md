@@ -14,7 +14,7 @@ Hot reload is deliberately off (`.streamlit/config.toml`). Restart the app after
 
 ## Everyday use
 
-1. **Connect:** enter the VM hostname, machine ID, address and user, then the password. The password is kept in memory only. The SSH host fingerprint is checked before login.
+1. **Connect:** the first time, run `sudo python3 fyp-pair-ubuntu.py` on the VM (download it from **Servers**), type its code under **Servers > Add a server**, then the account and password. The VM's name, machine ID, address and SSH host key come from the VM's signed answer; nothing is typed but the code and the login. Later, pick the VM under **My servers** and type the password. The password is kept in memory only. The SSH host key is checked before login (the one pinned at pairing).
 2. **Assess:** **Assess without AI** runs a read-only, deterministic scan. **Start agentic round** also lets the bounded agents rank findings and propose fixes. Fixes are proposed only in agentic rounds, and only for confirmed Non-Compliant controls.
 3. **Decide:** in **Fixes**, name the operator, then approve or reject each proposal. The approval screen shows the exact change, its impact and how to recover.
    - **Fixes** shows one expandable card per Non-Compliant control. The card title gives its current state (awaiting your decision, approved, running, *Fixed, re-scan: Compliant*, not applied, restored, deferred). Open a card to see the AI's decision, the reason, any analysis flag, the exact change and recovery, plus that control's Approve, Reject and Restore buttons. The **Agent log** tab shows every agent step.

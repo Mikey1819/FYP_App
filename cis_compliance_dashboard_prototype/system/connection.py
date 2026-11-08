@@ -47,7 +47,9 @@ def _backend(session, ledger):
     from .config import PATHS
     if session.identity.platform == 'windows':
         from backends.windows.adapter import WindowsBackend
-        return WindowsBackend(PATHS.windows_imports, session=session, ledger=ledger)
+        # Live Windows dispatch: the plan opened it once the host coordination ledger (task 7) passed. Each fix still
+        # needs the administrator's approval and the explicit confirmation, under the ledger's at-most-once claim.
+        return WindowsBackend(PATHS.windows_imports, session=session, ledger=ledger, allow_mutation=True)
     from backends.ubuntu.adapter import UbuntuBackend
     from .config import UBUNTU_FIREWALL_REGISTRATIONS
     return UbuntuBackend(PATHS.ubuntu_imports, session=session, ledger=ledger,

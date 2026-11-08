@@ -25,7 +25,7 @@ The first end-to-end agentic run on the real lab VM. It takes about 60–90 minu
 
 ## Part B — Assessment round (10 min)
 
-1. Open **Agentic hardening**. Enter the computer name and UUID above, keep host `127.0.0.1` and port `55985`, enter the Administrator password, and choose **Connect and check identity**.
+1. Pair the VM (it needs a host-only or bridged adapter): run the server access helper on it and click **Start pairing**, then on **Servers > Add a server** type the code and the Administrator password, and choose **Log in and save** (later: pick it under **My servers** and **Connect**). Its name and UUID come from the VM itself. Then open **Agentic hardening**.
 2. Choose **Start agentic round** and note the clock time. Wait for it to finish (up to 10 minutes).
 3. **Record:**
 

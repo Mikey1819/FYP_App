@@ -1,6 +1,6 @@
 # Database schema
 
-The dashboard stores everything in **4 SQLite files** with **11 tables**, under `cis_compliance_dashboard_prototype/data/` (the environment variable `CIS_DASHBOARD_DB` changes the base path; the client package uses `%LOCALAPPDATA%\FYP-Hardening\data`). Most of the detail is stored as JSON inside a few columns, so each table lists both its columns and the JSON fields inside them.
+The dashboard stores everything in **4 SQLite files** with **11 tables**, under `cis_compliance_dashboard_prototype/data/`. In the unified Windows and Ubuntu app, files 1 to 3 for Windows are `data/windows/integration_imports*.sqlite3` and file 4 is `data/servers.sqlite3` (`system/config.py`); the Ubuntu records and the integration ledger are described in `cis_compliance_dashboard_prototype/docs/UNIFIED_ARCHITECTURE.md`. Most of the detail is stored as JSON inside a few columns, so each table lists both its columns and the JSON fields inside them.
 
 Checked against the real databases on 4 November 2026; the servers file (file 4) was added on 5 November 2026.
 
@@ -186,23 +186,24 @@ The comment is kept separate so the approved request bytes stay exactly what the
 
 ---
 
-## File 4: `preview_imports_servers.sqlite3`, saved servers
+## File 4: `servers.sqlite3`, saved servers (both systems)
 
 ### `servers`: one row per saved server ("My servers")
 
 | Column | Type | Meaning |
 | --- | --- | --- |
-| `machine_uuid` | TEXT, key | The server's machine UUID, read from the server itself (lower case) |
+| `platform`, `machine_identity` | TEXT, key together | `windows` with the machine UUID (lower case, dashed), or `ubuntu` with `/etc/machine-id` (32 hex); read from the server itself |
 | `hostname` | TEXT | Its computer name, read from the server |
-| `os_caption` | TEXT | Its Windows edition, read from the server |
-| `host`, `port` | TEXT, INTEGER | Where it was last reached (WinRM) |
-| `username` | TEXT | The administrator account used (never the password) |
+| `os_caption` | TEXT | Its system as it reported it, for example `Microsoft Windows Server 2022 Standard Evaluation` or `Ubuntu 22.04.5 LTS` |
+| `host`, `port` | TEXT, INTEGER | Where it was last reached (WinRM, or SSH for Ubuntu) |
+| `username` | TEXT | The account used (never the password) |
+| `auth`, `key_path` | TEXT | `password`, or `key` with the path of the one SSH private key file on this laptop (Ubuntu only; never the key) |
 | `note` | TEXT | The administrator's own note, at most 120 characters |
 | `added_at`, `last_connected_at` | TEXT | When it was saved and last connected |
-| `pairing_id` | TEXT or NULL | The helper's record of this laptop's pairing (32 hex). NULL only for a server saved by address before that was removed (5 November 2026); Re-pair fills it |
+| `pairing_id` | TEXT or NULL | The pairing answer's id (32 hex). On Windows it is also the helper's record of this laptop's pairing |
 | `laptop_address`, `paired_at` | TEXT or NULL | This laptop's address as the server saw it, and when it paired |
 
-The server keeps its own side of each pairing in `C:\ProgramData\FYP-ServerAccess\pairings.json` (Administrators and SYSTEM only), not in these files.
+A Windows server keeps its own side of each pairing in `C:\ProgramData\FYP-ServerAccess\pairings.json` (Administrators and SYSTEM only), not in these files. The Ubuntu pairing helper keeps nothing on the server; the SSH host key it vouched for is pinned in the integration ledger.
 
 ---
 
