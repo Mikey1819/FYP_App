@@ -57,6 +57,9 @@ class SshChannel:
                 transport.auth_password(credentials.username, credentials.password, fallback=False)
             if not transport.is_authenticated():
                 raise ValueError('SSH authentication did not complete')
+            # Keepalives make a server that restarted or vanished show up as a closed connection within about
+            # half a minute, instead of a page waiting on a channel that will never open.
+            transport.set_keepalive(15)
             return cls(transport, public_fingerprint)
         except BaseException:
             if transport is not None:
@@ -178,6 +181,10 @@ class SshChannel:
                 sftp.rmdir(path)
             else:
                 sftp.remove(path)
+
+    def alive(self):
+        """False once the SSH connection has closed (for example the server restarted)."""
+        return bool(self._transport.is_active())
 
     def close(self):
         self._transport.close()

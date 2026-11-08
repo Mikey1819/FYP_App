@@ -138,6 +138,10 @@ class SetupChannel:
 
     def __init__(self):
         self.uploaded = []
+        self.up = True
+
+    def alive(self):
+        return self.up
 
     def __call__(self, request, credentials, known):
         return self
@@ -163,10 +167,12 @@ class SetupBackend:
         return Capabilities()
 
     def setup_status(self, connection_session_id, *, refresh=False):
+        if self.state.get('fail'):
+            raise self.state['fail']
         self.refreshes += refresh
         if refresh or self.runner is None:  # Like the real backend: the runner probe is cached per connection.
             self.runner = self.state['runner']
-        return dict(self.state, runner=self.runner)
+        return {k: v for k, v in dict(self.state, runner=self.runner).items() if k != 'fail'}
 
 
 class SetupPageTests(unittest.TestCase):
@@ -212,6 +218,21 @@ class SetupPageTests(unittest.TestCase):
         self.assertEqual(self.backends[-1].refreshes, 1)
         self.assertTrue(any('This server is set up' in s.value for s in app.success))
         self.assertNotIn('servers_setup', [b.key for b in app.button])
+
+    def test_a_connection_that_stopped_answering_is_explained_not_a_crash(self):
+        import paramiko
+        app = self.page()
+        self.state['fail'] = paramiko.SSHException('Timeout opening channel.')  # As seen live after a VM restart.
+        app = self.ok(app.run())
+        self.assertTrue(any('stopped answering' in w.value for w in app.warning), [w.value for w in app.warning])
+
+    def test_a_closed_connection_is_disconnected_and_explained(self):
+        app = self.page()
+        self.channel.up = False  # The server restarted: SSH keepalives closed the connection.
+        app = self.ok(app.run())
+        self.assertNotIn(CONNECTION_KEY, app.session_state)
+        self.assertTrue(any('was lost' in w.value for w in app.warning), [w.value for w in app.warning])
+        self.assertEqual(app.title[0].value, 'Servers')
 
     def test_nothing_is_offered_for_a_server_that_is_already_set_up(self):
         self.state.update(openscap=True, collector=True, runner=True)

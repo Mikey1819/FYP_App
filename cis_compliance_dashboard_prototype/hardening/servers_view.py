@@ -46,6 +46,8 @@ REPORT = 'servers_access_report'     # The last paired-laptops list read from th
 CONFIRM_ACCESS = 'servers_confirm_access'
 SETUP_COPIED = 'servers_setup_copied'  # Ubuntu: the folder the setup files were copied to, per server key.
 SETUP_REFRESH = 'servers_setup_refresh'
+LOST = ('The connection to the server stopped answering (it may have restarted). Click **Disconnect** above, then '
+        '**Connect** again under My servers.')
 SECRETS = ('servers_password', 'servers_pair_password', 'servers_pair_sudo', 'servers_sudo')
 
 # What a failed connection to a saved server most likely means, in the administrator's terms.
@@ -388,6 +390,9 @@ def _show_ubuntu_setup(connected):
     except (ValueError, OSError) as exc:
         st.error('Could not read the setup status: ' + md_escape(exc))
         return
+    except Exception:  # The SSH library's own errors: the connection is gone (for example the server restarted).
+        st.warning(LOST)
+        return
     if all(status.values()):
         st.success('This server is set up: OpenSCAP, the collector and the fix runner are installed. Before the first '
                    'fix, run the two **Execution acceptance** tests on **Agentic hardening** (once per server).')
@@ -404,6 +409,8 @@ def _show_ubuntu_setup(connected):
                     _copy_setup(connected, key)
             except (ValueError, OSError) as exc:
                 st.error('Setup files not copied: ' + md_escape(exc))
+            except Exception:
+                st.warning(LOST)
         if st.button('Check again', key='servers_setup_check', icon=':material/refresh:'):
             st.session_state[SETUP_REFRESH] = True
             st.rerun()

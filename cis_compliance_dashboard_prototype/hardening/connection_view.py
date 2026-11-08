@@ -32,10 +32,17 @@ def connected_session():
     if not (service and connection_id):
         return None
     try:
-        return service.session(connection_id)
+        session = service.session(connection_id)
     except ValueError:
         clear_target_state(st.session_state)
         return None
+    alive = getattr(session.channel, 'alive', None)  # SSH only; a WinRM call opens its own connection each time.
+    if alive is not None and not alive():
+        disconnect()
+        st.warning(f'The connection to {md_escape(session.identity.hostname)} was lost (the server may have '
+                   'restarted). Connect again under **Servers > My servers**.')
+        return None
+    return session
 
 
 def render_connection(*, key):
