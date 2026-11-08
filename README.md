@@ -25,7 +25,7 @@ cd cis_compliance_dashboard_prototype
 
 An Ubuntu server's helper bundle is built and copied by **Set up this server** on the Servers page; by hand it is `python -B -m tools.build_ubuntu_bundle --machine-id … --hostname … --user …` (output `..\dist\ubuntu-helper`).
 
-The app creates its empty stores under `cis_compliance_dashboard_prototype\data\` on first use. Ollama with `qwen3:8b` is needed for agentic rounds; **Assess without AI** works without it.
+The app creates its empty stores under `cis_compliance_dashboard_prototype\data\` on first use. Ollama with `qwen3:8b` is needed to run a round.
 
 Ubuntu runbook, backup and recovery: [OPERATIONS.md](cis_compliance_dashboard_prototype/docs/OPERATIONS.md). Architecture and interfaces: [UNIFIED_ARCHITECTURE.md](cis_compliance_dashboard_prototype/docs/UNIFIED_ARCHITECTURE.md). Live and offline evidence: `cis_compliance_dashboard_prototype/docs/evaluation/`.
 
@@ -55,12 +55,12 @@ From `cis_compliance_dashboard_prototype`:
 .\.venv\Scripts\python.exe -m streamlit run app.py
 ```
 
-For a fresh checkout, create a virtual environment and install `requirements.txt` first. The agents need Ollama running locally with `qwen3:8b`, and the sidebar says whether it is ready. Without it no agentic round can start (the Orchestrator starts the scan), but **Assess without AI** still scans and ranks deterministically, earlier records stay readable, and approved fixes can still be applied with **Execute remaining without AI**. The VM needs a one-time `Enable-PSRemoting`; see [VM_CONNECTION_SETUP.md](docs/vm/VM_CONNECTION_SETUP.md).
+For a fresh checkout, create a virtual environment and install `requirements.txt` first. The agents need Ollama running locally with `qwen3:8b`, and the sidebar says whether it is ready. Without it no round can start (the Orchestrator starts the scan), but earlier records stay readable, and approved fixes can still be applied with **Execute remaining without AI**. The VM needs a one-time `Enable-PSRemoting`; see [VM_CONNECTION_SETUP.md](docs/vm/VM_CONNECTION_SETUP.md).
 
 ## Using the dashboard
 
 1. **Servers** (the page the app opens on) → on the server run its pairing helper (Windows: the server access helper, **Start pairing**; Ubuntu: `sudo python3 fyp-pair-ubuntu.py`), type the code it shows under **Add a server**, then the account and password. The program finds the server, shows which system it runs, checks after login that it is the same machine, and saves it under **My servers** (passwords are never saved). Next time, pick it there and **Connect**. An Ubuntu server needs one setup the first time: **Set up this server** on the Servers page copies the helper files over SSH, and you run the one command it shows on the server. The workspace then opens on **Overview**; the sidebar shows the server, whether `qwen3:8b` is ready, a **Servers** link and **Disconnect**.
-2. Click **Start agentic round** (or **Assess without AI** for a deterministic scan and ranking with no proposals). The Orchestrator delegates the Scanner and Analysis agents and submits a plan. A step bar (Scan → Analyse → Plan → Approve → Execute → Verify) shows where the round stands, and the tabs hold the detail: **Fixes**, **Risk ranking**, **Controls**, **Results** and **Agent log**.
+2. Click **Start agentic round**. The Orchestrator delegates the Scanner and Analysis agents and submits a plan. A step bar (Scan → Analyse → Plan → Approve → Execute → Verify) shows where the round stands, and the tabs hold the detail: **Fixes**, **Risk ranking**, **Controls**, **Results** and **Agent log**.
 3. In **Fixes**, enter your name once (and optionally a comment for the next decision), then approve or reject each proposal (or all undecided at once). An approval is bound to the exact request and expires after one hour. Findings the Orchestrator deferred are listed with their reasons; one it left out of its plan is shown as *not decided*.
 4. **Execute approved fixes…** opens a confirmation listing each change, its current value and the approval expiry. **Confirm and execute** delegates the Remediation Agent and then a verification rescan; the page opens on **Results** with the verdicts and the next step.
 5. **Run next round** to rescan, re-rank and propose again, for example once a fixed prerequisite has unblocked another finding. Earlier rounds of the session stay viewable (read-only) from the **Round** selector.

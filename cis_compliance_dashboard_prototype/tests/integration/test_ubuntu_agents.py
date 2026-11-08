@@ -284,7 +284,7 @@ class BackendAgenticTests(unittest.TestCase):
         offline = Offline()
         with open_gate():
             backend = self.backend(team(offline))
-            with self.assertRaisesRegex(ValueError, 'Assess without AI'):
+            with self.assertRaisesRegex(ValueError, 'start the round again'):
                 backend.start_round('c', None, None, 'agentic', 'op-off')
             self.assertEqual(self.ledger.operation_state('op-off').state, 'refused')
             self.assertEqual(backend.session.channel.calls, 0)

@@ -256,8 +256,14 @@ class PageLiveAssessmentTests(unittest.TestCase):
             app.run()
             self.assertEqual(paired_connect(app, platform='ubuntu', hostname=TARGET[1], identity=TARGET[0]).state, 'connected')
             self.assertEqual(channel.calls, 0, 'Connecting must not scan')
-            self.assertFalse(app.button(key='agentic_assess_without_ai').disabled)
-            app.button(key='agentic_assess_without_ai').click().run()
+            # The page has no Assess without AI button (removed by the administrator); the backend's read-only
+            # deterministic scan still works, and the page shows its result.
+            self.assertEqual([b for b in app.button if b.key == 'agentic_assess_without_ai'], [])
+            from system.bootstrap import CONNECTION_KEY
+            backend = service.backend_for(app.session_state[CONNECTION_KEY])
+            handle = backend.start_round(app.session_state[CONNECTION_KEY], None, None, 'deterministic', 'op-scan')
+            app.session_state[WORKFLOW_KEY] = handle.binding.workflow_session_id
+            app.run()
             self.assertEqual(len(app.exception), 0, [e.value for e in app.exception])
             self.assertFalse(list(app.error), [e.value for e in app.error])
             self.assertEqual(channel.calls, 1)

@@ -22,7 +22,7 @@
       "category": "metadata"
     },
     "README.md": {
-      "sha256": "138025691c38f7637e868cc7d08df54c1373a640199c115652f47f87eeed1d10",
+      "sha256": "e2673d40ebf089b15ce2ffc02e589d9458abf7f6e78852597533e511a9749f11",
       "category": "metadata"
     },
     "Run-Dashboard.cmd": {
@@ -306,7 +306,7 @@
       "category": "metadata"
     },
     "docs/design/ARCHITECTURE.md": {
-      "sha256": "96eb2be40c4cda8eacacaa33b39dd4d59a8ed420aebc2655de3f29a639566b5d",
+      "sha256": "d072b0e49691ccd6cfa24c661fe4d58bd082ad55102af3f52c124f697ec226ba",
       "category": "metadata"
     },
     "docs/design/BENCHMARK_MAPPING.md": {
@@ -326,7 +326,7 @@
       "category": "metadata"
     },
     "docs/evaluation/AGENTIC_ASSESSMENT.md": {
-      "sha256": "1fa47679e7a54d9dfc2b781b4f2dc9ebc491b5ed48fe9716b7e438a7cf9a88a5",
+      "sha256": "be831ef285e149b7ce6830309672125bc2cba1beb8a40de49c996e7aa0475dd5",
       "category": "metadata"
     },
     "docs/evaluation/FIRST_VM_IMPORT_VALIDATION.md": {

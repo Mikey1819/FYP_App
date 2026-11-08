@@ -49,9 +49,20 @@ class SameUiAcceptanceTests(unittest.TestCase):
                                identity=t.machine_uuid if platform=='windows' else 'a'*32)
                 self.assertEqual(len(app.exception),0,[e.value for e in app.exception])
                 self.assertFalse(list(app.error),[e.value for e in app.error])
+            def scan():
+                # A read-only deterministic scan through the backend, as a round's scan step runs it (the page's
+                # Assess without AI button was removed by the administrator).
+                from system.bootstrap import CONNECTION_KEY
+                from hardening.agentic_view import SESSION
+                connection=app.session_state[CONNECTION_KEY]
+                handle=service.backend_for(connection).start_round(connection,None,None,'deterministic','op-scan')
+                app.session_state[WORKFLOW_KEY]=handle.binding.workflow_session_id
+                app.session_state[SESSION]=handle.binding.backend_session_id
+                app.run()
             connect('windows')
             self.assertEqual(len(vm.scripts),1,'Connect may run identity only')
-            app.button(key='agentic_assess_without_ai').click().run()
+            self.assertEqual([b for b in app.button if b.key=='agentic_assess_without_ai'],[])
+            scan()
             self.assertEqual(len(app.exception),0,[e.value for e in app.exception])
             self.assertFalse(list(app.error),[e.value for e in app.error])
             workflow=app.session_state[WORKFLOW_KEY]
@@ -61,7 +72,7 @@ class SameUiAcceptanceTests(unittest.TestCase):
             from unittest import mock
             with mock.patch('backends.ubuntu.adapter.assessment_gate', return_value=('Ubuntu assessment is not enabled (test-closed gate).',)):
                 connect('ubuntu')
-                self.assertTrue(app.button(key='agentic_assess_without_ai').disabled)
+                self.assertEqual([b for b in app.button if b.key=='agentic_assess_without_ai'],[])
             self.assertEqual([x.label for x in app.tabs],['Fixes','Risk ranking','Controls','Results','Agent log'])
             self.assertNotIn(WORKFLOW_KEY,app.session_state)
             app.button(key='agentic_disconnect').click().run()

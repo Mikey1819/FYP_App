@@ -50,7 +50,7 @@ Prepared 6 November 2026 for `FYP-Ubuntu2204` (`192.168.56.10:22`, machine ID `f
   - recording the observed `oscap` version in `catalogues/source-lock.json` and setting activation, which needs a separate review;
   - a reviewed UFW ownership registration, if 4.1.4/4.1.7 should be determinate.
 
-  Until all of these are done, **Assess without AI** stays disabled for Ubuntu.
+  Until all of these are done, no Ubuntu scan can run.
 
 ## Running the approved provisioning bundle (administrator steps)
 

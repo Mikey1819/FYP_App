@@ -24,7 +24,7 @@ SCENARIOS = [
         ('test_identity', 'test_os_release_is_data_not_shell_and_duplicates_rejected'),
         ('test_identity', 'test_host_key_change_requires_reenrolment_and_no_tofu'),
         ('test_ubuntu_runner', 'test_identity_expiry_family_hash_and_tampering_refused_without_writes')]),
-    ('Model offline', 'No AI round starts without the model; Assess without AI calls no model', [
+    ('Model offline', 'No AI round starts without the model; the deterministic backend scan calls no model', [
         ('test_ubuntu_agents', 'test_model_offline_runs_no_scan_and_keeps_the_orchestrator_record'),
         ('test_ubuntu_agents', 'test_deterministic_mode_with_model_stopped_calls_no_model_and_labels_system_activity')]),
     ('Stale, rejected or duplicate requests', 'Expired, forged, rejected, superseded or repeated requests write nothing and dispatch at most once', [

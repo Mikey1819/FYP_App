@@ -215,7 +215,7 @@ class UbuntuBackend(BoundBackend):
         gate = assessment_gate()
         model = not gate and self.model_probe()
         reasons = gate + (() if model or gate else
-                          ('The local model (qwen3:8b) is unavailable; Assess without AI remains usable.',))
+                          ('The local model (qwen3:8b) is unavailable: start Ollama with qwen3:8b to run a round.',))
         if not self.families:
             reasons += ('No Ubuntu fix is registered: rounds defer every finding and propose no fix.',)
         reasons += execution_gate(self)
@@ -456,7 +456,8 @@ class UbuntuBackend(BoundBackend):
             raise ValueError(gate[0] + ' No scan was run.')
         mode = AssessmentMode(mode)
         if mode is AssessmentMode.AGENTIC and not self.model_probe():
-            raise ValueError('The local model is unavailable; use Assess without AI. No scan was run.')
+            raise ValueError('The local model is unavailable: start Ollama with qwen3:8b, then start the round again. '
+                             'No scan was run.')
         if self._collector_installed() is False:
             raise ValueError('This server is not set up yet: the FYP helper is not installed. Open Servers and click Set up this server. '
                              'No scan was run.')
@@ -506,7 +507,7 @@ class UbuntuBackend(BoundBackend):
                                    rank=rank, goal=goal, eligible=self._eligible)
         if result['run_id'] is None:
             raise ValueError(f"The agentic round stopped before an assessment was collected ({result['status']}). Its agent "
-                             'log is kept; use Assess without AI for a deterministic assessment.')
+                             'log is kept; start the round again.')
         details = {k: result[k] for k in ('orchestrator_run_id', 'children', 'scanned_runs', 'status', 'analysis', 'plan', 'goal')}
         round_id = store.record_round(binding, result['run_id'], mode='agentic', details=details)
         for fix in (result['plan'] or {}).get('fixes', []):

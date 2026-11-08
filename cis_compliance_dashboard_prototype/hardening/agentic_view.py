@@ -365,8 +365,6 @@ def _show_start(hardening, store, runtime, target):
     with st.container(horizontal=True):
         if st.button('Start agentic round', type='primary', key='agentic_run'):
             _run_round(hardening, None)
-        if active_backend(st.session_state) and st.button('Assess without AI', key='agentic_assess_without_ai'):
-            _run_round(hardening, None, AssessmentMode.DETERMINISTIC)
         if previous and st.button('Resume earlier session', key='agentic_resume'):
             backend = active_backend(st.session_state)
             if backend:
@@ -403,8 +401,6 @@ def _action_bar(hardening, session_id, latest, state, rounds, target):
             if st.button('Run next round', type='primary', key='agentic_run', icon=':material/refresh:',
                          help='Rescan the server, re-rank the findings and propose again'):
                 _run_round(hardening, session_id)
-            if active_backend(st.session_state) and st.button('Assess without AI', key='agentic_assess_without_ai'):
-                _run_round(hardening, session_id, AssessmentMode.DETERMINISTIC)
         if state['pending'] and st.session_state.get(CONFIRM) != latest['round_id']:
             if st.button(f"Execute {len(state['pending'])} approved fix(es)…", type='primary',
                          key='agentic_execute_review', icon=':material/play_arrow:'):
@@ -707,9 +703,6 @@ def render_agentic(database_path: Path):
                     if st.button('Start agentic round', key='agentic_run', disabled=not capabilities.can_use_model):
                         # Bounded Ubuntu agents through the backend; the orchestrator plans, the administrator approves.
                         _run_round(None, None)
-                    if st.button('Assess without AI', key='agentic_assess_without_ai', disabled=not capabilities.can_assess):
-                        # Read-only deterministic scan through the backend; the helper gate is checked again there.
-                        _run_round(None, None, AssessmentMode.DETERMINISTIC)
                     st.button('Refresh status', key='ubuntu_refresh', icon=':material/refresh:',
                               help='Reload this page from the stored records; the server connection stays open.')
                 _ubuntu_execute_bar(backend, connection, snapshot, capabilities)

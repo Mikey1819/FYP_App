@@ -1,6 +1,6 @@
 """The whole program as an administrator uses it, through app.py and the real connection service, ledger and Windows
 backend: pair a Windows Server 2022 by its code on Servers, open the workspace, run an agentic round, approve, execute,
-verify, read Overview and History, assess without AI, disconnect, reconnect from My servers and resume.
+verify, read Overview and History, disconnect, reconnect from My servers and resume.
 
 Only the edges are stand-ins: the server is a simulated VM behind a fake WinRM session (tests/test_agentic.FakeVm), the
 local model is scripted, and the pairing answer is given (UDP pairing is tested in test_pairing_flow.py). All data goes
@@ -119,9 +119,8 @@ class EndToEndTests(unittest.TestCase):
         history = self.go(app, 'history')
         self.assertEqual(history.title[0].value, 'History and configuration drift')
 
-        # Assess without AI: a deterministic scan with no proposals.
         app = self.go(app, 'agentic')
-        app = self.ok(app.button(key='agentic_assess_without_ai').click().run())
+        self.assertEqual([b for b in app.button if b.key == 'agentic_assess_without_ai'], [])  # Removed on request.
         workflow = app.session_state[WORKFLOW_KEY]
 
         # Disconnect from the sidebar; reconnect from My servers with the password only; resume the session.
