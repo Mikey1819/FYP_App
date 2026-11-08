@@ -32,6 +32,16 @@ class UbuntuModelBudgetTests(unittest.TestCase):
         self.assertGreaterEqual(factory(SCANNER).num_predict, 512)
         self.assertGreaterEqual(factory(ORCHESTRATOR).num_predict, 1024)
 
+    def test_orchestrator_waits_as_long_as_the_windows_engine_for_one_answer(self):
+        # Live 2026-11-08: the plan request for 23 failing controls timed out at 90 s and the round stopped at Plan.
+        import inspect, re
+        from backends.ubuntu import agents
+        from hardening import agentic
+        windows = int(re.search(r'steps=12, calls=16, seconds=self\.seconds, request_seconds=(\d+)',
+                                inspect.getsource(agentic)).group(1))
+        self.assertEqual(agents.ORCHESTRATOR_REQUEST_SECONDS, windows)
+        self.assertIn('request_seconds=ORCHESTRATOR_REQUEST_SECONDS', inspect.getsource(agents.run_agentic_round))
+
 
 if __name__ == '__main__':
     unittest.main()
