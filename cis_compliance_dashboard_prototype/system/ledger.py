@@ -119,6 +119,13 @@ class CoordinationLedger:
                         endpoint_key, identity.host_fingerprint, epoch))
             return target, epoch
 
+    def registration(self, platform, machine_identity):
+        """The public facts recorded for one machine (target, epoch, hostname, current endpoint, host key), or None."""
+        with self._db() as db:
+            row = next((r for r in self._current(db, platform) if r['machine_identity'] == machine_identity), None)
+        return None if row is None else {'target_id': row['target_id'], 'epoch': row['epoch'], 'hostname': row['hostname'],
+                                         'endpoint': row['current_endpoint'], 'fingerprint': row['fingerprint']}
+
     def known_fingerprint(self, endpoint):
         with self._db() as db:
             rows = [r for r in self._current(db, 'ubuntu') if r['current_endpoint'] == f'{endpoint.host}:{endpoint.port}']

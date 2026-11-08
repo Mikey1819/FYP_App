@@ -109,6 +109,21 @@ class AppNavigationTests(unittest.TestCase):
         self.assertNotIn(CONNECTION_KEY, app.session_state)
         self.assertEqual(app.title[0].value, 'Servers')
 
+    def test_overview_and_history_list_every_saved_server_and_show_another_one_read_only(self):
+        from hardening.servers import ServerRegistry
+        ServerRegistry(self.paths.servers).add('ubuntu', 'b' * 32, 'ubuntu-web01', 'Ubuntu 22.04.5 LTS', '192.168.56.20', 22,
+                                               'fyp-admin')
+        for page in ('overview', 'history'):
+            with self.subTest(page=page):
+                app = self.open(page, app=self.open(**{LIVE_TARGET: target()}))  # After the one move to Overview.
+                box = app.selectbox(key=page + '_server')
+                self.assertEqual(len(box.options), 2)
+                self.assertTrue(box.options[0].endswith('(connected)'))  # The connected server comes first.
+                self.assertIn('ubuntu-web01 · Ubuntu 22.04 LTS', box.options[1])
+                box.select_index(1).run()
+                self.assertEqual(len(app.exception), 0, [e.value for e in app.exception])
+                self.assertIn('No records yet for ubuntu-web01', text(app))  # Never connected: nothing stored.
+
 
 if __name__ == '__main__':
     unittest.main()

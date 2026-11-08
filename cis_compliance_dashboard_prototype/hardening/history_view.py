@@ -10,6 +10,7 @@ from .import_storage import ImportedEvidenceStore
 from .remediation import RemediationStore
 from .ui import FULL, md_escape, myt
 from system.history import active_history
+from .server_picker import choose_server
 
 def _label(run):
     return f"{myt(run['created_at'], FULL)} MYT · {run['run_id'][:8]}"
@@ -20,14 +21,23 @@ def _value(value):
     return 'not configured' if value is None else repr(value)
 
 
-def render_history(database_path: Path):
+def render_history(database_path: Path, servers_path: Path | None = None):
     st.title('History and configuration drift')
     st.caption('Every assessment is an immutable snapshot. Drift compares each assessment with the previous one of '
                'the same server and records every change once. Changes are compared only when the benchmark source, '
                'profile, rule and collection method are identical.')
     try:
-        backend, shared_rows = active_history(st.session_state, limit=1000)
-        if backend and backend.session.identity.platform != 'windows':
+        choice = choose_server('history_server', servers_path)
+        if choice is not None and choice.platform == 'ubuntu':
+            from system.ui.components import render_history_rows
+            if choice.reader is not None:
+                st.caption(md_escape(choice.hostname) + ' · CIS Ubuntu Linux 22.04 LTS v2.0.0'
+                           + ('' if choice.connected else ' · read-only, not connected'))
+                render_history_rows(choice.reader, choice.reader.history(choice.reader.session.target_id, limit=1000))
+            return
+        backend, shared_rows = (active_history(st.session_state, limit=1000) if choice is None or choice.connected
+                                else (None, ()))
+        if backend and backend.session.identity.platform != 'windows':  # Connected Ubuntu, not in the dropdown.
             from system.ui.components import render_history_rows
             st.caption(md_escape(backend.session.identity.hostname) + ' · CIS Ubuntu Linux 22.04 LTS v2.0.0')
             render_history_rows(backend, shared_rows)
@@ -37,13 +47,16 @@ def render_history(database_path: Path):
         store = RemediationStore(database_path.with_name(database_path.stem + '_agentic.sqlite3'), imports)
         history = HistoryService(runtime, store)
         targets = history.targets()
-        if backend:
+        if choice is not None:
+            targets = {t: name for t, name in targets.items() if t == 'windows:' + choice.machine_identity}
+        elif backend:
             targets = {t: name for t, name in targets.items() if t == backend.session.target_id}
         if not targets:
-            st.info('No assessments yet. Run an agentic round or a scan first.')
+            st.info('No assessments yet for this server. Run an agentic round first.')
             return
-        target = st.selectbox('Server', list(targets), format_func=lambda t: f'{targets[t]} ({t.removeprefix("windows:")})',
-                              key='history_target')
+        target = (next(iter(targets)) if choice is not None else
+                  st.selectbox('Server', list(targets), format_func=lambda t: f'{targets[t]} ({t.removeprefix("windows:")})',
+                               key='history_target'))
         runs = history.runs(target)
         if backend:
             allowed = {r.run_reference.record_id for r in shared_rows}

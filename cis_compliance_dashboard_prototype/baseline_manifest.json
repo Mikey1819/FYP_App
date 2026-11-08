@@ -179,7 +179,7 @@
     },
     "cis_compliance_dashboard_prototype/tests/test_app_navigation.py": {
       "category": "protected",
-      "sha256": "dc272ac39ec568a30920d27877ed59125c0b6d4da961b90e065f4cc6854fbe59"
+      "sha256": "9d1d7de819343ee90fd5f1cb7d4da7116328a68988618e0437877cc44d33b38f"
     },
     "cis_compliance_dashboard_prototype/tests/test_catalogue.py": {
       "sha256": "c53745083a428ec2059c928898b44072121539d25d3a4e1b2fb66d5657fc9df6",

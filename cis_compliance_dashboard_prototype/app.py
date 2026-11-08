@@ -37,11 +37,11 @@ def agentic_page():
 
 
 def overview_page():
-    render_overview(PATHS.windows_imports)
+    render_overview(PATHS.windows_imports, PATHS.servers)
 
 
 def history_page():
-    render_history(PATHS.windows_imports)
+    render_history(PATHS.windows_imports, PATHS.servers)
 
 
 def servers_page():

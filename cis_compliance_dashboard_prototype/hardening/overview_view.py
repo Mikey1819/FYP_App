@@ -18,6 +18,7 @@ from .risk import analyse
 from .ui import md_escape, myt
 from system.bootstrap import CONNECTION_KEY
 from system.history import active_history
+from .server_picker import choose_server
 
 LEVELS = ('Critical', 'High', 'Moderate', 'Low')
 # Ordinal warm ramp for the cartoon theme, darker = more severe. Bars carry a black outline, so the palest
@@ -126,11 +127,17 @@ def activity_row(r, store, latest_run_id=None):
     return {'Time': myt(r['created_at']), 'Activity': activity, 'Result': result, 'Status': status}
 
 
-def render_overview(database_path: Path):
+def render_overview(database_path: Path, servers_path: Path | None = None):
     st.title('Overview')
     try:
-        backend, shared_rows = active_history(st.session_state)
-        if backend and backend.session.identity.platform != 'windows':
+        choice = choose_server('overview_server', servers_path)
+        if choice is not None and choice.platform == 'ubuntu':
+            if choice.reader is not None:
+                _render_ubuntu(choice.reader, choice.connection_id, connected=choice.connected)
+            return
+        backend, shared_rows = (active_history(st.session_state) if choice is None or choice.connected
+                                else (None, ()))
+        if backend and backend.session.identity.platform != 'windows':  # Connected Ubuntu, not in the dropdown.
             _render_ubuntu(backend, st.session_state[CONNECTION_KEY])
             return
         imports = ImportedEvidenceStore(database_path)
@@ -138,13 +145,16 @@ def render_overview(database_path: Path):
         store = RemediationStore(database_path.with_name(database_path.stem + '_agentic.sqlite3'), imports)
         history = HistoryService(runtime, store)
         targets = history.targets()
-        if backend:
+        if choice is not None:
+            targets = {t: name for t, name in targets.items() if t == 'windows:' + choice.machine_identity}
+        elif backend:
             targets = {t: name for t, name in targets.items() if t == backend.session.target_id}
         if not targets:
-            st.info('No assessments yet. Connect to a server on the **Servers** page, then start a round in **Agentic hardening**.')
+            st.info('No assessments yet for this server. Start a round in **Agentic hardening** while connected to it.')
             return
-        target = st.selectbox('Server', list(targets), format_func=lambda t: f'{targets[t]} ({t.removeprefix("windows:")})',
-                              key='overview_target') if len(targets) > 1 else next(iter(targets))
+        target = (next(iter(targets)) if choice is not None or len(targets) == 1 else
+                  st.selectbox('Server', list(targets), format_func=lambda t: f'{targets[t]} ({t.removeprefix("windows:")})',
+                               key='overview_target'))
         runs = history.runs(target)
         if backend:
             allowed = {r.run_reference.record_id for r in shared_rows}
@@ -229,7 +239,7 @@ def _ubuntu_area_table(areas):
     return rows
 
 
-def _render_ubuntu(backend, connection):
+def _render_ubuntu(backend, connection, *, connected=True):
     """The Windows Overview's sections for an Ubuntu 22.04 server, from the Ubuntu backend's read model."""
     data = backend.overview(connection) if hasattr(backend, 'overview') else None
     if data is None:
@@ -237,7 +247,8 @@ def _render_ubuntu(backend, connection):
         return
     s, previous, ranked = data['summary'], data['previous'], data['findings']
     st.caption(f"{md_escape(backend.session.identity.hostname)} · latest assessment {myt(s.collected_at)} · "
-               f"{s.selected} controls · CIS Ubuntu Linux 22.04 LTS v2.0.0, Level 1 Server")
+               f"{s.selected} controls · CIS Ubuntu Linux 22.04 LTS v2.0.0, Level 1 Server"
+               + ('' if connected else ' · read-only, not connected'))
     compliance = s.compliance_percent
     delta = (None if previous is None or compliance is None or previous.compliance_percent is None
              else f"{compliance - previous.compliance_percent:+.0f} pts vs previous")
