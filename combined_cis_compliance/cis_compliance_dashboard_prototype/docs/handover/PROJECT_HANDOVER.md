@@ -14,7 +14,7 @@ The detailed, dated record is `docs/INTEGRATION_PROGRESS.md`; this section summa
   - 4.1.4 uses the UFW rule resolver. **Selection v2 (2026-11-08):** 2.4.1.2 (`/etc/crontab` permissions) replaced 1.2.2.1; stored v1 scans still verify and are shown without the retired row.
 - **Remediation:** all **30** controls have a registered, fixture-tested fix family. Live validation is tracked in `docs/evaluation/LIVE_VALIDATION.md`, generated from stored records by `tools/live_validation_register.py`: 3.3.2 validated live (2026-11-07), 5.1.20 attempted but not applied, 28 not run live.
   - Families: sysctl, core dump, sudo, password, account aging, packages, SSH, UFW, auditd service, audit rules, GRUB `audit=1` and the patch job.
-  - Long and risky changes run as systemd-supervised jobs. SSH and UFW changes are commit-confirm: a fresh login confirms them, or the timer, or the boot-rollback unit after a reboot, restores them.
+  - Long and risky changes run as systemd-supervised jobs. SSH and UFW changes are commit-confirm: a fresh login confirms them (the dashboard makes it itself with the login kept in session memory, hardening/reconnect.py), or the timer, or the boot-rollback unit after a reboot, restores them. **Run safety check** runs both acceptance tests the same way.
 - **Auxiliary operations:** approved restore, package-list refresh and reboot (boot-ID verified). They are never counted as CIS fixes.
 - **Execution gate:** evidence-based. It opens only when the deployed runner matches this application and both live acceptance scenarios have passed on the VM for that runner version.
   - The runner stage (`install-runner.sh`) was deployed with the administrator's approval on 2026-11-07, and the confirm scenario passed.

@@ -39,6 +39,7 @@ def clear_target_state(state):
     """Remove workflow/widget authority when disconnecting; retain only public form profiles."""
     for key in tuple(state):
         if key in ('vm_live_target', 'integration_connection_id', 'integration_workflow_id', 'integration_form_binding',
+                   'integration_reconnect',
                    'overview_target') or key.startswith(
                 ('agentic_session', 'agentic_confirm', 'agentic_round_view', 'agentic_tab', 'agentic_operator',
                  'agentic_comment', 'agentic_goal', 'agentic_password', 'agentic_sudo_password', 'history_')):
