@@ -307,6 +307,144 @@ class UbuntuBackend(BoundBackend):
         return ComparisonResult(True, '', tuple((x.control_id, old[x.control_id].value, x.status.value)
                                                 for x in b.assessments if old[x.control_id] is not x.status))
 
+    # ---- read models for the Overview and History pages (the Windows pages' sections, read-only) ----------------
+    def _all_rounds(self, store):
+        """Every recorded round with a scan, of every workflow of this target and registration epoch, oldest first."""
+        s = self.session
+        found = [(r, b) for b in self.ledger.bindings_for_target('ubuntu', s.target_id, s.registration_epoch)
+                 for r in store.rounds(b) if r.framework_run_id]
+        return sorted(found, key=lambda pair: pair[0].created_at)
+
+    def overview(self, connection_session_id):
+        """What the Overview page shows, as on Windows: the latest scan (an assessment or a verification re-scan) with
+        its compliance by area and risk ranking, the scan before it, regressions between them, the fixes still
+        awaiting a decision, how many fixes were verified, and the recent rounds. None before the first scan."""
+        from collections import Counter
+        self.check(connection_session_id)
+        store = self._store()
+        rounds = self._all_rounds(store) if store else []
+        if not rounds:
+            return None
+        catalogue = _controls()
+        latest = rounds[-1][0]
+        evidence = self._evidence(store, latest.evidence_sha256)
+        summary = self._summary(latest.framework_run_id, evidence)
+        previous = None
+        if len(rounds) > 1:
+            before = rounds[-2][0]
+            previous = self._summary(before.framework_run_id, self._evidence(store, before.evidence_sha256))
+        regressions = ()
+        if previous is not None and previous.reference != summary.reference:
+            result = self.compare(previous.reference, summary.reference)
+            if result.comparable:
+                regressions = tuple(c for c, old, new in result.changes if (old, new) == ('Compliant', 'Non-Compliant'))
+        snapshots = {}
+
+        def snap(row, binding):
+            if row.round_id not in snapshots:
+                snapshots[row.round_id] = self.snapshot(connection_session_id, binding.workflow_session_id,
+                                                        self._ref(row.round_id))
+            return snapshots[row.round_id]
+
+        def verdicts(snapshot):
+            kinds = Counter()
+            for r in snapshot.results:
+                if r.execution_state in ('applied', 'reconciled_applied'):
+                    if r.verification_status is None:
+                        kinds['awaiting verification'] += 1
+                    else:
+                        kinds['verified' if r.verification_status is ComplianceStatus.COMPLIANT else 'failed'] += 1
+                elif r.execution_state == 'running':
+                    kinds['running'] += 1
+                else:
+                    kinds['refused' if r.execution_state in ('refused', 'rolled_back', 'reconciled_not_applied')
+                          else 'uncertain'] += 1
+            return kinds
+
+        assessments = [(r, b) for r, b in rounds if r.kind == 'assessment']
+        latest_assessment = assessments[-1][0].round_id if assessments else None
+        awaiting = verified = 0
+        for r, b in assessments:
+            s = snap(r, b)
+            verified += verdicts(s)['verified']
+            if r.round_id == latest_assessment:
+                awaiting = sum(p.kind == 'control_remediation' and p.decision is None and 'approve' in p.eligible_commands
+                               for p in s.proposals)
+        activity = []
+        for r, b in reversed(rounds[-8:]):
+            if r.kind == 'assessment':
+                s = snap(r, b)
+                fixes = [p for p in s.proposals if p.kind == 'control_remediation']
+                undecided = sum(p.decision is None for p in fixes)
+                if r.mode == 'deterministic':
+                    entry = ('Assessment (no AI)', 'Scan only, no fixes proposed', 'Finished')
+                elif not (r.details or {}).get('plan'):
+                    entry = ('Assessment round', 'No plan', 'Stopped early')
+                else:
+                    deferred = sum(row.decision != 'Fix proposed' for row in s.plan)
+                    status = ('No fix proposed' if not fixes else 'All decided' if not undecided
+                              else f'{undecided} awaiting approval' if r.round_id == latest_assessment
+                              else 'Replaced by a later round')
+                    entry = ('Assessment round', f'{len(fixes)} fix(es) proposed, {deferred} deferred', status)
+            else:
+                # A verification scan names the approved requests it checks: a fix is verified when this scan reads
+                # its control Compliant; an executed restore is reported as restored (its control is meant to revert).
+                requested = set((r.details or {}).get('request_ids') or ())
+                verifies = next((x for x in assessments if x[0].round_id == (r.details or {}).get('verifies_round')), None)
+                status = {a.control_id: a.status for a in self._evidence(store, r.evidence_sha256).assessments}
+                kinds = Counter()
+                for q in (snap(*verifies).proposals if verifies else ()):
+                    if q.approved_request_id not in requested:
+                        continue
+                    if q.kind == 'recovery':
+                        kinds['restored'] += 1
+                    elif q.kind == 'control_remediation':
+                        kinds['verified' if status.get(q.control_id) is ComplianceStatus.COMPLIANT else 'failed'] += 1
+                    else:
+                        kinds[q.kind.replace('_', ' ')] += 1
+                entry = ('Restore and verification' if set(kinds) == {'restored'} else 'Remediation and verification',
+                         ', '.join(f'{n} {kind}' for kind, n in kinds.items()) or 'Verification scan', 'Finished')
+            activity.append({'Time': r.created_at, 'Activity': entry[0], 'Result': entry[1], 'Status': entry[2]})
+        fixes = {cid: spec.title for spec in self.families.values() for cid in spec.control_ids}
+        return {'summary': summary, 'previous': previous, 'regressions': regressions,
+                'areas': tuple((catalogue[a.control_id].area, a.status) for a in evidence.assessments),
+                'findings': self._findings(store, latest, evidence), 'awaiting': awaiting, 'verified': verified,
+                'activity': tuple(activity), 'fixes': fixes,
+                'titles': {cid: c.title for cid, c in catalogue.items()}}
+
+    @staticmethod
+    def _change(before, after):
+        if (before, after) == ('Compliant', 'Non-Compliant'):
+            return 'Regression'
+        if (before, after) == ('Non-Compliant', 'Compliant'):
+            return 'Improvement'
+        return 'Unchanged' if before == after else f'{before} -> {after}'
+
+    def compare_rows(self, before, after):
+        """Every control of two assessments of this target (as the Windows Compare): title, before, after, change."""
+        result = self.compare(before, after)
+        if not result.comparable:
+            raise ValueError(result.reason)
+        store = self._store()
+        runs = {r.run_id: r for r in self._runs(store)}
+        old, new = (self._evidence(store, runs[ref.record_id].digest) for ref in (before, after))
+        titles, previous = {cid: c.title for cid, c in _controls().items()}, {a.control_id: a.status.value
+                                                                               for a in old.assessments}
+        return tuple({'control_id': a.control_id, 'title': titles[a.control_id], 'before': previous[a.control_id],
+                      'after': a.status.value, 'change': self._change(previous[a.control_id], a.status.value)}
+                     for a in new.assessments)
+
+    def drift(self):
+        """Changes between each assessment and the previous one of this target, oldest first (as Windows records drift)."""
+        rows = self.history(limit=1000)
+        records = []
+        for older, newer in zip(rows, rows[1:]):
+            for row in self.compare_rows(older.run_reference, newer.run_reference):
+                if row['change'] != 'Unchanged':
+                    records.append(dict(row, detected_at=newer.time, runs=older.run_reference.record_id[:8] + ' → '
+                                        + newer.run_reference.record_id[:8]))
+        return tuple(records)
+
     def snapshot(self, connection_session_id, workflow_session_id, round_ref=None):
         binding = self.check(connection_session_id, workflow_session_id, round_ref)
         store = self._store() if binding else None

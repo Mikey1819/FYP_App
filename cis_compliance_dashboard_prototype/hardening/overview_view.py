@@ -16,6 +16,7 @@ from .import_storage import ImportedEvidenceStore
 from .remediation import RemediationStore
 from .risk import analyse
 from .ui import md_escape, myt
+from system.bootstrap import CONNECTION_KEY
 from system.history import active_history
 
 LEVELS = ('Critical', 'High', 'Moderate', 'Low')
@@ -55,6 +56,16 @@ def risk_distribution_chart(ranked):
     # Count labels in text ink beside each bar: identity never rests on colour alone.
     labels = base.mark_text(align='left', dx=6, fontSize=13, color=TEXT_INK[_theme()]).encode(text='Findings:Q')
     return (bars + labels).properties(height=170)
+
+
+# The area table's columns, shared by the Windows and Ubuntu Overview.
+AREA_COLUMNS = {
+    'Compliance': st.column_config.ProgressColumn('Compliance', min_value=0, max_value=100, format='%d%%',
+                                                  color=METER_INK, width='small', help='Compliant among evaluated controls'),
+    'Compliant': st.column_config.NumberColumn('✓', width='small', help='Compliant'),
+    'Non-compliant': st.column_config.NumberColumn('✗', width='small', help='Non-compliant'),
+    'Unknown / Error': st.column_config.NumberColumn('?', width='small', help='Unknown or Error'),
+    'Controls': st.column_config.NumberColumn('Total', width='small')}
 
 
 def area_table(results):
@@ -120,14 +131,7 @@ def render_overview(database_path: Path):
     try:
         backend, shared_rows = active_history(st.session_state)
         if backend and backend.session.identity.platform != 'windows':
-            st.caption(md_escape(backend.session.identity.hostname) + ' · verified Ubuntu target')
-            if not shared_rows:
-                st.info('No assessments yet for this verified target. Open **Agentic hardening** to assess it.')
-            else:
-                from system.contracts import WorkspaceSnapshot
-                from system.ui.components import render_controls
-                latest = shared_rows[-1]
-                render_controls(WorkspaceSnapshot(latest.target, summary=latest.counts))
+            _render_ubuntu(backend, st.session_state[CONNECTION_KEY])
             return
         imports = ImportedEvidenceStore(database_path)
         runtime = AssessmentRuns(imports)
@@ -189,14 +193,7 @@ def render_overview(database_path: Path):
                 st.success('No scored non-compliant findings.')
         with right:
             st.subheader('Compliance by security area')
-            st.dataframe(area_table(results), hide_index=True, column_config={
-                'Compliance': st.column_config.ProgressColumn('Compliance', min_value=0, max_value=100, format='%d%%',
-                                                              color=METER_INK, width='small',
-                                                              help='Compliant among evaluated controls'),
-                'Compliant': st.column_config.NumberColumn('✓', width='small', help='Compliant'),
-                'Non-compliant': st.column_config.NumberColumn('✗', width='small', help='Non-compliant'),
-                'Unknown / Error': st.column_config.NumberColumn('?', width='small', help='Unknown or Error'),
-                'Controls': st.column_config.NumberColumn('Total', width='small')})
+            st.dataframe(area_table(results), hide_index=True, column_config=AREA_COLUMNS)
 
         st.subheader('Top risks')
         if ranked:
@@ -217,3 +214,66 @@ def render_overview(database_path: Path):
             st.caption('No agentic rounds yet for this server.')
     except (ValueError, OSError, sqlite3.Error) as exc:
         st.error('Overview: ' + md_escape(exc))
+
+
+def _ubuntu_area_table(areas):
+    """Compliance by security area, as the Windows table: areas in benchmark order, counts per status."""
+    rows = []
+    for area in dict.fromkeys(area for area, _ in areas):
+        statuses = [status.value for a, status in areas if a == area]
+        compliant, failing = statuses.count('Compliant'), statuses.count('Non-Compliant')
+        evaluated = compliant + failing
+        rows.append({'Security area': area, 'Compliance': round(100 * compliant / evaluated) if evaluated else 0,
+                     'Compliant': compliant, 'Non-compliant': failing,
+                     'Unknown / Error': len(statuses) - evaluated, 'Controls': len(statuses)})
+    return rows
+
+
+def _render_ubuntu(backend, connection):
+    """The Windows Overview's sections for an Ubuntu 22.04 server, from the Ubuntu backend's read model."""
+    data = backend.overview(connection) if hasattr(backend, 'overview') else None
+    if data is None:
+        st.info('No assessments yet. Open **Agentic hardening** and start a round.')
+        return
+    s, previous, ranked = data['summary'], data['previous'], data['findings']
+    st.caption(f"{md_escape(backend.session.identity.hostname)} · latest assessment {myt(s.collected_at)} · "
+               f"{s.selected} controls · CIS Ubuntu Linux 22.04 LTS v2.0.0, Level 1 Server")
+    compliance = s.compliance_percent
+    delta = (None if previous is None or compliance is None or previous.compliance_percent is None
+             else f"{compliance - previous.compliance_percent:+.0f} pts vs previous")
+    tiles = st.columns(5)
+    tiles[0].metric('Compliance (evaluated)', '—' if compliance is None else f'{compliance:.0f}%', delta)
+    tiles[1].metric('Non-compliant', s.non_compliant)
+    tiles[2].metric('Unknown / Error', s.unknown + s.error)
+    top = ranked[0] if ranked else None
+    tiles[3].metric('Highest risk', '—' if top is None else top.score, None if top is None else top.level,
+                    delta_color='off')
+    tiles[4].metric('Fixes awaiting you', data['awaiting'], f"{data['verified']} verified so far", delta_color='off',
+                    help='Undecided fixes in the latest round, the ones you can still approve or reject.')
+    if data['regressions']:
+        st.warning(f"{len(data['regressions'])} control(s) regressed since the previous assessment: "
+                   + ', '.join(data['regressions']) + '. See History and drift.', icon=':material/trending_down:')
+    left, right = st.columns([1, 1.5])
+    with left:
+        st.subheader('Risk distribution')
+        if ranked:
+            st.altair_chart(risk_distribution_chart(ranked), width='stretch')
+            st.caption('Darker = more severe. Scores from the deterministic risk engine (R = 6I+5E+4P+3L+2D).')
+        else:
+            st.success('No scored non-compliant findings.')
+    with right:
+        st.subheader('Compliance by security area')
+        st.dataframe(_ubuntu_area_table(data['areas']), hide_index=True, column_config=AREA_COLUMNS)
+    st.subheader('Top risks')
+    if ranked:
+        st.dataframe([{'Priority': f.rank, 'Control': f.control_id, 'Title': data['titles'].get(f.control_id, ''),
+                       'Risk': f.score, 'Level': f.level,
+                       'Fix': data['fixes'].get(f.control_id, 'Manual review (no registered fix)')} for f in ranked[:5]],
+                     hide_index=True)
+    else:
+        st.caption('Nothing to prioritise.')
+    st.subheader('Activity')
+    if data['activity']:
+        st.dataframe([dict(row, Time=myt(row['Time'])) for row in data['activity']], hide_index=True)
+    else:
+        st.caption('No agentic rounds yet for this server.')

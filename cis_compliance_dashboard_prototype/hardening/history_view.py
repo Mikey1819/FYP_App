@@ -29,7 +29,7 @@ def render_history(database_path: Path):
         backend, shared_rows = active_history(st.session_state, limit=1000)
         if backend and backend.session.identity.platform != 'windows':
             from system.ui.components import render_history_rows
-            st.caption(md_escape(backend.session.identity.hostname) + ' · verified Ubuntu target')
+            st.caption(md_escape(backend.session.identity.hostname) + ' · CIS Ubuntu Linux 22.04 LTS v2.0.0')
             render_history_rows(backend, shared_rows)
             return
         imports = ImportedEvidenceStore(database_path)

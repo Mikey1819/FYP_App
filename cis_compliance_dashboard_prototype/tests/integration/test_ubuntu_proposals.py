@@ -379,3 +379,62 @@ class BackendRemediationTests(StoreFixture):
         snap = backend.snapshot('c', workflow)
         self.assertEqual([(p.reference.record_id, p.decision) for p in snap.proposals], [(old.reference.record_id, None)])
         self.assertEqual(self.writes(), [])
+
+    def test_overview_and_history_pages_show_the_windows_sections_for_ubuntu(self):
+        """Overview (tiles, ranking, areas, top risks, activity) and History (drift, full compare) from the backend's
+        read models, after a round whose fix was executed and verified (the fixture keeps ASLR 0, so it fails)."""
+        from types import SimpleNamespace
+        from unittest import mock
+        from streamlit.testing.v1 import AppTest
+        from system.bootstrap import CONNECTION_KEY, SERVICE_KEY
+        from tests.integration.test_ubuntu_live_path import open_gate
+        backend = self.backend(self.FIX)
+        handle, snap = self.round(backend)
+        workflow = handle.binding.workflow_session_id
+        backend.decide('c', workflow, snap.proposals[0].reference, True, 'fixture-operator', '', 'op-d')
+        snap = backend.snapshot('c', workflow)
+        request_id = snap.proposals[0].approved_request_id
+        with mock.patch('backends.ubuntu.adapter.execution_gate', return_value=()), open_gate():
+            backend.execute_approved('c', workflow, snap.current_round_reference, (request_id,), True, 'op-x')
+        data = backend.overview('c')
+        self.assertEqual((data['summary'].selected, data['awaiting'], data['verified']), (30, 0, 0))
+        self.assertIsNotNone(data['previous'])  # The verification re-scan follows the assessment.
+        self.assertEqual([row['Activity'] for row in data['activity']], ['Remediation and verification',
+                                                                          'Assessment round'])
+        self.assertEqual(data['activity'][0]['Result'], '1 failed')
+        self.assertEqual(data['activity'][1]['Status'], 'All decided')
+        self.assertEqual(len({area for area, _ in data['areas']}), 5)
+        rows = backend.compare_rows(*[r.run_reference for r in backend.history()])
+        self.assertEqual(len(rows), 30)
+        self.assertEqual({r['change'] for r in rows}, {'Unchanged'})  # The fixture fix wrote a temp file only.
+        self.assertEqual(backend.drift(), ())
+
+        service = SimpleNamespace(backend_for=lambda connection: backend, session=lambda connection: backend.session)
+
+        def page(name):
+            def run():
+                import streamlit as st
+                from pathlib import Path
+                if st.session_state['page'] == 'overview':
+                    from hardening.overview_view import render_overview
+                    render_overview(Path(st.session_state['db']))
+                else:
+                    from hardening.history_view import render_history
+                    render_history(Path(st.session_state['db']))
+            app = AppTest.from_function(run, default_timeout=60)
+            for key, value in {SERVICE_KEY: service, CONNECTION_KEY: 'c', 'page': name,
+                                      'db': str(self.root / 'windows.sqlite3')}.items():
+                app.session_state[key] = value
+            app.run()
+            self.assertEqual(len(app.exception), 0, [e.value for e in app.exception])
+            self.assertFalse(list(app.error), [e.value for e in app.error])
+            return app
+        overview = page('overview')
+        self.assertEqual([m.label for m in overview.metric], ['Compliance (evaluated)', 'Non-compliant',
+                                                              'Unknown / Error', 'Highest risk', 'Fixes awaiting you'])
+        self.assertEqual([h.value for h in overview.subheader], ['Risk distribution', 'Compliance by security area',
+                                                                 'Top risks', 'Activity'])
+        history = page('history')
+        self.assertEqual([h.value for h in history.subheader], ['Assessment history', 'Detected configuration drift',
+                                                                'Compare two assessments'])
+        self.assertTrue(any(c.key == 'history_all_shared' for c in history.checkbox))

@@ -7,32 +7,57 @@ TABS = ('Fixes', 'Risk ranking', 'Controls', 'Results', 'Agent log')
 
 
 def render_history_rows(backend, rows):
+    """The Windows History page's sections for an Ubuntu server: assessment history, detected drift, compare."""
     if not rows:
-        st.info('No assessments yet for this verified target. Open **Agentic hardening** to assess it.')
+        st.info('No assessments yet. Open **Agentic hardening** and start a round.')
         return
     st.subheader('Assessment history')
     st.dataframe([{'Assessed (MYT)': myt(r.time, FULL), 'Run': r.run_reference.record_id[:8],
         'Evidence': r.evidence_mode, 'Controls': r.counts.selected, 'Compliant': r.counts.compliant,
-        'Non-Compliant': r.counts.non_compliant, 'Unknown': r.counts.unknown, 'Error': r.counts.error,
-        'Coverage': f'{r.counts.coverage_percent:.0f}%',
+        'Non-compliant': r.counts.non_compliant, 'Unknown': r.counts.unknown, 'Error': r.counts.error,
         'Compliance of evaluated': '—' if r.counts.compliance_percent is None else f'{r.counts.compliance_percent:.0f}%'}
         for r in reversed(rows)], hide_index=True)
+    st.caption('Compliance is among evaluated controls (Compliant + Non-compliant); Unknown/Error are shown '
+               'separately and never counted as passes.')
+    if hasattr(backend, 'drift'):
+        st.subheader('Detected configuration drift')
+        records = backend.drift()
+        if not records:
+            st.info('No drift detected between consecutive assessments.')
+        else:
+            regressions = sum(r['change'] == 'Regression' for r in records)
+            if regressions:
+                st.warning(f'{regressions} regression(s): a control that was compliant became non-compliant.')
+            st.dataframe([{'Detected (MYT)': myt(r['detected_at'], FULL), 'Control': r['control_id'],
+                           'Title': r['title'], 'Before': r['before'], 'After': r['after'], 'Change': r['change'],
+                           'Runs': r['runs']} for r in reversed(records)], hide_index=True)
     if len(rows) >= 2:
         st.subheader('Compare two assessments')
         refs = [r.run_reference for r in rows]
-        labels = {r.run_reference: f'{myt(r.time, FULL)} · {r.run_reference.record_id[:8]}' for r in rows}
+        labels = {r.run_reference: f'{myt(r.time, FULL)} MYT · {r.run_reference.record_id[:8]}' for r in rows}
         left, right = st.columns(2)
         before = left.selectbox('Earlier', refs, index=len(refs)-2, format_func=labels.get, key='history_before_shared')
         after = right.selectbox('Later', refs, index=len(refs)-1, format_func=labels.get, key='history_after_shared')
         if before == after:
             st.info('Choose two different assessments.')
+        elif hasattr(backend, 'compare_rows'):
+            try:
+                compared = backend.compare_rows(before, after)
+            except ValueError as exc:
+                st.warning(md_escape(exc))
+                return
+            show_all = st.checkbox('Show unchanged controls', key='history_all_shared')
+            shown = compared if show_all else [r for r in compared if r['change'] != 'Unchanged']
+            st.dataframe([{'Control': r['control_id'], 'Title': r['title'], 'Before': r['before'], 'After': r['after'],
+                           'Change': r['change']} for r in shown] or [{'Change': 'No differences'}], hide_index=True)
         else:
             result = backend.compare(before, after)
             if not result.comparable:
                 st.warning(md_escape(result.reason))
             else:
                 st.dataframe([{'Control': control, 'Before': previous, 'After': current}
-                              for control, previous, current in result.changes] or [{'Change': 'No differences'}], hide_index=True)
+                              for control, previous, current in result.changes] or [{'Change': 'No differences'}],
+                             hide_index=True)
 
 
 def render_controls(snapshot):
