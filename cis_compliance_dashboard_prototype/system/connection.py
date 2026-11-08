@@ -129,6 +129,12 @@ class ConnectionService:
             elif state == 'unreachable':
                 code, detail = 'unreachable', ('No WinRM listener answered at the paired address. Credentials were '
                                                'cleared.')
+            # SSH (paramiko) failures, recognised by class name so this layer does not import the SSH library.
+            elif 'AuthenticationException' in {c.__name__ for c in type(exc).__mro__}:
+                code, detail = 'auth_failed', 'The server rejected the username or password. Credentials were cleared.'
+            elif isinstance(exc, (OSError, TimeoutError)):
+                code, detail = 'unreachable', ('Nothing answered at the paired address and port. Credentials were '
+                                               'cleared.')
             if isinstance(exc, PendingChangeElsewhere):
                 code = 'pending_change_elsewhere'
                 detail = ('Another VM has a running or unresolved change. Reconnect to that VM and settle it '

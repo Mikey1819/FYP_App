@@ -494,6 +494,21 @@ class PairingPageTests(unittest.TestCase):
         self.assertEqual(self.ssh.logins, [], 'No password is sent to an unproven host key')
         self.assertEqual(self.registry().all(), [])
 
+    def test_ubuntu_wrong_account_or_password_says_so(self):
+        import paramiko
+        self.found = UBUNTU_FOUND
+        real = self.ssh.__call__
+
+        def rejecting(request, credentials, known):
+            real(request, credentials, known)
+            raise paramiko.AuthenticationException('Authentication failed.')
+        self.service._ssh_factory = rejecting
+        app = self.pair()
+        self.assertTrue(any('(auth_failed)' in e.value and 'name before @' in e.value for e in app.error),
+                        [e.value for e in app.error])
+        self.assertIsNone(self.connected(app))
+        self.assertEqual(self.registry().all(), [])
+
     def test_ubuntu_with_another_machine_identity_is_refused(self):
         self.found = UBUNTU_FOUND
         self.ssh.machine_id = 'f' * 32

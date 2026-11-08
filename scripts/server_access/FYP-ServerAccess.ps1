@@ -301,7 +301,7 @@ function Get-ServerIdentity {
 # Get-PairDecision only decides (no network, no firewall), so the tests can check every rule with fixtures.
 # ---------------------------------------------------------------------------------------------------------------
 function New-PairingSession([DateTimeOffset]$Now) {
-    return [pscustomobject]@{ code = New-PairingCode; expires = $Now.AddMinutes($CodeMinutes); wrong = @{}
+    return [pscustomobject]@{ code = New-PairingCode; expires = $Now.AddMinutes($CodeMinutes); wrong = @{}; wrong_seen = @{}
         wrong_total = 0; done = $false; result = ''; accepted_nonce = ''; accepted_address = ''; reply = $null
         closes_at = $null }
 }
@@ -324,6 +324,12 @@ function Get-PairDecision($Session, [byte[]]$Raw, [string]$Address, [DateTimeOff
     try { $find = Read-PairFind $Raw $Session.code }
     catch {
         if ($_.Exception.Message -ne 'wrong_code') { return [pscustomobject]@{ action = 'ignore' } }
+        # The dashboard sends each question 3 times in case one is lost: a byte-identical repeat from the same address
+        # is one attempt. A different guess has a different signature, so it always counts.
+        $sha = [Security.Cryptography.SHA256]::Create()
+        try { $attempt = $Address + '|' + [BitConverter]::ToString($sha.ComputeHash($Raw)) } finally { $sha.Dispose() }
+        if ($Session.wrong_seen.ContainsKey($attempt)) { return [pscustomobject]@{ action = 'ignore' } }
+        $Session.wrong_seen[$attempt] = $true
         $count = 1 + [int]$Session.wrong[$Address]
         $Session.wrong[$Address] = $count
         $Session.wrong_total++

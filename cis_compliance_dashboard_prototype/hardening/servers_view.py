@@ -48,15 +48,16 @@ SECRETS = ('servers_password', 'servers_pair_password', 'servers_pair_sudo', 'se
 # What a failed connection to a saved server most likely means, in the administrator's terms.
 HINTS = {
     'disconnected': '',
-    'connection_failed': 'Check the server is on and on the same network. On Windows, the server access helper must '
-                         'have allowed this laptop: if its address changed or access was reverted, start pairing on '
+    'connection_failed': 'Check the server is on and on the same network. If its address changed, start pairing on '
                          'the server and use Re-pair below.',
     'verification_failed': 'If the server got a new address, or was reinstalled, start pairing on the server and use '
                            'Re-pair below.',
     'pending_change_elsewhere': '',
-    'auth_failed': 'Check the account and password.',
-    'unreachable': 'Its address may have changed, or access was reverted on the server. Start pairing on the server '
-                   'and use Re-pair below.',
+    'auth_failed': 'Check the account and password. On Ubuntu the account is the Linux user of the server, the name '
+                   'before @ in its terminal prompt.',
+    'unreachable': 'Check the server is on. Its address may have changed (pair again and use Re-pair below); on Windows, '
+                   'access may have been reverted in the helper; on Ubuntu, check that the SSH service runs '
+                   '(systemctl status ssh).',
 }
 
 
@@ -318,7 +319,8 @@ def _show_pending(registry, connected):
         else:
             left, right = st.columns(2)
             username = left.text_input('Account on the server', value=pending['username'], key='servers_pair_user',
-                                       help='The management account the Ubuntu helper bundle was installed for.')
+                                       help='The Linux user you log in with on the server: the name before @ in its '
+                                            'terminal prompt. The Ubuntu helper bundle is installed for this account.')
             auth = right.radio('Log in with', ('Password', 'SSH key'), horizontal=True, key='servers_pair_auth')
             password = key_path = None
             if auth == 'Password':

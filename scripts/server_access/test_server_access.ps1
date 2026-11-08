@@ -84,6 +84,10 @@ Assert-True ((Get-PairDecision $s ([Text.Encoding]::UTF8.GetBytes('hello')) '192
 Assert-True ((Get-PairDecision $s $right '127.0.0.1' $t0).action -ceq 'ignore') 'loopback can never pair'
 Assert-True ((Get-PairDecision $s (New-Find $wrongCode) '192.168.1.99' $t0).action -ceq 'wrong') 'a wrong code is counted'
 Assert-True ($s.wrong['192.168.1.99'] -eq 1 -and -not $s.done) 'one wrong code does not stop pairing'
+$guess = New-Find $wrongCode
+Assert-True ((Get-PairDecision $s $guess '192.168.1.98' $t0).action -ceq 'wrong') 'a wrong code from another laptop is counted'
+Assert-True ((Get-PairDecision $s $guess '192.168.1.98' $t0).action -ceq 'ignore') 'its byte-identical repeat is not counted again'
+Assert-True ($s.wrong['192.168.1.98'] -eq 1) 'one mistyped code uses one attempt, not three'
 $ok = Get-PairDecision $s $right '192.168.1.23' $t0.AddMinutes(1)
 Assert-True ($ok.action -ceq 'accept' -and $ok.find.laptop_name -ceq 'DESKTOP-KHOO' -and $s.result -ceq 'paired') 'the right code pairs'
 Assert-True ((Get-PairDecision $s $right '192.168.1.23' $t0.AddMinutes(1).AddSeconds(3)).action -ceq 'repeat') 'a repeated question gets the answer again'

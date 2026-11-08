@@ -151,14 +151,24 @@ class HelperSessionTests(unittest.TestCase):
         self.assertEqual(self.pairing.state, 'paired')
 
     def test_wrong_codes_stop_pairing(self):
-        wrong, _ = pairing.make_find('000000001', 'GUESSER')
+        guess = lambda n: pairing.make_find(f'{n:09d}', 'GUESSER')[0]  # Each new guess is a new question.
         for n in range(1, helper.WRONG_PER_ADDRESS):
-            self.assertIn(f'({n} of 5)', self.pairing.handle(wrong, '192.168.56.66')[1])
-        self.assertIn('Too many wrong codes', self.pairing.handle(wrong, '192.168.56.66')[1])
+            self.assertIn(f'({n} of 5)', self.pairing.handle(guess(n), '192.168.56.66')[1])
+        self.assertIn('Too many wrong codes', self.pairing.handle(guess(5), '192.168.56.66')[1])
         self.assertEqual(self.pairing.state, 'locked')
         self.assertTrue(self.pairing.finished)
         right, _ = pairing.make_find(CODE, 'DESKTOP-KHOO')
         self.assertTrue(self.pairing.finished)
+
+    def test_a_repeated_wrong_question_is_one_attempt_but_every_new_guess_counts(self):
+        wrong, _ = pairing.make_find('000000001', 'DESKTOP-KHOO')
+        self.assertIn('(1 of 5)', self.pairing.handle(wrong, '192.168.56.1')[1])
+        for _ in range(2):  # The dashboard's two repeats of the same question.
+            self.assertEqual(self.pairing.handle(wrong, '192.168.56.1'), (None, None))
+        guess, _ = pairing.make_find('000000002', 'DESKTOP-KHOO')
+        self.assertIn('(2 of 5)', self.pairing.handle(guess, '192.168.56.1')[1])
+        right, _ = pairing.make_find(CODE, 'DESKTOP-KHOO')
+        self.assertIn('Paired with', self.pairing.handle(right, '192.168.56.1')[1])
 
     def test_the_code_expires(self):
         self.now[0] += 10 * 60 + 1

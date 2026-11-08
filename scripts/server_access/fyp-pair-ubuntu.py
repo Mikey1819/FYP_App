@@ -231,6 +231,9 @@ class Pairing:
         self.clock = clock
         self.expires = clock() + minutes * 60
         self.wrong, self.wrong_total = {}, 0
+        # The dashboard sends each question 3 times in case one is lost. A byte-identical repeat from the same address
+        # is one attempt, not three; a different guess has a different signature, so it always counts.
+        self.wrong_seen = set()
         self.paired = None  # (nonce_l, laptop address, laptop name, answer bytes, until)
         self.state = 'waiting'  # waiting | paired | expired | locked
 
@@ -253,6 +256,10 @@ class Pairing:
         if verdict == 'ignore':
             return None, None
         if verdict == 'wrong':
+            attempt = (address, hashlib.sha256(bytes(raw)).hexdigest())
+            if attempt in self.wrong_seen:
+                return None, None
+            self.wrong_seen.add(attempt)
             self.wrong[address] = self.wrong.get(address, 0) + 1
             self.wrong_total += 1
             if self.wrong[address] >= WRONG_PER_ADDRESS or self.wrong_total >= WRONG_TOTAL:
