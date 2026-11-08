@@ -12,6 +12,8 @@ The same application and connection form now also assess and harden one Ubuntu S
 ..\.venv-integration\Scripts\python.exe -m streamlit run app.py
 ```
 
+`Run-Dashboard.cmd` in the project folder does the same from any folder (double-click it, or type its path; extra Streamlit options follow it).
+
 **First time on a fresh copy** (the environment, the VM helper bundle and the app's data are not included; they are rebuilt or created locally). From the project folder, with Python 3.13 (Python 3.15 also passes the suite, 8 November 2026):
 
 ```powershell
