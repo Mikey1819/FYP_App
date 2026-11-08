@@ -11,7 +11,8 @@
 
 Every file is opened with SQLite's read-only mode, so this tool cannot create, change or delete anything.
 `--database` takes the imported-evidence file; the framework and agentic files sit next to it with the same
-names the dashboard uses. Times are shown in Malaysia time (MYT); storage stays UTC.
+names the dashboard uses. The default is the unified dashboard's Windows file,
+data/windows/integration_imports.sqlite3. Times are shown in Malaysia time (MYT); storage stays UTC.
 """
 import argparse
 import base64
@@ -21,7 +22,7 @@ import sqlite3
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'cis_compliance_dashboard_prototype'))
-from hardening.databases import imports_database
+from system.config import PATHS
 from hardening.ui import FULL, myt
 
 STATUSES = ('Compliant', 'Non-Compliant', 'Unknown', 'Error')
@@ -321,7 +322,8 @@ def shorten_evidence(value):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--database', type=Path, default=None,
-                        help='imported-evidence database (default: the dashboard\'s, see CIS_DASHBOARD_DB)')
+                        help='imported-evidence database (default: the dashboard\'s Windows file, '
+                             'data/windows/integration_imports.sqlite3)')
     commands = parser.add_subparsers(dest='command')
     for name, default in (('scans', 10), ('rounds', 10), ('proposals', 20), ('drift', 20)):
         commands.add_parser(name).add_argument('--limit', type=int, default=default)
@@ -335,7 +337,7 @@ def main():
     args = parser.parse_args()
     if hasattr(sys.stdout, 'reconfigure'):
         sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-    viewer = Viewer(args.database or imports_database())
+    viewer = Viewer(args.database or PATHS.windows_imports)
     try:
         if not any(viewer.db.values()):
             sys.exit(f'No database found next to {viewer.paths["imports"]}.')

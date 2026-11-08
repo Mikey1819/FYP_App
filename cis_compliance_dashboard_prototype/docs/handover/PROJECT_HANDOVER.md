@@ -29,9 +29,8 @@ The detailed, dated record is `docs/INTEGRATION_PROGRESS.md`; this section summa
   - Optionally, repeat representative agentic rounds live. The offline evaluation (`evaluation/UBUNTU_AGENTIC_EVALUATION.md`) was built from the scan of 2026-11-07, before most fixes; re-running it on the hardened VM would show the agents with few or no failures.
 - **Outstanding, needs an administrator decision:**
   - Runner refusal categories instead of one generic refusal (a helper change, so a reinstall). Two live diagnoses (2.1.2, 6.3.3.4) needed journal or code reading because the reason was not recorded.
-  - Whether to remove the goal field from the Windows page too (removed for Ubuntu).
   - **Pending (administrator, 2026-11-07): batch shared-file fixes.** Narrow the sysctl family's read set to its own keys' lines in `/etc/sysctl.d/60-fyp-hardening-cis.conf` (1.5.3 reuses it), so 1.5.1/3.3.1/3.3.8/1.5.3 could run in one execution and a restore reverts only its own lines. Helper change: reinstall, both acceptance scenarios, and the family re-validated live. Until then, the approval guard allows one fix per shared file per round.
-- **Decided and done on 2026-11-08:** 2.1.2 mask-and-retain; 1.2.2.1 retired in favour of 2.4.1.2 (catalogue v2); the "Follow CIS" reviewed SCAP wording for 6.3.3.4, 6.3.3.8 and 5.3.3.2.2; the Fixes cards ordered by risk.
+- **Decided and done on 2026-11-08:** 2.1.2 mask-and-retain; 1.2.2.1 retired in favour of 2.4.1.2 (catalogue v2); the "Follow CIS" reviewed SCAP wording for 6.3.3.4, 6.3.3.8 and 5.3.3.2.2; the Fixes cards ordered by risk. The Windows side was synced with the Windows project's own changes of 5-7 November (one 32-control catalogue, read-only database viewer, round goals removed from the Windows page too, the four firewall logging fixes, fixes ranked by risk, review fixes); see `PROGRESS.md`.
 - **Not authorized:** push, merge, deployment, academic report rewrite (`docs/REPORT_CHANGE_LOG.md` lists the changes to make).
 
 ## 1. Executive summary and architecture overview

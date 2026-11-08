@@ -1220,3 +1220,10 @@ The execution gate was a hard-coded "closed". It now opens only on evidence.
   - Both kinds of entry are recorded in the analysis outcome as `ignored`. `submit_analysis` is repeatable, bounded by the Coordinator's invalid-call limit.
   - Without this, the untrue "failing in an earlier comparable assessment" note would have reached the 2.4.1.2 card.
 - **Tests:** 4 new tests (`test_ubuntu_analysis_truth`), written first. One older test now supplies a ranking in which its flag is true. Full suite **666 tests, all passed**. Host-only change.
+
+## 2026-11-08 Windows sync from the Windows project's lan-pairing branch
+
+- The Windows project's non-pairing commits of 5-7 November were applied on branch `sync-windows-lan-pairing` (details and checks in the root `PROGRESS.md`): one 32-control catalogue, read-only database viewer, completed risk scales, administrator goals removed (the Windows backend now refuses a goal like the Ubuntu one), four firewall logging fixes (25 Windows library actions), fixes ranked by risk, and four review fixes.
+- Windows preservation baseline re-taken (`BASELINE.md`).
+- Not applied: LAN pairing (D7), Servers page, client package. They replace the shared connection form, so they need an administrator decision.
+- Python 3.15.2 `.venv-integration` from `requirements.integration.lock.txt`: 663 passed (1 skipped); four PowerShell fixture suites pass; `tools.baseline` clean.

@@ -1,10 +1,28 @@
 {
-  "created_at": "2026-11-05T13:25:35.351168+00:00",
-  "root": "C:\\Users\\teohk\\OneDrive\\Desktop\\FYP_App-main\\window_cis_compliance_dashboard_prototype",
-  "git_before": "No Git repository at chosen project or parents",
+  "created_at": "2026-11-08T10:44:07.937869+00:00",
+  "root": "C:\\Users\\User\\Documents\\Degree\\FYP 1\\FYP_App\\combined_cis_compliance",
+  "basis": "Windows source after syncing the non-pairing commits of the Windows branch lan-pairing (643376f..b0b6291, up to 7 November 2026) on branch sync-windows-lan-pairing. Protected and metadata hashes are the synced bytes; authorized_ui hashes stay the original pre-integration bytes.",
+  "previous": {
+    "created_at": "2026-11-05T13:25:35.351168+00:00",
+    "root": "C:\\Users\\teohk\\OneDrive\\Desktop\\FYP_App-main\\window_cis_compliance_dashboard_prototype",
+    "git_before": "No Git repository at chosen project or parents",
+    "archive": {
+      "path": "C:\\Users\\teohk\\OneDrive\\Desktop\\FYP_App-main\\integration-recovery\\windows-pre-integration-20261105.zip",
+      "sha256": "b85cbd26e9a3429210679d69385df5a2f239c214d883077823605775b61b6e08",
+      "verified_members": 86
+    }
+  },
   "files": {
     "AGENTS.md": {
-      "sha256": "1dc3c633befca7eb3a22768ff424a5e36688f8361c3d8e7f9321a9437dec9296",
+      "sha256": "81f51511b7a66449ee44b3925a949065ef18daf143719ff15e0d504d6fd90578",
+      "category": "metadata"
+    },
+    "PROGRESS.md": {
+      "sha256": "9fb12d231a99e813e4162b4687f38cc6e703c99bfb777c66c7cececb4ab05bf7",
+      "category": "metadata"
+    },
+    "README.md": {
+      "sha256": "495a211b7cc8d4f429f1b85e814f585a623de10e0eb5779daab92b9d045aa511",
       "category": "metadata"
     },
     "cis_compliance_dashboard_prototype/.gitignore": {
@@ -20,11 +38,11 @@
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/action_library.py": {
-      "sha256": "a0a207393fec6fd633522e9f41c1e6dcb4d3f05e6d107137210ab00ca548ada8",
+      "sha256": "f3efcaf0266689868ca184afecf2d8bca0b313dbd7247abc1b3e5daaff798c2e",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/agentic.py": {
-      "sha256": "46a885ae78f3a1744faef54e8a4a08a8917949b4e69f541f16ef27ef4a51b2d9",
+      "sha256": "b9996455bfa0502651194ea6e08dca9673bc9be08fd3164f2dde510bd474aa35",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/agentic_view.py": {
@@ -40,19 +58,19 @@
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/domain.py": {
-      "sha256": "d9d336f692d02b2bb03d532ebd86a0f209159e68fe95306f9b273cf44ae286b3",
+      "sha256": "6f4f8a19331793c737fe9339602f8756e6f16ebe2d8885ea33151acf69a00733",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/evidence_import.py": {
-      "sha256": "0eb81ed69b941923f293f4630b061b515f8b515ea0218dba04cc63d0bf698105",
+      "sha256": "ab394ea4617751cd88223b08d52bada9d76755db5c4bddbbc612d761bc4889a6",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/framework.py": {
-      "sha256": "8e2a17640b0982ec601339fcd268ee6e227531c35e56885fe65ba116ba5264d9",
+      "sha256": "1a8c4b5622e211ee8d72a25aad5b64f37a31d1b84186253329607b64bb9e6b28",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/history.py": {
-      "sha256": "b24cc76796c0cf47bb2c2cf11d4b82efb8bbcbc9ffd3657e47757fbe515d1546",
+      "sha256": "92650ec6108c8551757563d8c9e2fac547fc63c3b9e45ed17478f927a44b8c1a",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/history_view.py": {
@@ -60,11 +78,11 @@
       "category": "authorized_ui"
     },
     "cis_compliance_dashboard_prototype/hardening/import_storage.py": {
-      "sha256": "1bec90fe2822ba7a9600c7cf61ffe2db3f1c5a5b95b00e5572bf9d37b9af3829",
+      "sha256": "c79c7f221d9f6486cdf2f26566834bf7760f164a979915d0b204450dca20395c",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/investigation.py": {
-      "sha256": "ec80ccbacc263c1a852aa85196373299476e4ef37220e8363562b7e60e5c1f7a",
+      "sha256": "1e37feefed910a59aaeec615ae7dfb35eb428e2d92021b00d0df15cc70201a3b",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/ollama_client.py": {
@@ -76,19 +94,19 @@
       "category": "authorized_ui"
     },
     "cis_compliance_dashboard_prototype/hardening/remediation.py": {
-      "sha256": "63c692a54b87c34fc00ea35d01b1c2681684199a2bcc5d9e50f65356f3329a97",
+      "sha256": "ebb2f3f79736ee2b212b87f23181680ed53b5f9e577ed633ce72528477953ce2",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/risk.py": {
-      "sha256": "f9e0d88fefb89ac658f9a8b9396ebfe0680aa30a7f5986552c168987fa31549b",
+      "sha256": "08042622e19a3eca266ec3c7918223df9b365054abbaa343728ed7d24f9b4137",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/round_report.py": {
-      "sha256": "240a24a26d05037e304389a18315a56f21d5186650d86e78e20d3479ab5a1b40",
+      "sha256": "7ed08ff5a25e8c9bef644f064ae4849ad1ec9df2613a247a163a13a92cfc9b07",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/server2022_catalogue.py": {
-      "sha256": "7df38fea0e8b1cc4434f8f538802edf51c46ca8e93f8fa28385bd2a061683769",
+      "sha256": "9e10a6c0a0a318cf45c8024cc03db3b7f86a4fd1d40d02e916fe93ad8356b08a",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/server_access.py": {
@@ -107,20 +125,32 @@
       "sha256": "c07ad2a8f356c12629a268ab7ce7e0f2053e4e8b927872de29851c559c98fcfa",
       "category": "protected"
     },
+    "cis_compliance_dashboard_prototype/tests/evidence_fixture.py": {
+      "sha256": "79fe24833c61a15a30ca6db5abeac73da57b72eb84dc41e595fbab78f5bca9b7",
+      "category": "protected"
+    },
     "cis_compliance_dashboard_prototype/tests/synthetic_fixtures.py": {
       "sha256": "448f1da17f22002f6d982261510e1bf9af821152e9f4d724a7dadebe71d75de5",
       "category": "protected"
     },
+    "cis_compliance_dashboard_prototype/tests/test_account_policy_controls.py": {
+      "sha256": "42600320602d4547c01517f69115bfa9f4f886f043b5c8e3b10b229a64c5bcc9",
+      "category": "protected"
+    },
     "cis_compliance_dashboard_prototype/tests/test_agentic.py": {
-      "sha256": "1e9bc18a59a0aea3aa2c03cc89c2d95e3cf4c169e8147d4a0eea31ce5d35b3ec",
+      "sha256": "31a2775428824d02514e6a0437179b07a46c47fa23089a8c896a7a056d1fc33b",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/tests/test_agentic_view.py": {
-      "sha256": "f4d525551c0e312e9171249001e7baaa93f24f52fe4a2340c22f9dca47d361a3",
+      "sha256": "12b892e23a4c9ad0fa60aa59b95b80926cac6d058d599abd12936e83857de4a8",
+      "category": "protected"
+    },
+    "cis_compliance_dashboard_prototype/tests/test_catalogue.py": {
+      "sha256": "c53745083a428ec2059c928898b44072121539d25d3a4e1b2fb66d5657fc9df6",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/tests/test_cross_check.py": {
-      "sha256": "ca2a33d5c8137a5dcf2b5ae311219c5e2a70843dc531b37b8cf7e5753b22c044",
+      "sha256": "c0151e858b1da5aa78c36283fcbd5cae84c2d62dd7ca91ef7aa468919b7b9a7b",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/tests/test_domain.py": {
@@ -128,27 +158,19 @@
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/tests/test_evidence_import.py": {
-      "sha256": "528f3a9c1ba1aa1ee43bb0850d4951ac932a9f176adc6232be37dda5a1892ada",
-      "category": "protected"
-    },
-    "cis_compliance_dashboard_prototype/tests/test_expanded_controls.py": {
-      "sha256": "73fd413c8e9596b6092513d9598390edd8b19dfff5ce271962f70bc6787ebc42",
+      "sha256": "ee2210bbd65981dc2cc6a61d8899b8064b9e02c1af63d54b616f7f7a38c785f9",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/tests/test_framework.py": {
-      "sha256": "f2de7858e883bcb1a632dc8a12bff915ad83507ad9768036685cf44637618926",
-      "category": "protected"
-    },
-    "cis_compliance_dashboard_prototype/tests/test_full_controls.py": {
-      "sha256": "dd470d41d35f6fb7568b6d6307ecdd786e9501d64141d58b5e840c77fb017c17",
+      "sha256": "fdece8f97bf4dfd21fe669b3215ff1a68e3db07a1cf030f556d452e5349d68d8",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/tests/test_history.py": {
-      "sha256": "c7b8f671b63a6c087f32ae3b244372151ebda40d84782659a057825d130ded8d",
+      "sha256": "f3934e2e4d159d43e2aadd38158d413e14d61778ac466a5f8c833e6e14de1e12",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/tests/test_import_storage.py": {
-      "sha256": "df3edd9d35c2d651a4c3f58ca40ff8db76c60a1fb006a43d76075a3744d21749",
+      "sha256": "c52400b8b7ae57c5cf71cd885d3af1818b3e4b34538e874618842d5312d49754",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/tests/test_investigation.py": {
@@ -156,7 +178,7 @@
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/tests/test_local_security_controls.py": {
-      "sha256": "6c915ed97ec03c8304c9010d496235a98b8ae8e82d0e10b8c35b3ba0d38ab150",
+      "sha256": "bae860a50776e11562d53df4d3b3bb0f93da737058c25f268d425e260ae2c329",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/tests/test_ollama_client.py": {
@@ -171,12 +193,40 @@
       "sha256": "2ab07b02c60d7035a03a1e397996efb8ed8899eb2d99d429fdc4951e2ef62901",
       "category": "protected"
     },
-    "cis_compliance_dashboard_prototype/tests/test_winrm_channel.py": {
-      "sha256": "e766217d004bbb9bf6bed92d9e7331abe6a877571f49e1aff47e2f16e7ffce79",
+    "cis_compliance_dashboard_prototype/tests/test_show_database.py": {
+      "sha256": "54ad16f2d8667140e613c55e0921daea097d598507ac72388e6a425dd909406e",
       "category": "protected"
+    },
+    "cis_compliance_dashboard_prototype/tests/test_winrm_channel.py": {
+      "sha256": "612e1a535da99540fcacc8974bf8dde9c3b4b7bcbdf5866823fccdd4188b3a5f",
+      "category": "protected"
+    },
+    "docs/archive/ADMIN_GOALS_DESIGN.md": {
+      "sha256": "1ae2d77c093174cde41b2d7e2877648a1f89d6cf6843b34e8ca1dabe3861b471",
+      "category": "metadata"
     },
     "docs/archive/DEVELOPMENT_PLAN.md": {
       "sha256": "5d28940bbc0fdc77db9412e5a35667444ee07145b96780fca66b29215221f7cc",
+      "category": "metadata"
+    },
+    "docs/archive/LIVE_VALIDATION_PLAN.md": {
+      "sha256": "b4041b73c73f781a3324604d3a7af2a55aedd029e2c42d5bf2ed7665860fa7a7",
+      "category": "metadata"
+    },
+    "docs/archive/LOCAL_MODEL_VALIDATION.md": {
+      "sha256": "a5038075ff11e13a2fc9149bf85cf45fa41f3bdf4adfb45cedfcc5b0df384f59",
+      "category": "metadata"
+    },
+    "docs/archive/PROGRESS_LOG_2026-10-17_to_2026-10-26.md": {
+      "sha256": "bcbadb9bcda6f75626ae2b081d5ed55e86409dcfdb9f543ccf10e360b7943321",
+      "category": "metadata"
+    },
+    "docs/archive/REHEARSAL_RESULT.md": {
+      "sha256": "4ad68c73f018e7600085a0a25b1f8edc5e0b3674354c6f2893f741442571d47a",
+      "category": "metadata"
+    },
+    "docs/archive/TEACHER_PREVIEW.md": {
+      "sha256": "f11176cc4f707c131749dbb9f21fec32fc0538b1fd99c0963a1beb94ed8840be",
       "category": "metadata"
     },
     "docs/archive/legacy/ADAPTIVE_INVESTIGATION.md": {
@@ -203,44 +253,24 @@
       "sha256": "ef2eefc80a0500db92e6f44fb4874c5729f36dbce35e4596f3b946409cd717d0",
       "category": "metadata"
     },
-    "docs/archive/LIVE_VALIDATION_PLAN.md": {
-      "sha256": "b4041b73c73f781a3324604d3a7af2a55aedd029e2c42d5bf2ed7665860fa7a7",
-      "category": "metadata"
-    },
-    "docs/archive/LOCAL_MODEL_VALIDATION.md": {
-      "sha256": "a5038075ff11e13a2fc9149bf85cf45fa41f3bdf4adfb45cedfcc5b0df384f59",
-      "category": "metadata"
-    },
-    "docs/archive/PROGRESS_LOG_2026-10-17_to_2026-10-26.md": {
-      "sha256": "bcbadb9bcda6f75626ae2b081d5ed55e86409dcfdb9f543ccf10e360b7943321",
-      "category": "metadata"
-    },
-    "docs/archive/REHEARSAL_RESULT.md": {
-      "sha256": "4ad68c73f018e7600085a0a25b1f8edc5e0b3674354c6f2893f741442571d47a",
-      "category": "metadata"
-    },
-    "docs/archive/TEACHER_PREVIEW.md": {
-      "sha256": "f11176cc4f707c131749dbb9f21fec32fc0538b1fd99c0963a1beb94ed8840be",
-      "category": "metadata"
-    },
-    "docs/design/ADMIN_GOALS_DESIGN.md": {
-      "sha256": "738f633c0207ea418e5ffcdcb8ca06e41ec727f73a69e0cf828ea91620e875db",
-      "category": "metadata"
-    },
     "docs/design/ARCHITECTURE.md": {
-      "sha256": "99a887a6a05b9e85d770e6610d1baa37973731c94337f7e6c181cba4876598d3",
+      "sha256": "80d763cf13e896812b59d4ff1548db673bca830fcb81e847560ea29b9da6bdbb",
       "category": "metadata"
     },
     "docs/design/BENCHMARK_MAPPING.md": {
-      "sha256": "a5ddf4ad4da91ce9687fa429eed9fbc6afbe998f190b89506ff1395296de9985",
+      "sha256": "9abb5c284c9a360b7cd39965761bd831dfde49f284d2afce3e1a5e08a192720a",
+      "category": "metadata"
+    },
+    "docs/design/DATABASE_SCHEMA.md": {
+      "sha256": "943cfac353e4fb3d0fd4bc447501b7add2c9979f65eb2da4209bb3b4e3f24e7d",
       "category": "metadata"
     },
     "docs/design/RISK_DERIVATION.md": {
-      "sha256": "5758b47111ecc374ae327ad7b3eb6e461b04e6d23b5093ac822a748c91473bc3",
+      "sha256": "de744011251f22bfdd0422a6570112b274f3a716e9e0354edb1e864efac4f468",
       "category": "metadata"
     },
     "docs/evaluation/AGENTIC_ASSESSMENT.md": {
-      "sha256": "f098dc94eb57f39e18f9fa177be291a40fdaa183c505894431f5ca746e682296",
+      "sha256": "1fa47679e7a54d9dfc2b781b4f2dc9ebc491b5ed48fe9716b7e438a7cf9a88a5",
       "category": "metadata"
     },
     "docs/evaluation/FIRST_VM_IMPORT_VALIDATION.md": {
@@ -256,7 +286,7 @@
       "category": "metadata"
     },
     "docs/report/REPORT_REQUIREMENTS_AND_COVERAGE.md": {
-      "sha256": "41de843c0791ee4914aa6ca65f658c8313f993f3f809626c3a8391addde4c784",
+      "sha256": "6e460cb461887429b488a56fea137e38ab43b252cb89d1a2f2750b69391b4aee",
       "category": "metadata"
     },
     "docs/report/REPORT_REVISIONS.md": {
@@ -271,16 +301,8 @@
       "sha256": "fb1f01c0eb011a10e032722ead2ba573b348dd5f4584b62a25071f57fe482316",
       "category": "metadata"
     },
-    "PROGRESS.md": {
-      "sha256": "96f02854f2b96af990ba8818a0a4aed9fb5c30151f00d1f00aafeb4b304f85d6",
-      "category": "metadata"
-    },
-    "README.md": {
-      "sha256": "d10d9dd3761ecaed8d08cf39b46de4c6791fc05bf67cea55b819ed780c08d261",
-      "category": "metadata"
-    },
     "scripts/evaluation/evaluate_agentic_rounds.py": {
-      "sha256": "73877d6240a93946c1c60caa6c1956a70af43f26fafb9ea56e147067436a26c6",
+      "sha256": "2faf143a2a149449e980a4ba4e48ede5c4b394324b428fffdcd4b993c2dda36f",
       "category": "protected"
     },
     "scripts/evaluation/make_report_figures.py": {
@@ -316,11 +338,15 @@
       "category": "protected"
     },
     "scripts/tools/generate_risk_derivation.py": {
-      "sha256": "1ad140eda2d77a548fc7c58c0924ba5c5fabe71f686d6578d85afff1db154de2",
+      "sha256": "09ac626d2efd5ad3ef0d3c2e5554048611a6ffcfcb18e522e846ed3af11e20d3",
       "category": "protected"
     },
     "scripts/tools/show_approval_integrity.py": {
       "sha256": "08740536b96782af65caccea756696be09e13b00823223358fb05d234eb191fb",
+      "category": "protected"
+    },
+    "scripts/tools/show_database.py": {
+      "sha256": "9c0a75e3eb0182529e277e035791a2391e6551ffdc97d9f718285da4e39aac4d",
       "category": "protected"
     },
     "scripts/vm/Collect-Server2022Evidence.ps1": {
@@ -332,7 +358,7 @@
       "category": "protected"
     },
     "scripts/vm/Invoke-RemediationAction.ps1": {
-      "sha256": "e0e735854b07e0c3ddbf2d67c0d159d72c150f9ca9c4330324e2c0e4500f297f",
+      "sha256": "45153612255642c9396e23b64108e8406ec19890d50839df4a9efb1ebb9eb15b",
       "category": "protected"
     },
     "scripts/vm/test_collector_helpers.ps1": {
@@ -344,13 +370,8 @@
       "category": "protected"
     },
     "scripts/vm/test_remediation_runner.ps1": {
-      "sha256": "0f4fddaf03cec44200131d8973edd701553c041c8d1b53607ec1fa9d83b31ccc",
+      "sha256": "aeae2bacf4a25e2d544de091a4a5abb7bf6cb9f7db91761cf58fa6c596471af1",
       "category": "protected"
     }
-  },
-  "archive": {
-    "path": "C:\\Users\\teohk\\OneDrive\\Desktop\\FYP_App-main\\integration-recovery\\windows-pre-integration-20261105.zip",
-    "sha256": "b85cbd26e9a3429210679d69385df5a2f239c214d883077823605775b61b6e08",
-    "verified_members": 86
   }
 }

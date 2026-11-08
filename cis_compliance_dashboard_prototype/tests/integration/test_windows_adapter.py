@@ -47,3 +47,17 @@ class WindowsAdapterTests(unittest.TestCase):
                 ledger=ledger, scanner_factory=lambda runtime,t:LiveScanner(runtime,t,session_factory=vm))
             self.assertEqual(other_epoch.history(), ())
             self.assertFalse(other_epoch.compare(snapshot.summary.reference,snapshot.summary.reference).comparable)
+
+    def test_round_goal_is_refused_before_any_scan(self):
+        from backends.windows.adapter import WindowsBackend
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder); vm=FakeVm(); t=target()
+            session=VerifiedSession('connection',VerifiedIdentity('windows',t.hostname,t.machine_uuid,'Server 2022','winrm'),
+                                    'windows:'+t.machine_uuid,'epoch',t.username,t.host,t.port,None,t)
+            backend=WindowsBackend(path/'windows'/'imports.sqlite3',session=session,ledger=CoordinationLedger(path/'integration.db'),
+                scanner_factory=lambda runtime,t:LiveScanner(runtime,t,session_factory=vm))
+            for mode in (AssessmentMode.AGENTIC, AssessmentMode.DETERMINISTIC):
+                with self.subTest(mode=mode), self.assertRaisesRegex(ValueError, 'goals were removed'):
+                    backend.start_round('connection', None, 'Keep RDP usable', mode, 'goal-' + mode.value)
+            self.assertEqual(vm.scripts, [])
+            self.assertEqual(backend.history(), ())
