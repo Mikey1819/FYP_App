@@ -106,7 +106,9 @@ class AgentRoundTests(unittest.TestCase):
                         plan_call([{'control_id': '1.5.1', 'decision': 'defer',
                                                         'reason_code': 'no_registered_action'}, {'control_id': '5.1.20', 'decision': 'defer', 'reason_code': 'no_registered_action'}])],
                        scanner_ok(), analysis_ok())
-        result = self.run_round(clients)
+        # A flag is kept only when true: 1.5.1 is the top-ranked finding here (test_ubuntu_analysis_truth).
+        from types import SimpleNamespace as N
+        result = self.run_round(clients, rank=lambda run_id, ev: [N(control_id='1.5.1', rank=1, D=1, score=60, level='High')])
         self.assertEqual(len(self.collected), 1)
         self.assertEqual(result['run_id'], 'run-1')
         self.assertEqual(result['analysis']['flags'], [{'control_id': '1.5.1', 'flag_code': 'highest_risk'}])

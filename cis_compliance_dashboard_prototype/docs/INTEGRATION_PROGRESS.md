@@ -1209,3 +1209,14 @@ The execution gate was a hard-coded "closed". It now opens only on evidence.
 - **Register:** **20 validated live**, 10 not run live (2.4.1.2 among them).
 - **Tests:** `test_ubuntu_crontab_control` (16, written first; the symlink case is skipped on Windows). Tests that used 1.2.2.1 as an example now use 2.4.1.2 or a legacy v1 fixture (`cases(legacy=True)`, `envelope(catalogue=...)`). Full suite **662 tests, all passed**; baseline: no protected changes.
 - **Helper change:** collector digest is now **`1a86b00ebb04`**; `dist/ubuntu-helper` has been rebuilt. Reinstall plus both acceptance scenarios are needed.
+
+## 8 November 2026 — Analyse step red in the 2.4.1.2 round: untrue flag and non-gap triage (live finding)
+- **Round 05:48 UTC** (2.4.1.2 Non-Compliant, no gaps): the Analysis agent submitted `persistent_failure` for 2.4.1.2, a control assessed for the first time, plus a gap triage entry for it although the ranking listed no gaps.
+  - The call was refused ("Unknown control_id in gap_triage"), resubmitted identically and blocked, so no analysis was stored and the Analyse step showed red.
+  - The planner went on (analysis is advisory); 2.4.1.2 was proposed, applied and verified Compliant (validated live). The next round's analysis completed normally.
+- **Change (`backends/ubuntu/agents.py`, AnalysisTools):**
+  - Triage entries for controls that are not gaps are left out, since they cannot matter. Every real gap must still be triaged.
+  - Flags are kept only when the deterministic facts make them true: `highest_risk` for risk rank ≤ 3, `persistent_failure` for history factor D ≥ 3, `affects_remote_access` for SSH (5.1.x) and UFW (4.1.x). Risk-based flags are dropped while risk is withheld.
+  - Both kinds of entry are recorded in the analysis outcome as `ignored`. `submit_analysis` is repeatable, bounded by the Coordinator's invalid-call limit.
+  - Without this, the untrue "failing in an earlier comparable assessment" note would have reached the 2.4.1.2 card.
+- **Tests:** 4 new tests (`test_ubuntu_analysis_truth`), written first. One older test now supplies a ranking in which its flag is true. Full suite **666 tests, all passed**. Host-only change.

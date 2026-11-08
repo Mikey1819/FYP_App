@@ -225,6 +225,23 @@ class ScannerTools(_RoleTools):
 
 class AnalysisTools(_RoleTools):
     names = ('read_ranking', 'inspect_finding', 'submit_analysis')
+    # A refused submission may be resubmitted unchanged; it is refused again, bounded by the Coordinator's limit.
+    repeatable = ('submit_analysis',)
+
+    def _true_flags(self, flags):
+        """(kept, dropped): a flag is kept only when the deterministic facts make it true. highest_risk: risk rank
+        within the top MAX_FLAGS; persistent_failure: history factor D >= 3 (failing in an earlier comparable
+        assessment); affects_remote_access: an SSH or UFW control. Risk-based flags cannot be true while risk is withheld."""
+        ranked = self.rounds.rank(self.rounds.run_id, self.rounds.evidence)
+        facts = {f.control_id: f for f in ranked or ()}
+        kept, dropped = [], []
+        for flag in flags:
+            found, code = facts.get(flag['control_id']), flag['flag_code']
+            true = (found is not None and found.rank <= MAX_FLAGS if code == 'highest_risk'
+                    else found is not None and found.D >= 3 if code == 'persistent_failure'
+                    else flag['control_id'].startswith(('5.1.', '4.1.')) if code == 'affects_remote_access' else False)
+            (kept if true else dropped).append(flag)
+        return kept, dropped
 
     def __init__(self, rounds):
         super().__init__(rounds, ANALYSIS)
@@ -271,14 +288,23 @@ class AnalysisTools(_RoleTools):
                     'subchecks': [{'name': c.name, 'state': c.state, 'reason': c.reason} for c in result.checks]}
         if name == 'submit_analysis':
             args = self._args(name, arguments, 'flags', 'gap_triage')
+            # Live 2026-11-08 05:48: a triage entry for a control that is not a gap (it cannot matter) and an untrue
+            # flag; refused, resubmitted identically and blocked. Such entries are now left out and recorded.
+            gaps = set(self.rounds.gaps())
+            raw_triage = args['gap_triage'] if type(args['gap_triage']) is list else []
+            off = [t for t in raw_triage if type(t) is dict and t.get('control_id') not in gaps]
+            triage = _entries([t for t in raw_triage if t not in off], ('control_id', 'triage_code'),
+                              {'control_id': self.rounds.gaps(), 'triage_code': TRIAGE}, 40, 'gap_triage')
+            if {t['control_id'] for t in triage} != gaps:
+                raise ValueError('Triage exactly every unresolved control')
             flags = _entries(args['flags'], ('control_id', 'flag_code'), {'control_id': self.rounds.failing(),
                              'flag_code': FLAGS}, MAX_FLAGS, 'flags')
-            triage = _entries(args['gap_triage'], ('control_id', 'triage_code'), {'control_id': self.rounds.gaps(),
-                              'triage_code': TRIAGE}, 40, 'gap_triage')
-            if {t['control_id'] for t in triage} != set(self.rounds.gaps()):
-                raise ValueError('Triage exactly every unresolved control')
-            self.terminal_outcome = {'outcome': 'analysed', 'flags': flags, 'triage': triage,
+            true, untrue = self._true_flags(flags)
+            self.terminal_outcome = {'outcome': 'analysed', 'flags': true, 'triage': triage,
                                      'reason': 'Analysis submitted'}
+            if untrue or off:
+                self.terminal_outcome['ignored'] = {'flags': untrue, 'gap_triage': [
+                    {'control_id': str(t.get('control_id'))[:20], 'triage_code': str(t.get('triage_code'))[:40]} for t in off]}
             return {'status': 'accepted'}
         raise ValueError('Unknown tool: ' + str(name)[:80])
 
