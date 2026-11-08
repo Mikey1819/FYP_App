@@ -168,6 +168,16 @@ def _plan_rows(details, evidence, catalogue):
                  for a in evidence.assessments if a.status is ComplianceStatus.NON_COMPLIANT)
 
 
+def recovery_text(recovery):
+    """How a change is undone, as the page shows it. The approved request keeps the registered record unchanged."""
+    words = {'VM console and recovery snapshot': 'by hand at the server console',
+             'VirtualBox recovery snapshot': 'from your own backup of the server', 'VM console': 'the server console'}
+    scope = ', '.join(words.get(item, item) for item in recovery['scope'])
+    kind = {'snapshot_restore': 'cannot be undone automatically', 'manual_console': 'manual'}.get(recovery['kind'],
+                                                                                                 recovery['kind'])
+    return kind + ': ' + scope
+
+
 def preview_text(preview):
     """The stored target preview as readable lines for the Fixes tab; every key and value is kept."""
     lines = []
@@ -314,6 +324,25 @@ class UbuntuBackend(BoundBackend):
         found = [(r, b) for b in self.ledger.bindings_for_target('ubuntu', s.target_id, s.registration_epoch)
                  for r in store.rounds(b) if r.framework_run_id]
         return sorted(found, key=lambda pair: pair[0].created_at)
+
+    def previous_workflow(self, connection_session_id):
+        """The workflow of this server's newest assessment round, so the page can resume it after a reconnect, as
+        the Windows page does: (workflow ID, round time, fixes still awaiting a decision or execution). None before
+        the first round. Read-only."""
+        from datetime import datetime, timezone
+        self.check(connection_session_id)
+        store = self._store()
+        rounds = [(r, b) for r, b in (self._all_rounds(store) if store else ()) if r.kind == 'assessment']
+        if not rounds:
+            return None
+        row, binding = rounds[-1]
+        snapshot = self.snapshot(connection_session_id, binding.workflow_session_id)
+        executed = {r.proposal_reference for r in snapshot.results}
+        now = datetime.now(timezone.utc)
+        open_count = sum(1 for p in snapshot.proposals if p.kind == 'control_remediation' and p.reference not in executed
+                         and ((p.decision is None and p.eligible_commands) or
+                              (p.decision == 'approved' and p.expiry and datetime.fromisoformat(p.expiry) > now)))
+        return binding.workflow_session_id, row.created_at, open_count
 
     def overview(self, connection_session_id):
         """What the Overview page shows, as on Windows: the latest scan (an assessment or a verification re-scan) with
@@ -510,13 +539,13 @@ class UbuntuBackend(BoundBackend):
                     'maintenance.reboot.v1': 'reboot'}.get(action_id, 'control_remediation')
             proposals.append(ProposalRow(self._ref(p.proposal_id), kind, p.payload['fields']['control_id'],
                 p.payload['action']['action_id'], p.payload['title'], 'v%d' % p.payload['action']['version'],
-                preview_text(p.payload['preview']), (), recovery['kind'] + ': ' + ', '.join(recovery['scope']),
+                preview_text(p.payload['preview']), (), recovery_text(recovery),
                 (), p.decision, approved['expires_at'] if approved else None,
                 shared_file_message(p.payload['fields']['control_id'], blocked) if blocked else
                 'Deterministic plan from the registered family; the target preview supplied the before/after digests.',
                 (('reject',) if blocked else ('approve', 'reject')) if latest and p.decision is None else (),
                 approved['request_id'] if approved else None, approved['before_state_sha256'] if approved else None,
-                approved.get('approver') if approved else None))
+                approved.get('approver') if approved else None, p.rejected_by, p.comments))
             if p.receipts:
                 last = p.receipts[-1]
                 applied = last['outcome'] in ('applied', 'reconciled_applied')
@@ -529,10 +558,10 @@ class UbuntuBackend(BoundBackend):
                 elif last['outcome'] == 'unresolved':
                     detail = 'Outcome unknown; reconcile before any further change.'
                 elif (last['outcome'], last['code']) == ('running', 'awaiting_reboot'):
-                    detail = ('Reboot scheduled. The connection drops; reconnect when the VM is back, then Check status: '
+                    detail = ('Reboot scheduled. The connection drops; connect again when the server is back, then Check status: '
                               'the new boot ID is verified and a fresh scan follows.')
                 elif (last['outcome'], last['code']) == ('running', 'awaiting_confirmation'):
-                    detail = ('Applied and waiting for confirmation. Disconnect, reconnect to the VM (a fresh login '
+                    detail = ('Applied and waiting for confirmation. Disconnect, connect to the server again (a fresh login '
                               'proves SSH still works), then confirm before the rollback timer restores it.')
                 elif last['outcome'] == 'running':
                     detail = 'Running under systemd supervision (' + last['code'] + '); check its status.'
@@ -875,15 +904,15 @@ class UbuntuBackend(BoundBackend):
                                             'separate approval).',), None)
         reasons = []
         if abs(offset) > MAX_CLOCK_OFFSET_SECONDS:
-            reasons.append('The VM clock differs from this computer by %d s (more than %d s); fix time sync on the VM '
-                           '(timedatectl) and reconnect.' % (round(offset), MAX_CLOCK_OFFSET_SECONDS))
+            reasons.append('The server clock differs from this computer by %d s (more than %d s); fix time sync on the server '
+                           '(timedatectl) and connect again.' % (round(offset), MAX_CLOCK_OFFSET_SECONDS))
         if probe['collector_digest'] != collector_digest(APP / 'vm' / 'ubuntu'):
             reasons.append('The deployed helper differs from this application; reinstall the bundle first.')
         expected = {aid: [spec.version, spec.implementation_sha256] for aid, spec in dict(self.families, **AUXILIARY).items()}
         if any(probe['families'].get(aid) != value for aid, value in expected.items()):
             reasons.append('The deployed runner registers different fix families or versions.')
         if probe['launcher'] is not True:
-            reasons.append('systemd-run is unavailable on the VM, so supervised jobs cannot run.')
+            reasons.append('systemd-run is unavailable on the server, so supervised jobs cannot run.')
         if probe['boot_rollback'] != 'enabled':
             reasons.append('The boot rollback unit is not enabled (install-runner.sh).')
         return DeploymentStatus(not reasons, tuple(reasons), probe['collector_digest'])
@@ -1019,7 +1048,7 @@ class UbuntuBackend(BoundBackend):
         observed = self.ledger.first_event(operation, 'awaiting_confirmation')
         login = self.session.connected_at
         if observed is None or not login or datetime.fromisoformat(login) <= datetime.fromisoformat(observed):
-            raise ValueError('Confirmation needs a fresh login: disconnect, reconnect to the VM, then confirm. '
+            raise ValueError('Confirmation needs a fresh login: disconnect, connect to the server again, then confirm. '
                              'That new login is the proof the change kept SSH working.')
         raw = run['raw']
         approved = ApprovedRequest(raw, hashlib.sha256(raw).hexdigest(), parse_request(raw))
@@ -1112,7 +1141,7 @@ class UbuntuBackend(BoundBackend):
         observed = self.ledger.first_event(operation, 'awaiting_confirmation')
         login = self.session.connected_at
         if observed is None or not login or datetime.fromisoformat(login) <= datetime.fromisoformat(observed):
-            raise ValueError('Confirmation needs a fresh login: disconnect, reconnect to the VM, then confirm. '
+            raise ValueError('Confirmation needs a fresh login: disconnect, connect to the server again, then confirm. '
                              'That new login is the proof the change kept SSH working.')
         raw = proposal.approved_raw
         approved = ApprovedRequest(raw, hashlib.sha256(raw).hexdigest(), parse_request(raw))

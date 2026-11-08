@@ -46,7 +46,7 @@
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/agentic.py": {
-      "sha256": "b63c9ee844dff9a85f417d585480ea4973672fb90bff2996cb0e1166f068aa59",
+      "sha256": "8334a87724a8b8f1c104e44e7f3f2d34b53ffecbe0ac023dd8ab498d946ffdcb",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/agentic_view.py": {
@@ -66,7 +66,7 @@
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/evidence_import.py": {
-      "sha256": "9a2c86a0c548e1d137aeb102a4dae62c015169740501c5ff20ca2e1dae744118",
+      "sha256": "e4abb355472b9d6259ee88d3d71120402b0c398de332978daec3f483835d04de",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/framework.py": {
@@ -106,7 +106,7 @@
       "sha256": "ac492dbaad86b3771a6dfb77175c56af11e1f9658c7d618bcde2efd138a29b69"
     },
     "cis_compliance_dashboard_prototype/hardening/remediation.py": {
-      "sha256": "e78b7018227a2d0cb4b7015f0842f6e8a639e8d25b8ec23422ea9adcea7d7647",
+      "sha256": "d99e43a0cb59a2ea9b8d9c76f866664a9c87d49da81ef081cdb2fd80729e9081",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/risk.py": {
@@ -135,7 +135,7 @@
     },
     "cis_compliance_dashboard_prototype/hardening/servers_view.py": {
       "category": "protected",
-      "sha256": "f44cc465b1175638c1de0478ba44752c00f581c03fb93e23acf528da1b2d061a"
+      "sha256": "5eae40e759d176ecca2700de4b5fdfad48efc7c07781b67229fd0b88c22aab0f"
     },
     "cis_compliance_dashboard_prototype/hardening/system_detect.py": {
       "category": "protected",
@@ -170,7 +170,7 @@
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/tests/test_agentic.py": {
-      "sha256": "65fa6e58f41bf6de90b09b0fb2330143c522828bd4c58cb92a63f6dd1f1101de",
+      "sha256": "ea186353a218654631fe95ecddb9a08f6a2f1d582a3c509f0a952ccf3ed503be",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/tests/test_agentic_view.py": {

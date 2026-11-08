@@ -61,7 +61,7 @@ class ConfirmBackendTests(SupervisedBackendCase):
         self.job(rid)
         self.assertEqual(backend.refresh_execution('c', workflow, round_ref, 'op-r2').state, 'awaiting_confirmation')
         row = self.row(backend, workflow)
-        self.assertIn('reconnect', row.detail.lower())
+        self.assertIn('connect to the server again', row.detail.lower())
         with self.assertRaisesRegex(ValueError, 'fresh login'):  # the dispatching connection proves nothing
             backend.confirm_change('c', workflow, round_ref, rid, 'op-c1')
         stale = self.reconnect(backend, at=datetime.now(timezone.utc) - timedelta(hours=1))

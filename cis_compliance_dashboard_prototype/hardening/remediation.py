@@ -262,7 +262,7 @@ class ApprovedActionExecutor:
         target = self.scanner.target
         if (request['hostname'].casefold() != target.hostname.casefold()
                 or request['machine_uuid'].casefold() != target.machine_uuid.casefold()):
-            raise ValueError('Approved request belongs to a different VM than the live connection')
+            raise ValueError('Approved request belongs to a different server than the live connection')
         self.scanner.identity()
         parameters = dict(RequestJson=record['request'].decode('ascii'),
                           ExpectedRequestSha256=hashlib.sha256(record['request']).hexdigest(),

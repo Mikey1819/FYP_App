@@ -481,7 +481,7 @@ def _maintenance_specs():
             recovery={'kind': 'manual_console', 'scope': ['No configuration change: nothing to restore']}),
         'maintenance.reboot.v1': ActionSpec(
             'maintenance.reboot.v1', 1, IMPLEMENTATION_SHA256, ('maintenance',), validator(RebootFamily), 60,
-            title='Reboot the VM to complete applied changes (boot-ID verified)',
+            title='Reboot the server to complete applied changes (boot-ID verified)',
             recovery={'kind': 'snapshot_restore', 'scope': ['VirtualBox recovery snapshot', 'VM console']}),
     }
 

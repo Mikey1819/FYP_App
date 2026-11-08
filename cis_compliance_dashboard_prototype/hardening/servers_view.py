@@ -420,7 +420,7 @@ def _show_ubuntu_setup(connected):
             st.rerun()
     folder = (st.session_state.get(SETUP_COPIED) or {}).get(key)
     if folder:
-        st.markdown('**Setup files copied.** Now, on the server, run this once (take a VM snapshot first), then click '
+        st.markdown('**Setup files copied.** Now, on the server, run this once, then click '
                     '**Check again**:')
         st.code(f'sudo bash {folder}/setup.sh', language='bash')
 

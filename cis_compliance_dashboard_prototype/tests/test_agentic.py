@@ -899,7 +899,7 @@ class RemediationPhaseTests(AgenticTestCase):
         hardening.scanner.session_factory = lambda _: (_ for _ in ()).throw(ConnectionError('Connection refused'))
         executed = hardening.execute_approved(result['session_id'], deterministic=True)
         self.assertEqual(vm.writes, [])
-        self.assertTrue(executed['verdicts'][0]['verdict'].startswith('Refused before execution: the VM could not'))
+        self.assertTrue(executed['verdicts'][0]['verdict'].startswith('Refused before execution: the server could not'))
         self.assertTrue(all(r['verdict'] is None for r in self.store.for_run(result['framework_run_id'])))  # Still open.
 
     def test_uncertain_outcome_stops_the_agent_and_forces_review(self):

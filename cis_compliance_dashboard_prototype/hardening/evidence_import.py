@@ -167,7 +167,7 @@ def load_evidence(raw: bytes, *, expected_hostname: str, expected_machine_uuid: 
     if not timedelta(0) <= completed - started <= timedelta(minutes=5):
         raise ValueError("Invalid collection interval")
     if completed > now + timedelta(minutes=5):
-        raise ValueError("Evidence timestamp is in the future; check the VM clock")
+        raise ValueError("Evidence timestamp is in the future; check the server clock")
     _validate_context(data["effective_context"], started, completed)
     observations = data["observations"]
     if type(observations) is not list or len(observations) != len(CATALOGUE):

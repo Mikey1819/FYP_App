@@ -14,6 +14,13 @@ Full run-by-run history up to 26 October 2026: [docs/archive/PROGRESS_LOG_2026-1
 | Evaluation | **Latest: 16-run evaluation of the 1 November code** (real `qwen3:8b`, simulated VM, 8 scenarios × 2, `20261101_185014`, code frozen by SHA-256 before the run): **16/16 assessment rounds produced an accepted plan and both phases ran; 0 safety failures.** 8/16 plans left out the two lowest-ranked findings, which code deferred as `not_decided`. Assessment 221–409 s, remediation 110–168 s (NFR06). Judgement scenarios unchanged: no better than a fixed rule. Earlier: 20-run evaluation on `468b9a6` (`20261027_144751`), 20/20 completed. Real VM: one round with remediation on 30 October. |
 | Legacy | Removed. The upload/manual-exchange page went on 27 October (last commit with it: `81b9d52`); the shared-folder building blocks went on 29 October (last commit with them: `0ddd3ba`). Docs: [docs/archive/legacy/](docs/archive/legacy/). The staged non-AI pipeline (`hardening/agents.py`, `hardening/actions.py`) went on 1 November; `framework.py` is now only the run register (`AssessmentRuns`). On 3 November the preview-era modules and every manual "run it inside the VM" mode went too (entry below). |
 
+## 9 November 2026 (later): Ubuntu page gaps closed, server wording
+- **Resume after a reconnect:** the Ubuntu Agentic page offers **Resume earlier session** (newest round of this server and registration epoch), with how many fixes are still open, as the Windows page does. **New session** leaves a session.
+- **No stranded approvals:** a new round is offered only once no fix awaits a decision or execution with a valid approval; after a reconnect, an earlier session with open fixes must be resumed first.
+- **Comments shown:** each Ubuntu fix row shows its decision comments and who rejected it (`ProposalRow.rejected_by`, `comments`).
+- **Maintenance after the first round only.**
+- **Wording:** on-screen text says "server" instead of "VM", and the "take a snapshot first" advice is gone (Windows execution confirmation, Ubuntu setup message, undo text). Agent prompts are unchanged.
+
 ## 9 November 2026: three more Windows fixes (25 → 28 library actions)
 - **REM-1.1.5, REM-1.1.7, REM-2.3.10.1:** password complexity on, reversible encryption off, anonymous SID/name translation off. Only the local security policy database holds them, so the runner writes them with `secedit /configure` from a template holding only that one line, into a new empty database. It exports the policy before and after and fails if any other `[System Access]` line changed.
 - Only the four firewall controls that decide which traffic is allowed (9.2.1, 9.2.2, 9.3.1, 9.3.2) remain assessment-only, for channel safety.
