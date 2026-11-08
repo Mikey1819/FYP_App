@@ -42,7 +42,7 @@
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/action_library.py": {
-      "sha256": "dfb33f300cc5f47f22c1e7b9466c8fcf5f33cf61e63e3d11d63f86a33dae961d",
+      "sha256": "d26b5362d1622f31e9816987c1c7bd561464958864207fce2a5904e54bff4d92",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/agentic.py": {
@@ -170,7 +170,7 @@
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/tests/test_agentic.py": {
-      "sha256": "8fcbc44eb7a402481552791bef13887cc7384310cc4e6504408be716567616e5",
+      "sha256": "65fa6e58f41bf6de90b09b0fb2330143c522828bd4c58cb92a63f6dd1f1101de",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/tests/test_agentic_view.py": {
@@ -418,7 +418,7 @@
       "category": "protected"
     },
     "scripts/vm/Invoke-RemediationAction.ps1": {
-      "sha256": "d7530e6795ebfb6d270befa5f1b1a2a9336a9cfe7863c7f9d4714ebdbca6527e",
+      "sha256": "5abe897b2adf9907ab4063d5e0dd61f331a3ae659e80d4734c7c4cfad4a30bf5",
       "category": "protected"
     },
     "scripts/vm/test_collector_helpers.ps1": {
@@ -430,7 +430,7 @@
       "category": "protected"
     },
     "scripts/vm/test_remediation_runner.ps1": {
-      "sha256": "c9235724d6c16b6924c13251e8f332566a00c792ba194df1e31072fc154a14a8",
+      "sha256": "81ef3b5a8d3e4277507f034e6b89ea86a35baf213ebee0e14ce6283537245877",
       "category": "protected"
     }
   },

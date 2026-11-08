@@ -31,6 +31,10 @@ $Library = [ordered]@{
     'REM-1.2.2'    = @{ control_id = '1.2.2'; value = 5; kind = 'net_accounts'; option = '/lockoutthreshold' }
     'REM-1.2.1'    = @{ control_id = '1.2.1'; value = 15; kind = 'net_accounts'; option = '/lockoutduration' }
     'REM-1.2.4'    = @{ control_id = '1.2.4'; value = 15; kind = 'net_accounts'; option = '/lockoutwindow' }
+    # Only the local security policy database holds these three; net.exe and the registry cannot set them.
+    'REM-1.1.5'    = @{ control_id = '1.1.5'; value = 1; kind = 'secedit'; setting = 'PasswordComplexity' }
+    'REM-1.1.7'    = @{ control_id = '1.1.7'; value = 0; kind = 'secedit'; setting = 'ClearTextPassword' }
+    'REM-2.3.10.1' = @{ control_id = '2.3.10.1'; value = 0; kind = 'secedit'; setting = 'LSAAnonymousNameLookup' }
     'REM-2.3.1.1'  = @{ control_id = '2.3.1.1'; value = $false; kind = 'disable_guest' }
     'REM-2.3.1.2'  = @{ control_id = '2.3.1.2'; value = 1; kind = 'reg_dword'; key = $LsaKey; name = 'LimitBlankPasswordUse' }
     'REM-2.3.10.2' = @{ control_id = '2.3.10.2'; value = 1; kind = 'reg_dword'; key = $LsaKey; name = 'RestrictAnonymousSAM' }
@@ -108,6 +112,73 @@ function Get-FailureText([string]$Message) {
     return $text.Substring(0, [Math]::Min(200, $text.Length))
 }
 
+function Invoke-Secedit([string]$Arguments) {
+    $process = Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\secedit.exe') `
+        -ArgumentList $Arguments -PassThru -WindowStyle Hidden
+    try {
+        $null = $process.Handle
+        if (-not $process.WaitForExit(60000)) { $process.Kill(); throw 'Execution timeout; outcome uncertain.' }
+        $process.Refresh()
+        return $process.ExitCode
+    } finally { $process.Dispose() }
+}
+
+function Get-SystemAccessLines([string[]]$Lines) {
+    # The non-empty lines of the [System Access] section of a secedit export, trimmed.
+    $inSection = $false
+    $found = foreach ($line in $Lines) {
+        $clean = $line.Trim()
+        if ($clean -match '^\[(.+)\]$') { $inSection = $Matches[1] -eq 'System Access' }
+        elseif ($inSection -and $clean) { $clean }
+    }
+    return @($found)
+}
+
+function Get-SettingValue([string[]]$SystemAccess, [string]$Setting) {
+    $rows = @($SystemAccess | Where-Object { $_ -match ('^' + [regex]::Escape($Setting) + '\s*=') })
+    if ($rows.Count -ne 1) { return $null }
+    return ($rows[0] -replace '^[^=]*=\s*', '').Trim()
+}
+
+function Get-OtherSettings([string[]]$SystemAccess, [string]$Setting) {
+    return (@($SystemAccess | Where-Object { $_ -notmatch ('^' + [regex]::Escape($Setting) + '\s*=') }) -join "`n")
+}
+
+function New-OneSettingTemplate([string]$Setting, [int]$Value) {
+    # A security template holding only this one line: secedit has nothing else to apply.
+    return @('[Unicode]', 'Unicode=yes', '[System Access]', ($Setting + ' = ' + $Value), '[Version]',
+        'signature="$CHICAGO$"', 'Revision=1')
+}
+
+function Export-SystemAccess([string]$Folder, [string]$Name) {
+    $file = Join-Path $Folder ($Name + '.inf')
+    $code = Invoke-Secedit ('/export /cfg "' + $file + '" /areas SECURITYPOLICY /log "' +
+        (Join-Path $Folder ($Name + '.log')) + '" /quiet')
+    if ($code -ne 0 -or -not [IO.File]::Exists($file)) { throw 'secedit /export failed.' }
+    return Get-SystemAccessLines ([IO.File]::ReadAllLines($file, [Text.Encoding]::Unicode))
+}
+
+function Set-SystemAccessValue([string]$Setting, [int]$Value) {
+    # Applied from a one-line template into a new, empty database, so secedit writes this setting and nothing else.
+    # The policy is exported before and after: the setting must hold the value and every other line must be unchanged.
+    $folder = Join-Path ([IO.Path]::GetTempPath()) ('fyp-secedit-' + [guid]::NewGuid().ToString('N'))
+    [void][IO.Directory]::CreateDirectory($folder)
+    try {
+        $before = Export-SystemAccess $folder 'before'
+        $template = Join-Path $folder 'one-setting.inf'
+        [IO.File]::WriteAllLines($template, (New-OneSettingTemplate $Setting $Value), [Text.Encoding]::Unicode)
+        $code = Invoke-Secedit ('/configure /db "' + (Join-Path $folder 'one-setting.sdb') + '" /cfg "' + $template +
+            '" /areas SECURITYPOLICY /log "' + (Join-Path $folder 'configure.log') + '" /quiet')
+        $after = Export-SystemAccess $folder 'after'
+        if ((Get-SettingValue $after $Setting) -cne [string]$Value) {
+            throw ('secedit /configure did not set ' + $Setting + ' (exit code ' + $code + ').')
+        }
+        if ((Get-OtherSettings $before $Setting) -cne (Get-OtherSettings $after $Setting)) {
+            throw ('Other [System Access] settings changed together with ' + $Setting + '; review the security policy.')
+        }
+    } finally { Remove-Item -LiteralPath $folder -Recurse -Force -ErrorAction SilentlyContinue }
+}
+
 function Invoke-LibraryAction($Entry) {
     # Constant implementations only; values come from this table, never from the request.
     switch ($Entry.kind) {
@@ -146,6 +217,7 @@ function Invoke-LibraryAction($Entry) {
                 if ($process.ExitCode -ne 0) { throw 'auditpol /set failed.' }
             } finally { $process.Dispose() }
         }
+        'secedit' { Set-SystemAccessValue $Entry.setting ([int]$Entry.value) }
         'disable_guest' {
             $guest = @(Get-CimInstance Win32_UserAccount -Filter 'LocalAccount=True' -OperationTimeoutSec 15 |
                 Where-Object { $_.SID -match '^S-1-5-21-\d+-\d+-\d+-501$' })
@@ -162,6 +234,7 @@ if ($ListActions) {
         $entry = $Library[$id]
         $row = [ordered]@{ control_id = $entry.control_id; value = $entry.value; kind = $entry.kind }
         if ($entry.ContainsKey('key')) { $row['key'] = $entry.key; $row['name'] = $entry.name }  # Where a registry action writes.
+        if ($entry.ContainsKey('setting')) { $row['setting'] = $entry.setting }  # The security policy line a secedit action writes.
         $table[$id] = $row
     }
     Write-Output ($table | ConvertTo-Json -Compress)

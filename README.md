@@ -44,7 +44,7 @@ Every choice is a structured tool call that code validates. Reasons are fixed co
 
 - **Benchmark:** CIS Microsoft Windows Server 2022 **Stand-alone** Benchmark v2.0.0, Level 1. The report's v5.1.0 is for domain-joined servers and is not used ([BENCHMARK_MAPPING.md](docs/design/BENCHMARK_MAPPING.md)).
 - **32 assessed controls:** Account Policies 9, Local Security Options 5, Windows Defender Firewall 8, Advanced Audit Policy 5, Remote Desktop Services 5.
-- **25 library actions** for remediation. Firewall **logging** (9.2.6, 9.2.7, 9.3.6, 9.3.7) can be fixed, because it only records traffic. Firewall on/off and inbound-block (9.2.1, 9.2.2, 9.3.1, 9.3.2) stay assessment-only, because changing which traffic is allowed could cut the agents' own WinRM channel.
+- **28 library actions** for remediation (32 controls). Password complexity, reversible encryption and anonymous SID/name translation (1.1.5, 1.1.7, 2.3.10.1) are written with `secedit` from a one-line template. Firewall **logging** (9.2.6, 9.2.7, 9.3.6, 9.3.7) can be fixed, because it only records traffic. Firewall on/off and inbound-block (9.2.1, 9.2.2, 9.3.1, 9.3.2) stay assessment-only, because changing which traffic is allowed could cut the agents' own WinRM channel.
 - **Risk:** `R = 6I + 5E + 4P + 3L + 2D`. I, P and L are derived by rule from benchmark attributes, never assigned by hand ([RISK_DERIVATION.md](docs/design/RISK_DERIVATION.md)).
 
 ## Run
