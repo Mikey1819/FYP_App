@@ -1,17 +1,20 @@
-# CIS compliance hardening prototypes
+# Agentic AI CIS hardening for Windows Server 2022 and Ubuntu 22.04
 
-This repository holds two separate Final Year Project prototypes:
+Final Year Project, TAR UMT. One application in which local-LLM agents assess a server against selected CIS Benchmark controls, rank the findings with a deterministic risk engine, propose fixes from a fixed library, apply only the fixes an administrator approves, and verify each result with a fresh scan.
 
-- **[Windows: Agentic AI Framework for Windows Systems Hardening and CIS Compliance Assessment](window_cis_compliance_dashboard_prototype/README.md).** Four local-LLM agents (Orchestrator, Scanner, Analysis, Remediation) assess a standalone Windows Server 2022 VM against 32 CIS Stand-alone v2.0.0 controls over WinRM. They rank findings deterministically, propose library fixes for administrator approval, execute the approved ones, and verify the results.
-- **[Ubuntu prototype](ubuntu_cis_compliance_dashboard_prototype/README.md)**, the separate Linux project.
+**Supported systems:** Windows Server 2022 (stand-alone, CIS Stand-alone Benchmark v2.0.0, 32 controls) and Ubuntu 22.04.5 LTS (CIS Ubuntu Linux 22.04 LTS Benchmark v2.0.0, 30 controls). Servers are added by a one-time pairing code shown on the server; no server name, identity or address is typed or built into the program.
 
-## Run the Windows dashboard
+The whole project is in **[combined_cis_compliance/](combined_cis_compliance/README.md)**: setup, how to run it, the design and the progress record.
 
-From this repository root in PowerShell:
+## Quick start (Windows laptop, PowerShell)
 
 ```powershell
-cd window_cis_compliance_dashboard_prototype\cis_compliance_dashboard_prototype
-.\.venv\Scripts\python.exe -m streamlit run app.py
+cd combined_cis_compliance
+python -m venv .venv-integration
+.\.venv-integration\Scripts\python.exe -m pip install -r cis_compliance_dashboard_prototype\requirements.integration.lock.txt
+.\Run-Dashboard.cmd
 ```
 
-Then open **Agentic hardening** and connect to the VM. One-time VM setup is in [VM_CONNECTION_SETUP.md](window_cis_compliance_dashboard_prototype/docs/vm/VM_CONNECTION_SETUP.md). Current status and next tasks are in [PROGRESS.md](window_cis_compliance_dashboard_prototype/PROGRESS.md).
+The dashboard opens on **Servers**. Run the pairing helper on the server (Windows: the server access helper; Ubuntu: `sudo python3 fyp-pair-ubuntu.py`), type the code it shows, then log in. The AI agents need [Ollama](https://ollama.com) with `qwen3:8b` on the same laptop.
+
+The earlier standalone Windows and Ubuntu prototypes are in this repository's history; their work continues in the combined system.
