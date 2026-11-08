@@ -340,7 +340,7 @@ def main(argv=None):
         print(f'Type this code on the dashboard: Servers > Add a server. Valid for {args.minutes} minutes, one use.')
         print('Waiting... (Ctrl+C to stop)')
         state = serve(pairing, sock)
-        print({'paired': 'Done.', 'expired': 'The code expired. Run the helper again for a new code.',
+        print({'paired': 'Done. Next, in the dashboard: log in, then on Servers click Set up this server (once per server).', 'expired': 'The code expired. Run the helper again for a new code.',
                'locked': 'Stopped after too many wrong codes. Run the helper again for a new code.'}[state])
         return 0 if state == 'paired' else 1
     except KeyboardInterrupt:

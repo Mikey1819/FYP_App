@@ -22,7 +22,7 @@
       "category": "metadata"
     },
     "README.md": {
-      "sha256": "bef06899a7c652e9e5e34d929810e4782c6d90e96b310165d8f9b4acfbc9ea46",
+      "sha256": "138025691c38f7637e868cc7d08df54c1373a640199c115652f47f87eeed1d10",
       "category": "metadata"
     },
     "Run-Dashboard.cmd": {
@@ -135,7 +135,7 @@
     },
     "cis_compliance_dashboard_prototype/hardening/servers_view.py": {
       "category": "protected",
-      "sha256": "2242da26f624e3822e5fa167ac8cd2538628a231a6bd8b2d817773871d8d3400"
+      "sha256": "3aa4e6b83737009f79e8e851e1f0d10e0ff47c5884588cbb89c13dce1eb7a8ea"
     },
     "cis_compliance_dashboard_prototype/hardening/system_detect.py": {
       "category": "protected",
@@ -227,7 +227,7 @@
     },
     "cis_compliance_dashboard_prototype/tests/test_pairing_flow.py": {
       "category": "protected",
-      "sha256": "57bb410340f1733f0b37cbfcb5a2a1a9472103a40d55c1cc6536cecabdf87ca1"
+      "sha256": "816aeb10db6e221b1067d0ca772554821dd0b1bdc660ecf7ae3a37cea4626b62"
     },
     "cis_compliance_dashboard_prototype/tests/test_round_report.py": {
       "sha256": "17cb24d6e0dcec411892b7ec5431820e85145ac855ce55d0de73f1f12e2c272f",
@@ -374,7 +374,7 @@
       "category": "protected"
     },
     "scripts/server_access/FYP-ServerAccess.ps1": {
-      "sha256": "fa0f892ae23fe57a62383c0f03fa8df9d0b73de6c01db64a4806a91809accac2",
+      "sha256": "3d7a1979b88b20f337ac0e842d4b4826c0c3787a2e0e0e024d089310e9799e08",
       "category": "protected"
     },
     "scripts/server_access/Start-ServerAccess.cmd": {
@@ -386,7 +386,7 @@
       "sha256": "1925bce7643266abb68c6c373db4cd9a75a4a41cb3d5ba03eddfe83107e0d43c"
     },
     "scripts/server_access/test_server_access.ps1": {
-      "sha256": "1ec52803480dc3534bda855ccaf5d9beb2c0b8f318c8994650a32f117339dad5",
+      "sha256": "8aa9e83b33eeea2adc08aebc5fceb0ea0d5fde07c2f8c97ab150c614f9fac2a0",
       "category": "protected"
     },
     "scripts/tools/cross_check_controls.py": {

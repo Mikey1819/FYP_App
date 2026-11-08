@@ -456,6 +456,9 @@ class UbuntuBackend(BoundBackend):
         mode = AssessmentMode(mode)
         if mode is AssessmentMode.AGENTIC and not self.model_probe():
             raise ValueError('The local model is unavailable; use Assess without AI. No scan was run.')
+        if self._collector_installed() is False:
+            raise ValueError('This server is not set up yet: the FYP helper is not installed. Open Servers and click Set up this server. '
+                             'No scan was run.')
         s = self.session
         if binding is None:
             binding = self.ledger.assessment_binding('ubuntu', s.target_id, s.registration_epoch, operation_id)
@@ -643,6 +646,30 @@ class UbuntuBackend(BoundBackend):
         return result
 
     # ---- execution acceptance: deployment probe and the two live scenarios ----------------------------
+    def _collector_installed(self):
+        """True or False from the read-only stat probe of the root-owned collector; None when the channel cannot tell
+        (fixture channels without read-only probes)."""
+        read = getattr(self.session.channel, 'read', None)
+        if read is None:
+            return None
+        try:
+            return read('helper').strip() == '0 755 regular file'
+        except ValueError:
+            return False
+
+    def setup_status(self, connection_session_id, *, refresh=False):
+        """What the one-step setup (setup.sh) provides, read-only: the OpenSCAP scanner, the collector, the runner."""
+        self.check(connection_session_id)
+        if refresh:
+            self._deployment = None
+        read = getattr(self.session.channel, 'read', None)
+        try:
+            openscap = bool(read and read('openscap').startswith('OpenSCAP command line tool'))
+        except ValueError:
+            openscap = False
+        return {'openscap': openscap, 'collector': bool(self._collector_installed()),
+                'runner': self.deployment_status(connection_session_id).ok}
+
     def deployment_status(self, connection_session_id):
         """Read-only probe of the root-owned runner, cached per verified connection."""
         self.check(connection_session_id)
@@ -662,8 +689,9 @@ class UbuntuBackend(BoundBackend):
                 raise ValueError('Unexpected probe')
             offset = (datetime.fromisoformat(probe['now']) - (sent + (received - sent) / 2)).total_seconds()
         except Exception:
-            return DeploymentStatus(False, ('The root-owned runner is not deployed or refused the probe; install-runner.sh '
-                                            'needs its separate approval.',), None)
+            return DeploymentStatus(False, ('The root-owned runner is not deployed or refused the probe: open Servers and '
+                                            'click Set up this server (or run install-runner.sh, which needs its '
+                                            'separate approval).',), None)
         reasons = []
         if abs(offset) > MAX_CLOCK_OFFSET_SECONDS:
             reasons.append('The VM clock differs from this computer by %d s (more than %d s); fix time sync on the VM '

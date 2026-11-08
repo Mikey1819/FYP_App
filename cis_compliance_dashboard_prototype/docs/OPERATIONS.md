@@ -15,6 +15,7 @@ Hot reload is deliberately off (`.streamlit/config.toml`). Restart the app after
 ## Everyday use
 
 1. **Connect:** the first time, run `sudo python3 fyp-pair-ubuntu.py` on the VM (download it from **Servers**), type its code under **Servers > Add a server**, then the account and password. The VM's name, machine ID, address and SSH host key come from the VM's signed answer; nothing is typed but the code and the login. Later, pick the VM under **My servers** and type the password. The password is kept in memory only. The SSH host key is checked before login (the one pinned at pairing).
+   **New server, once:** on **Servers**, click **Set up this server**. The dashboard builds the helper bundle for exactly this server and copies it to `~/fyp-ubuntu-helper` over the SSH login (no root, nothing run). Then, on the server, run the one command it shows, `sudo bash ~/fyp-ubuntu-helper/setup.sh` (take a snapshot first). It asks before doing anything, then installs OpenSCAP (`libopenscap8`) if missing, `install.sh` and `install-runner.sh`, skipping what is already installed. Click **Check again**. Then run the two Execution acceptance tests.
 2. **Assess:** **Assess without AI** runs a read-only, deterministic scan. **Start agentic round** also lets the bounded agents rank findings and propose fixes. Fixes are proposed only in agentic rounds, and only for confirmed Non-Compliant controls.
 3. **Decide:** in **Fixes**, name the operator, then approve or reject each proposal. The approval screen shows the exact change, its impact and how to recover.
    - **Fixes** shows one expandable card per Non-Compliant control. The card title gives its current state (awaiting your decision, approved, running, *Fixed, re-scan: Compliant*, not applied, restored, deferred). Open a card to see the AI's decision, the reason, any analysis flag, the exact change and recovery, plus that control's Approve, Reject and Restore buttons. The **Agent log** tab shows every agent step.
@@ -97,7 +98,8 @@ Reads the same settings a second way on the VM, then compares them with the late
 | Scan rejected or "helper differs" | The VM helper does not match this app. Reinstall the bundle. |
 | "The VM clock differs from this computer by N s" | Fix time sync on the VM (`timedatectl`), then reconnect. |
 | "Execution acceptance pending: …" | Run the scenario(s) it names. |
-| "runner is not deployed or refused the probe" | Run `install-runner.sh` (after its approval). |
+| "runner is not deployed or refused the probe" | **Servers > Set up this server**, then the command it shows (or `install-runner.sh` by hand). |
+| "This server is not set up yet: the FYP helper is not installed" | **Servers > Set up this server**, then the command it shows. |
 | "Confirmation needs a fresh login" | Disconnect and reconnect, then press Confirm. |
 | "Another VM has a running or unresolved change" | Reconnect to that VM and settle its change first. |
 | "Target or workflow has an unresolved operation" | Use **Check status** on the pending change; it settles from the VM's own record and never re-runs anything. |

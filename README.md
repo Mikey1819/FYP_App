@@ -23,7 +23,7 @@ cd cis_compliance_dashboard_prototype
 ..\.venv-integration\Scripts\python.exe -m unittest discover -s tests        # 744 tests
 ```
 
-For an Ubuntu server, build its helper bundle once it is paired: the **Servers** page shows the command with that server's own values, `python -B -m tools.build_ubuntu_bundle --machine-id … --hostname … --user …` (output `..\dist\ubuntu-helper`).
+An Ubuntu server's helper bundle is built and copied by **Set up this server** on the Servers page; by hand it is `python -B -m tools.build_ubuntu_bundle --machine-id … --hostname … --user …` (output `..\dist\ubuntu-helper`).
 
 The app creates its empty stores under `cis_compliance_dashboard_prototype\data\` on first use. Ollama with `qwen3:8b` is needed for agentic rounds; **Assess without AI** works without it.
 
@@ -59,7 +59,7 @@ For a fresh checkout, create a virtual environment and install `requirements.txt
 
 ## Using the dashboard
 
-1. **Servers** (the page the app opens on) → on the server run its pairing helper (Windows: the server access helper, **Start pairing**; Ubuntu: `sudo python3 fyp-pair-ubuntu.py`), type the code it shows under **Add a server**, then the account and password. The program finds the server, shows which system it runs, checks after login that it is the same machine, and saves it under **My servers** (passwords are never saved). Next time, pick it there and **Connect**. The workspace then opens on **Overview**; the sidebar shows the server, whether `qwen3:8b` is ready, a **Servers** link and **Disconnect**.
+1. **Servers** (the page the app opens on) → on the server run its pairing helper (Windows: the server access helper, **Start pairing**; Ubuntu: `sudo python3 fyp-pair-ubuntu.py`), type the code it shows under **Add a server**, then the account and password. The program finds the server, shows which system it runs, checks after login that it is the same machine, and saves it under **My servers** (passwords are never saved). Next time, pick it there and **Connect**. An Ubuntu server needs one setup the first time: **Set up this server** on the Servers page copies the helper files over SSH, and you run the one command it shows on the server. The workspace then opens on **Overview**; the sidebar shows the server, whether `qwen3:8b` is ready, a **Servers** link and **Disconnect**.
 2. Click **Start agentic round** (or **Assess without AI** for a deterministic scan and ranking with no proposals). The Orchestrator delegates the Scanner and Analysis agents and submits a plan. A step bar (Scan → Analyse → Plan → Approve → Execute → Verify) shows where the round stands, and the tabs hold the detail: **Fixes**, **Risk ranking**, **Controls**, **Results** and **Agent log**.
 3. In **Fixes**, enter your name once (and optionally a comment for the next decision), then approve or reject each proposal (or all undecided at once). An approval is bound to the exact request and expires after one hour. Findings the Orchestrator deferred are listed with their reasons; one it left out of its plan is shown as *not decided*.
 4. **Execute approved fixes…** opens a confirmation listing each change, its current value and the approval expiry. **Confirm and execute** delegates the Remediation Agent and then a verification rescan; the page opens on **Results** with the verdicts and the next step.

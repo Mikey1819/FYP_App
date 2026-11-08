@@ -56,6 +56,8 @@ Prepared 6 November 2026 for `FYP-Ubuntu2204` (`192.168.56.10:22`, machine ID `f
 
 The preview above was approved by the user in chat on 2026-11-06. The bundle implements exactly that preview with one scope decision: its sudo rule covers **only the read-only `collect` command**. The runner files are installed but cannot run as root until a separate rule is approved, after the execution acceptance gates.
 
+**Since 8 November 2026 this is one step:** connect to the server, click **Servers > Set up this server**, and run the command it shows on the server (`sudo bash ~/fyp-ubuntu-helper/setup.sh`, which asks first and then runs the stages below). The manual steps stay valid:
+
 1. Build it on the host, from the application directory:
 
    ```powershell

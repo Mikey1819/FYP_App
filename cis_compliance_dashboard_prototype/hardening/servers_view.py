@@ -19,6 +19,7 @@ from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 import sqlite3
+import tempfile
 
 import streamlit as st
 
@@ -43,6 +44,8 @@ REMOVING = 'servers_removing'
 PENDING = 'servers_pending'          # A server that answered the code, waiting for the administrator to log in.
 REPORT = 'servers_access_report'     # The last paired-laptops list read from the connected server.
 CONFIRM_ACCESS = 'servers_confirm_access'
+SETUP_COPIED = 'servers_setup_copied'  # Ubuntu: the folder the setup files were copied to, per server key.
+SETUP_REFRESH = 'servers_setup_refresh'
 SECRETS = ('servers_password', 'servers_pair_password', 'servers_pair_sudo', 'servers_sudo')
 
 # What a failed connection to a saved server most likely means, in the administrator's terms.
@@ -172,10 +175,11 @@ def _show_saved(registry, saved, connected):
                     st.text_input('Sudo password', type='password', key='servers_sudo',
                                   help='Session-only. Does not authorize setup or elevated changes.')
         if chosen.platform == 'ubuntu':
-            with st.expander('Helper bundle for this server (install once, for assessment and approved fixes)'):
-                st.caption('Build it on this laptop from the application folder, copy it to the server and run '
-                           '`sudo bash install.sh` there (docs: OPERATIONS.md). Its install scripts refuse any other '
-                           'machine, so the values below come from this server itself, as found by pairing.')
+            with st.expander('Manual alternative: build the helper bundle yourself'):
+                st.caption('Normally not needed: connect and use **Set up this server**, which does this for you. '
+                           'By hand: build it on this laptop from the application folder, copy it to the server and run '
+                           '`sudo bash setup.sh` there. Its scripts refuse any other machine, so the values below come '
+                           'from this server itself, as found by pairing.')
                 st.code(f'..\\.venv-integration\\Scripts\\python.exe -B -m tools.build_ubuntu_bundle '
                         f'--machine-id {chosen.machine_identity} --hostname {chosen.hostname} --user {chosen.username}',
                         language=None)
@@ -356,6 +360,60 @@ def _show_add_by_code(connected):
             _find(code)
 
 
+# ------------------------------------------------------------------ Ubuntu: one-step setup
+SETUP_PARTS = (('openscap', 'OpenSCAP scanner (libopenscap8)'), ('collector', 'Read-only collector, for assessment'),
+               ('runner', 'Fix runner, for approved fixes'))
+
+
+def _copy_setup(connected, key):
+    """Build the bundle for exactly this server and copy it over the SSH login. Nothing is installed or run."""
+    from tools.build_ubuntu_bundle import build
+    upload = getattr(connected.channel, 'upload_setup_bundle', None)
+    if upload is None:
+        raise ValueError('This connection cannot copy files.')
+    with tempfile.TemporaryDirectory() as folder:
+        bundle = build(Path(folder) / 'ubuntu-helper', machine_id=connected.identity.machine_identity,
+                       hostname=connected.identity.hostname, user=connected.username)
+        st.session_state[SETUP_COPIED] = {key: upload(bundle)}
+
+
+def _show_ubuntu_setup(connected):
+    """What this server still needs before the agents can assess it and run approved fixes, and the one step for it."""
+    key = 'ubuntu:' + connected.identity.machine_identity
+    try:
+        backend = connection_service(st.session_state).backend_for(connected.connection_session_id)
+        if not hasattr(backend, 'setup_status'):  # A backend that cannot report setup has nothing to offer here.
+            return
+        status = backend.setup_status(connected.connection_session_id, refresh=st.session_state.pop(SETUP_REFRESH, False))
+    except (ValueError, OSError) as exc:
+        st.error('Could not read the setup status: ' + md_escape(exc))
+        return
+    if all(status.values()):
+        st.success('This server is set up: OpenSCAP, the collector and the fix runner are installed. Before the first '
+                   'fix, run the two **Execution acceptance** tests on **Agentic hardening** (once per server).')
+        return
+    st.markdown('  \n'.join(f'{":green-badge[:material/check: Installed]" if status[part] else ":orange-badge[Missing]"} '
+                            f'{label}' for part, label in SETUP_PARTS))
+    st.caption('One step: the dashboard builds the setup files for exactly this server and copies them over your SSH '
+               'login; you then run one command on the server, which asks before it installs anything. No CIS setting '
+               'changes: every fix still needs your approval.')
+    with st.container(horizontal=True):
+        if st.button('Set up this server', key='servers_setup', type='primary', icon=':material/build:'):
+            try:
+                with st.spinner('Building the setup files for this server and copying them…'):
+                    _copy_setup(connected, key)
+            except (ValueError, OSError) as exc:
+                st.error('Setup files not copied: ' + md_escape(exc))
+        if st.button('Check again', key='servers_setup_check', icon=':material/refresh:'):
+            st.session_state[SETUP_REFRESH] = True
+            st.rerun()
+    folder = (st.session_state.get(SETUP_COPIED) or {}).get(key)
+    if folder:
+        st.markdown('**Setup files copied.** Now, on the server, run this once (take a VM snapshot first), then click '
+                    '**Check again**:')
+        st.code(f'sudo bash {folder}/setup.sh', language='bash')
+
+
 # ------------------------------------------------------------------ who has access to the connected server
 def _show_access(registry, connected):
     """Windows only: the laptops the server access helper lets reach WinRM. (On Ubuntu, SSH access is the server's
@@ -470,6 +528,9 @@ def render_servers(database_path: Path):
         if connected is not None and connected.identity.platform == 'windows' and connected.target is not None:
             st.subheader(f'Who can reach {md_escape(connected.identity.hostname)}')
             _show_access(registry, connected)
+        if connected is not None and connected.identity.platform == 'ubuntu':
+            st.subheader(f'Set up {md_escape(connected.identity.hostname)}')
+            _show_ubuntu_setup(connected)
         st.subheader('Add a server')
         _show_add_by_code(connected)
     except (ValueError, OSError, sqlite3.Error) as exc:

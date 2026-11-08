@@ -133,6 +133,45 @@ echo "Removed."
 '''
 
 
+# One step for the administrator: the dashboard's "Set up this server" copies this bundle to the management account's
+# home over SSH, and the administrator runs this once on the server. It asks first, then does exactly the stages the
+# separate scripts do (they keep every check), skipping a stage that is already installed from this same bundle.
+SETUP = '''#!/bin/bash
+# FYP hardening: one-step setup of this server. Run on the server as: sudo bash setup.sh
+# Take a VirtualBox (or other) recovery snapshot first. Undo with: sudo bash uninstall-runner.sh && sudo bash uninstall.sh
+set -euo pipefail
+cd "$(dirname "$0")"
+[ "$(id -u)" -eq 0 ] || { echo "Run with sudo: sudo bash setup.sh"; exit 1; }
+[ "$(cat /etc/machine-id)" = "@MACHINE_ID@" ] || { echo "This bundle was built for another server; nothing changed"; exit 1; }
+[ "$(hostname)" = "@HOSTNAME@" ] || { echo "This bundle was built for another server; nothing changed"; exit 1; }
+need_oscap=no; command -v oscap >/dev/null || need_oscap=yes
+need_helper=yes
+if [ -e /etc/sudoers.d/fyp-hardening ]; then
+  same=yes
+  for file in libexec/fyp_ubuntu/*; do
+    cmp -s "$file" "/usr/local/libexec/fyp-hardening/fyp_ubuntu/$(basename "$file")" || same=no
+  done
+  if [ "$same" = yes ]; then need_helper=no; else
+    echo "A different FYP helper is installed. To replace it: sudo bash uninstall-runner.sh && sudo bash uninstall.sh"
+    echo "(from the bundle that installed it), then run this again. Nothing changed."; exit 1
+  fi
+fi
+need_runner=yes; [ -e /etc/sudoers.d/fyp-hardening-runner ] && need_runner=no
+echo "This will set up @HOSTNAME@ for the FYP hardening dashboard (account @USER@):"
+[ "$need_oscap" = yes ] && echo "  - install the OpenSCAP scanner (apt: libopenscap8)"
+[ "$need_helper" = yes ] && echo "  - install the read-only collector and its sudo rule (install.sh)"
+[ "$need_runner" = yes ] && echo "  - install the fix runner, its sudo rule and the boot rollback unit (install-runner.sh)"
+if [ "$need_oscap$need_helper$need_runner" = nonono ]; then echo "  nothing: this server is already set up."; exit 0; fi
+echo "No CIS setting is changed now: every fix still needs its own approval in the dashboard."
+read -r -p "Continue? [y/N] " answer
+case "$answer" in y|Y|yes|YES) ;; *) echo "Nothing changed."; exit 1;; esac
+if [ "$need_oscap" = yes ]; then apt-get update && apt-get install -y libopenscap8; fi
+[ "$need_helper" = yes ] && bash install.sh
+[ "$need_runner" = yes ] && bash install-runner.sh
+echo "Done. In the dashboard, click Check again on the Servers page."
+'''
+
+
 def target_values(machine_id, hostname, user):
     """The server the bundle is for, checked so that nothing but these exact words reaches the shell and sudo files."""
     if not re.fullmatch(r'[0-9a-f]{32}', str(machine_id)) or machine_id == '0' * 32:
@@ -183,7 +222,8 @@ def build(out=DEFAULT, *, machine_id, hostname, user):
     (out / 'uninstall.sh').write_bytes(_fill(UNINSTALL, values).encode('ascii'))
     (out / 'install-runner.sh').write_bytes(_fill(INSTALL_RUNNER, values).encode('ascii'))
     (out / 'uninstall-runner.sh').write_bytes(_fill(UNINSTALL_RUNNER, values).encode('ascii'))
-    scripts = ('install.sh', 'uninstall.sh', 'install-runner.sh', 'uninstall-runner.sh')
+    (out / 'setup.sh').write_bytes(_fill(SETUP, values).encode('ascii'))
+    scripts = ('install.sh', 'uninstall.sh', 'install-runner.sh', 'uninstall-runner.sh', 'setup.sh')
     files = sorted(p for p in out.rglob('*') if p.is_file() and p.name not in scripts)
     sums = ''.join(f'{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.relative_to(out).as_posix()}\n' for p in files)
     (out / 'SHA256SUMS').write_bytes(sums.encode('ascii'))

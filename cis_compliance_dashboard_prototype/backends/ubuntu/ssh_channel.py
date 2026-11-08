@@ -1,7 +1,9 @@
 """Trusted SSH channel with fixed, bounded read-only operations. No implicit credentials."""
 import base64
 import hashlib
+import io
 from pathlib import Path
+import stat
 import time
 import paramiko
 
@@ -21,6 +23,8 @@ READ_ONLY_COMMANDS = {
 HELPER_COMMAND = 'sudo -n /usr/local/libexec/fyp-hardening/collect'
 # The only privileged write path: the fixed root-owned runner, no arguments; operations arrive on stdin.
 RUNNER_COMMAND = 'sudo -n /usr/local/libexec/fyp-hardening/runner'
+# Where "Set up this server" copies the setup bundle (in the management account's home; no root needed).
+SETUP_FOLDER = 'fyp-ubuntu-helper'
 
 
 def fingerprint(key):
@@ -134,6 +138,46 @@ class SshChannel:
         return verify_ubuntu(self.read('os_release', deadline=deadline), self.read('hostname', deadline=deadline),
                              self.read('machine_id', deadline=deadline), request.expected_hostname,
                              request.expected_machine_identity, self.fingerprint)
+
+    def upload_setup_bundle(self, local_dir):
+        """Copy the setup bundle into SETUP_FOLDER in the management account's home over SFTP, and return that folder.
+
+        Runs no command and needs no root: installing stays with the administrator on the server (setup.sh). Only that
+        one folder is written; it is emptied first, so no file of an older bundle can be installed with the new one.
+        """
+        local = Path(local_dir)
+        sftp = self._transport.open_sftp_client()
+        try:
+            folder = sftp.normalize('.').rstrip('/') + '/' + SETUP_FOLDER
+            try:
+                if not stat.S_ISDIR(sftp.lstat(folder).st_mode):
+                    raise ValueError(SETUP_FOLDER + ' exists on the server and is not a folder; remove it first')
+                self._empty(sftp, folder)
+            except FileNotFoundError:
+                sftp.mkdir(folder, 0o700)
+            for path in sorted(local.rglob('*')):  # A folder sorts before the files inside it.
+                parts = path.relative_to(local).parts
+                if any(p in ('', '.', '..') or '/' in p for p in parts):
+                    raise ValueError('Unexpected path in the setup bundle')
+                target = folder + '/' + '/'.join(parts)
+                if path.is_dir():
+                    sftp.mkdir(target, 0o700)
+                else:
+                    sftp.putfo(io.BytesIO(path.read_bytes()), target)
+                    sftp.chmod(target, 0o600)
+            return folder
+        finally:
+            sftp.close()
+
+    @staticmethod
+    def _empty(sftp, folder):
+        for entry in sftp.listdir_attr(folder):
+            path = folder + '/' + entry.filename
+            if stat.S_ISDIR(entry.st_mode) and not stat.S_ISLNK(entry.st_mode):
+                SshChannel._empty(sftp, path)
+                sftp.rmdir(path)
+            else:
+                sftp.remove(path)
 
     def close(self):
         self._transport.close()
