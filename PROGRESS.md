@@ -14,9 +14,12 @@ Full run-by-run history up to 26 October 2026: [docs/archive/PROGRESS_LOG_2026-1
 | Evaluation | **Latest: 16-run evaluation of the 1 November code** (real `qwen3:8b`, simulated VM, 8 scenarios × 2, `20261101_185014`, code frozen by SHA-256 before the run): **16/16 assessment rounds produced an accepted plan and both phases ran; 0 safety failures.** 8/16 plans left out the two lowest-ranked findings, which code deferred as `not_decided`. Assessment 221–409 s, remediation 110–168 s (NFR06). Judgement scenarios unchanged: no better than a fixed rule. Earlier: 20-run evaluation on `468b9a6` (`20261027_144751`), 20/20 completed. Real VM: one round with remediation on 30 October. |
 | Legacy | Removed. The upload/manual-exchange page went on 27 October (last commit with it: `81b9d52`); the shared-folder building blocks went on 29 October (last commit with them: `0ddd3ba`). Docs: [docs/archive/legacy/](docs/archive/legacy/). The staged non-AI pipeline (`hardening/agents.py`, `hardening/actions.py`) went on 1 November; `framework.py` is now only the run register (`AssessmentRuns`). On 3 November the preview-era modules and every manual "run it inside the VM" mode went too (entry below). |
 
-## 9 November 2026 (latest): pairing scrolls to the found server
+## 9 November 2026 (latest): rounds and fixes keep running when another page is opened; pairing scrolls to the found server
 
-- After **Find server** (or **Re-pair**), the page scrolls once to the Found panel. The panel opens above where the code was typed, and Streamlit keeps the scroll position, so it used to open out of sight. Checked in headless Chrome; 779 tests pass (1 skip), baseline verified.
+- **Why:** opening another page (for example Overview) while a round or an execution ran made Streamlit stop or hold the page's run. The page lost track of the work, and starting again was refused with "reconciliation is required" while the first one was still running.
+- **Background work:** a round, and executing approved fixes (with AI, without AI, and on Ubuntu), now run in a background worker with no Streamlit context (`hardening/background.py`), one job per server in the dashboard process. Every page shows "Agents working" in the sidebar, with the time so far, and reloads once it has finished. The Agentic hardening page shows the work running and offers nothing else to start. Disconnect, access changes, setup and removing the connected server are locked until it has finished. Ledger claims, approvals and checks are unchanged.
+- **Pairing:** after **Find server** (or **Re-pair**), the page scrolls once to the Found panel, which opens above where the code was typed.
+- **Checks:** 782 tests pass (1 skip), baseline verified. The scroll was checked in headless Chrome.
 
 ## 9 November 2026: Windows fixes in one round, one connection per batch
 

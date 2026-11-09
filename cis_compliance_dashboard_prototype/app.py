@@ -8,9 +8,12 @@ the workspace opens on Overview, with the same three pages for both systems: Ove
 History and drift. Each page shows the connected system's own content (the shared connection service says which
 system it is, from what the server itself reported after login).
 """
+from datetime import datetime, timezone
+
 import streamlit as st
+from hardening import background
 from hardening.agentic_view import render_agentic
-from hardening.connection_view import LIVE_TARGET, connected_session
+from hardening.connection_view import LIVE_TARGET, LOCKED, connected_session, job_key
 from system.config import PATHS
 from tools.baseline import verify_import_origin
 from hardening.history_view import render_history
@@ -65,12 +68,31 @@ def connected():
     return None
 
 
+@st.fragment(run_every=3)
+def _work_status(key):
+    """A round or an execution running on this server, on every page. Reloads the page once it has finished."""
+    job = background.running(key)
+    if job is None:
+        st.rerun()
+    seconds = int((datetime.now(timezone.utc) - job.started_at).total_seconds())
+    st.markdown(':blue-badge[:material/progress_activity: Agents working]')
+    st.caption(f'{md_escape(job.label)}: {seconds // 60} min {seconds % 60:02d} s so far. Other pages can be opened; '
+               'the work goes on.')
+
+
 def _status_panel(server, servers):
     """Where the workspace stands, on every page: the server connection and the local model."""
     st.markdown('**Status**')
+    key = job_key() if server else None
+    busy = background.running(key) is not None
     if server:
         st.markdown(':green-badge[:material/lan: Server connected]  \n' + md_escape(server[0]))
         st.caption(f'Workspace: {SYSTEMS[server[1]]}')
+        if busy:
+            _work_status(key)
+        elif background.finished(key):
+            st.markdown(':green-badge[:material/task_alt: Agents finished]')
+            st.caption('Open **Agentic hardening** to see the result.')
     else:
         st.markdown(':gray-badge[:material/lan: No server connected]')
         st.caption('Pair or connect a server first. The workspace opens once a server is connected.')
@@ -79,8 +101,8 @@ def _status_panel(server, servers):
     if server:
         st.page_link(servers, label='Servers', icon=':material/dns:', help='Switch server, re-pair, or manage who '
                      'can reach this server.')
-        if st.button('Disconnect', key='sidebar_disconnect', icon=':material/link_off:',
-                     help='End this session with the server. Nothing changes on the server.'):
+        if st.button('Disconnect', key='sidebar_disconnect', icon=':material/link_off:', disabled=busy,
+                     help=LOCKED if busy else 'End this session with the server. Nothing changes on the server.'):
             forget_connection(f'Disconnected from {server[0]}. Nothing changed on the server.')
     st.caption('Every change on a server needs your approval.')
     st.caption(f'Supported: {SUPPORTED_SYSTEMS}.')

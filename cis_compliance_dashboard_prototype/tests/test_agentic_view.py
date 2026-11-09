@@ -2,12 +2,14 @@
 from pathlib import Path
 import os
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 
+from streamlit.runtime.scriptrunner import get_script_run_ctx
 from streamlit.testing.v1 import AppTest
 
-from hardening import agentic, agentic_view
+from hardening import agentic, agentic_view, background
 from hardening.connection_view import LIVE_TARGET
 from hardening.ui import md_escape
 from hardening.winrm_channel import LiveScanner
@@ -144,6 +146,50 @@ class AgenticPageTests(unittest.TestCase):
         app.button(key='agentic_resume').click().run()
         self.assertEqual(len([b for b in app.button if b.key.startswith('agentic_approve_')
                               and b.key != 'agentic_approve_all']), 2)
+
+    def test_a_round_runs_in_the_background_so_opening_another_page_cannot_stop_it(self):
+        """Streamlit stops a page's own run when another page is opened. The round therefore runs in a worker with no
+        Streamlit context; the page shows it running, offers nothing else to start, and shows the result after."""
+        self.addCleanup(background._jobs.clear)
+        gate, contexts = threading.Event(), []
+        team = ScriptedModel.team
+
+        class Gated:
+            def chat(self, messages, tools, *, timeout):
+                contexts.append(get_script_run_ctx(suppress_warning=True))
+                gate.wait(30)
+                return team.chat(messages, tools, timeout=timeout)
+        ScriptedModel.team = Gated()
+        self.addCleanup(setattr, ScriptedModel, 'team', team)
+        with patch.object(agentic_view, 'WAIT_SECONDS', 0.05):
+            app = self._start_round()
+        self.assertTrue(any('Running' in m.value and 'Orchestrator' in m.value for m in app.markdown))
+        self.assertNotIn('agentic_run', [b.key for b in app.button])
+        self.assertTrue(app.button(key='agentic_disconnect').disabled)
+        # Another page opens and works while the round goes on.
+        overview = AppTest.from_function(overview_page, default_timeout=60).run()
+        self.assertEqual(len(overview.exception), 0, [e.value for e in overview.exception])
+        with self.assertRaisesRegex(ValueError, 'still running on this server'):
+            background.start('windows:' + MACHINE_UUID, 'Another round', lambda: None)
+        gate.set()
+        self.assertTrue(background._jobs['windows:' + MACHINE_UUID].wait(60))
+        app.run()
+        self.assertEqual(len(app.exception), 0, [e.value for e in app.exception])
+        summary = [c.value.replace('\\', '') for c in app.caption if c.value.startswith('Orchestrator summary')]
+        self.assertIn('Proposed for your approval, in order: 1.2.2', summary[0])
+        self.assertEqual(app.session_state[agentic_view.TAB], 'Fixes')
+        self.assertFalse(app.button(key='agentic_disconnect').disabled)
+        self.assertTrue(contexts)
+        self.assertEqual(set(contexts), {None})  # The agents never ran inside a page's run.
+
+    def test_a_background_round_that_fails_is_reported_once(self):
+        self.addCleanup(background._jobs.clear)
+        with patch.object(agentic.AgenticHardening, 'run_round', side_effect=ValueError('model stopped answering')):
+            app = self._start_round()
+        self.assertEqual([e.value for e in app.error], ['Agentic workflow: model stopped answering'])
+        app.run()
+        self.assertEqual([e.value for e in app.error], [])
+        self.assertIn('agentic_run', [b.key for b in app.button])  # Nothing is left running: it can start again.
 
     def test_page_without_connection_asks_to_connect(self):
         app = AppTest.from_function(agentic_page, default_timeout=30).run()

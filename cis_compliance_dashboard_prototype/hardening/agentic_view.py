@@ -7,9 +7,10 @@ from uuid import uuid4
 
 import streamlit as st
 
+from . import background
 from .action_library import LIBRARY
 from .agentic import ANALYSIS, ORCHESTRATOR, REMEDIATION, SCANNER, AgenticHardening, explain_finding, verdict_kind
-from .connection_view import render_connection
+from .connection_view import job_key, render_connection
 from .framework import AssessmentRuns
 from .import_storage import ImportedEvidenceStore
 from .remediation import RemediationStore
@@ -28,6 +29,13 @@ CONFIRM = 'agentic_confirm'
 TAB = 'agentic_tab'
 ROUND_VIEW = 'agentic_round_view'
 COMMENT = 'agentic_comment'
+JOB_ERROR = 'agentic_job_error'  # Why the last background round or execution stopped, shown once.
+# The page waits this long for background work before showing it as running: quick work looks as before.
+WAIT_SECONDS = 3
+ROUND_LABEL = 'Round: Orchestrator → Scanner → Analysis → plan'
+EXECUTE_LABEL = 'Remediation Agent executing the approved fixes, then Scanner verifying'
+FALLBACK_LABEL = 'Executing the approved fixes in rank order without AI, then verifying'
+UBUNTU_EXECUTE_LABEL = 'Executing the approved fixes, then verifying'
 
 TABS = ('Fixes', 'Risk ranking', 'Controls', 'Results', 'Agent log')
 STEPS = ('Scan', 'Analyse', 'Plan', 'Approve', 'Execute', 'Verify')
@@ -59,6 +67,7 @@ def _decide(store, request_id, *, approve, operator, comment):
 
 
 def _execute(hardening, session_id, *, deterministic=False, expected=None):
+    """Read on the page what the execution needs, and return the work itself for the background worker."""
     backend = active_backend(st.session_state)
     if backend:
         workflow = st.session_state[WORKFLOW_KEY]
@@ -66,9 +75,61 @@ def _execute(hardening, session_id, *, deterministic=False, expected=None):
         snapshot = backend.snapshot(connection, workflow)
         if expected is None:
             raise ValueError('An exact displayed approval set must be confirmed before dispatch')
-        return backend.execute_approved(connection, workflow, snapshot.current_round_reference,
-                                        expected, deterministic, uuid4().hex)
-    return hardening.execute_approved(session_id, deterministic=deterministic)
+        round_ref, operation = snapshot.current_round_reference, uuid4().hex
+        return lambda: backend.execute_approved(connection, workflow, round_ref, expected, deterministic, operation)
+    return lambda: hardening.execute_approved(session_id, deterministic=deterministic)
+
+
+# ------------------------------------------------------------------ background work (background.py)
+def _start(label, work, after):
+    """Run a round or an execution in the background worker, so opening another page cannot stop it half-way."""
+    job = background.start(job_key(), label, work, after=after)
+    with st.spinner(label + '…'):
+        job.wait(WAIT_SECONDS)
+    st.rerun()
+
+
+def _error_text(error):
+    if isinstance(error, ChannelError):
+        return 'Server channel (' + error.state + '): ' + md_escape(error.detail)
+    return 'Agentic workflow: ' + md_escape(error)
+
+
+def _collect_finished(key):
+    """Apply a finished round or execution of this server once: what the page remembers, and why it stopped."""
+    job = background.take_finished(key)
+    if job is None:
+        return
+    handled = job.after(job.result, job.error) if job.after else False
+    if job.error is not None and not handled:
+        st.session_state[JOB_ERROR] = _error_text(job.error)
+
+
+def _show_running(job):
+    with st.container(border=True):
+        st.markdown(f':blue-badge[:material/progress_activity: Running] **{md_escape(job.label)}**')
+        st.caption(f'Started {myt(job.started_at, "%H:%M:%S")}. It keeps running if you open another page; this page '
+                   'shows the result when it has finished. Starting other work and disconnecting wait until then.')
+        st.button('Refresh', key='agentic_job_refresh', icon=':material/refresh:')
+
+
+def _after_round(result, error):
+    binding = getattr(result, 'binding', None)  # Through a backend: the round's workflow, kept for this session.
+    if binding is not None:
+        st.session_state[WORKFLOW_KEY] = binding.workflow_session_id
+        st.session_state[SESSION] = binding.backend_session_id
+    _reset_view()
+
+
+def _after_execute(result, error):
+    _reset_view()
+
+
+def _after_ubuntu_execute(result, error):
+    if isinstance(error, ValueError):  # Shown in Fixes, as before.
+        st.session_state['ubuntu_execute_error'] = str(error)[:300]
+        return True
+    return False
 
 
 def _round_state(store, rounds, assessment_round):
@@ -167,17 +228,13 @@ def _run_round(hardening, session_id, mode=AssessmentMode.AGENTIC):
     # The session is kept before the round starts, so its records stay reachable whatever happens to the page.
     session_id = session_id or uuid4().hex
     st.session_state[SESSION] = session_id
-    with st.spinner('Round running: Orchestrator → Scanner → Analysis → plan. This can take up to 10 minutes.'):
-        backend = active_backend(st.session_state)
-        if backend:
-            handle = backend.start_round(st.session_state[CONNECTION_KEY], st.session_state.get(WORKFLOW_KEY),
-                                          None, mode, uuid4().hex)
-            st.session_state[WORKFLOW_KEY] = handle.binding.workflow_session_id
-            st.session_state[SESSION] = handle.binding.backend_session_id
-        else:
-            hardening.run_round(session_id)
-    _reset_view()
-    st.rerun()
+    backend = active_backend(st.session_state)
+    if backend:
+        connection, workflow, operation = st.session_state[CONNECTION_KEY], st.session_state.get(WORKFLOW_KEY), uuid4().hex
+        work = lambda: backend.start_round(connection, workflow, None, mode, operation)
+    else:
+        work = lambda: hardening.run_round(session_id)
+    _start(ROUND_LABEL, work, _after_round)
 
 
 def _ubuntu_states(snapshot):
@@ -510,11 +567,9 @@ def _action_bar(hardening, session_id, latest, state, rounds, target):
             if st.button('Execute remaining without AI', key='agentic_execute_fallback',
                          help='Same approval, expiry and precondition guards, in rank order; the result is still '
                               'verified by a rescan.'):
-                with st.spinner('Executing approved fixes in rank order, then verifying…'):
-                    _execute(hardening, session_id, deterministic=True,
-                             expected=tuple(r['proposal']['request_id'] for r in state['pending']))
-                _reset_view()
-                st.rerun()
+                _start(FALLBACK_LABEL, _execute(hardening, session_id, deterministic=True,
+                                                expected=tuple(r['proposal']['request_id'] for r in state['pending'])),
+                       _after_execute)
         if state['undecided']:
             st.markdown(f"{len(state['undecided'])} proposed fix(es) need your decision in **Fixes**.")
         st.download_button('Round report', round_report(hardening, rounds, latest), icon=':material/download:',
@@ -546,10 +601,9 @@ def _confirm_execution(hardening, session_id, state, target):
         with st.container(horizontal=True):
             if st.button('Confirm and execute', type='primary', key='agentic_execute'):
                 st.session_state.pop(CONFIRM, None)
-                with st.spinner('Remediation Agent executing, then Scanner verifying. This can take up to 10 minutes.'):
-                    _execute(hardening, session_id, expected=st.session_state.pop('agentic_confirm_requests', None))
-                _reset_view()
-                st.rerun()
+                _start(EXECUTE_LABEL, _execute(hardening, session_id,
+                                               expected=st.session_state.pop('agentic_confirm_requests', None)),
+                       _after_execute)
             if st.button('Cancel', key='agentic_execute_cancel'):
                 st.session_state.pop(CONFIRM, None)
                 st.rerun()
@@ -786,6 +840,15 @@ def render_agentic(database_path: Path):
     if target is None:
         return  # render_connection already points to the Servers page.
     try:
+        key = job_key()
+        _collect_finished(key)
+        error = st.session_state.pop(JOB_ERROR, None)
+        if error:
+            st.error(error)
+        job = background.running(key)
+        if job is not None:  # Nothing else to choose until it has finished: the page shows it running.
+            _show_running(job)
+            return
         backend = active_backend(st.session_state)
         if backend:
             connection = st.session_state[CONNECTION_KEY]
@@ -1096,13 +1159,11 @@ def _ubuntu_execute_bar(backend, connection, snapshot, capabilities):
             if st.button('Confirm and execute', type='primary', key='ubuntu_execute'):
                 st.session_state.pop(UBUNTU_CONFIRM, None)
                 ids = st.session_state.pop('ubuntu_confirm_requests', ())
-                with st.spinner('Executing the approved fixes, then verifying. This can take a few minutes.'):
-                    try:
-                        backend.execute_approved(connection, st.session_state.get(WORKFLOW_KEY),
-                                                 snapshot.current_round_reference, ids, True, uuid4().hex)
-                    except ValueError as failure:
-                        st.session_state['ubuntu_execute_error'] = str(failure)[:300]
-                st.rerun()
+                workflow, round_ref, operation = (st.session_state.get(WORKFLOW_KEY), snapshot.current_round_reference,
+                                                  uuid4().hex)
+                _start(UBUNTU_EXECUTE_LABEL,
+                       lambda: backend.execute_approved(connection, workflow, round_ref, ids, True, operation),
+                       _after_ubuntu_execute)
             if st.button('Cancel', key='ubuntu_execute_cancel'):
                 st.session_state.pop(UBUNTU_CONFIRM, None)
                 st.rerun()

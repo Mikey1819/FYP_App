@@ -23,7 +23,7 @@ import tempfile
 
 import streamlit as st
 
-from .connection_view import LIVE_TARGET, connected_session, disconnect
+from .connection_view import LIVE_TARGET, LOCKED, connected_session, disconnect, running_job
 from .pairing import PairingError, normalize_code
 from .pairing_client import FoundServer, find_server
 from .reconnect import remember
@@ -143,7 +143,7 @@ def _connect(registry, server, password, sudo):
     st.rerun()
 
 
-def _show_saved(registry, saved, connected):
+def _show_saved(registry, saved, connected, busy=False):
     rows = [{'Server': s.hostname, 'System': s.system_label, 'Address': f'{s.host}:{s.port}', 'Account': s.username,
              'Note': s.note,
              'Last connected': myt(s.last_connected_at) if s.last_connected_at else 'Never',
@@ -207,7 +207,9 @@ def _show_saved(registry, saved, connected):
             if st.button('Save note', key='servers_note_save', disabled=note.strip() == chosen.note):
                 registry.set_note(chosen.platform, chosen.machine_identity, note)
                 st.rerun()
-            if st.button('Remove from list', key='servers_remove', icon=':material/delete:'):
+            locked = busy and is_connected
+            if st.button('Remove from list', key='servers_remove', icon=':material/delete:', disabled=locked,
+                         help=LOCKED if locked else None):
                 st.session_state[REMOVING] = chosen.key
         if st.session_state.get(REMOVING) == chosen.key:
             st.warning(f'Remove **{md_escape(chosen.hostname)}** from this list? Its assessment history stays, and '
@@ -540,12 +542,13 @@ def render_servers(database_path: Path):
     if NOTICE in st.session_state:
         st.success(md_escape(st.session_state.pop(NOTICE)))
     connected = connected_session()
+    busy = connected is not None and running_job() is not None
     if connected is not None:
         with st.container(horizontal=True, vertical_alignment='center'):
             st.markdown(f':green-badge[:material/lan: Connected] **{md_escape(connected.identity.hostname)}** · '
                         f'{md_escape(connected.host)}:{connected.port} via {connected.identity.transport.upper()}')
-            if st.button('Disconnect', key='servers_disconnect', type='tertiary',
-                         help='End this session with the server. Nothing changes on the server.'):
+            if st.button('Disconnect', key='servers_disconnect', type='tertiary', disabled=busy,
+                         help=LOCKED if busy else 'End this session with the server. Nothing changes on the server.'):
                 forget_connection(f'Disconnected from {connected.identity.hostname}. Nothing changed on the server.')
     scroll = st.session_state.pop(SHOW_FOUND, None)
     try:
@@ -556,14 +559,19 @@ def render_servers(database_path: Path):
                 _scroll_to_found(scroll)
         saved = registry.all()
         st.subheader('My servers')
+        if busy:
+            st.info(f'The agents are working on {md_escape(connected.identity.hostname)} (see **Agentic hardening**). '
+                    'Disconnecting, access changes and setup wait until they have finished.')
         if saved:
-            _show_saved(registry, saved, connected)
+            _show_saved(registry, saved, connected, busy)
         else:
             st.info('No saved servers yet. Add one below.')
-        if connected is not None and connected.identity.platform == 'windows' and connected.target is not None:
+        # Access and setup change what running work depends on, so they wait until it has finished.
+        if (connected is not None and not busy and connected.identity.platform == 'windows'
+                and connected.target is not None):
             st.subheader(f'Who can reach {md_escape(connected.identity.hostname)}')
             _show_access(registry, connected)
-        if connected is not None and connected.identity.platform == 'ubuntu':
+        if connected is not None and not busy and connected.identity.platform == 'ubuntu':
             st.subheader(f'Set up {md_escape(connected.identity.hostname)}')
             _show_ubuntu_setup(connected)
         st.subheader('Add a server')

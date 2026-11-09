@@ -3,12 +3,14 @@ No server or model is contacted: a connection is what the Servers page leaves in
 the shared connection service with fixture channels. Data goes to a temporary folder, never the app's data folder."""
 from pathlib import Path
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 
 from streamlit.testing.v1 import AppTest
 from streamlit.util import calc_hash
 
+from hardening import background
 from hardening.connection_view import LIVE_TARGET
 from hardening.servers_view import NOTICE
 from system.bootstrap import CONNECTION_KEY, SERVICE_KEY
@@ -80,6 +82,30 @@ class AppNavigationTests(unittest.TestCase):
     def test_the_servers_page_stays_reachable_once_connected(self):
         app = self.open(**{LIVE_TARGET: target()})
         self.assertEqual(self.open('servers', app=app).title[0].value, 'Servers')  # Moved there once only.
+
+    def test_running_work_shows_on_every_page_and_disconnect_waits_for_it(self):
+        self.addCleanup(background._jobs.clear)
+        gate = threading.Event()
+        self.addCleanup(gate.set)
+        app = AppTest.from_file(str(APP), default_timeout=30)
+        app.session_state[SERVICE_KEY] = ConnectionService(CoordinationLedger(self.paths.coordination),
+                                                           ssh_factory=lambda *a: FixtureSsh())
+        app.run()
+        self.assertEqual(paired_connect(app, platform='ubuntu', hostname='ubuntu-web01', identity='b' * 32).state,
+                         'connected')
+        job = background.start('ubuntu:' + 'b' * 32, 'Round: Orchestrator → Scanner → Analysis → plan', gate.wait)
+        app = self.open('overview', app=app)
+        self.assertIn('Agents working', text(app))
+        self.assertTrue(app.button(key='sidebar_disconnect').disabled)
+        app = self.open('servers', app=app)
+        self.assertTrue(app.button(key='servers_disconnect').disabled)
+        self.assertIn('Disconnecting, access changes and setup wait until they have finished', text(app))
+        self.assertNotIn('servers_setup', [b.key for b in app.button])
+        gate.set()
+        self.assertTrue(job.wait(10))
+        app = self.open('overview', app=app)
+        self.assertIn('Agents finished', text(app))
+        self.assertFalse(app.button(key='sidebar_disconnect').disabled)
 
     def test_disconnecting_from_the_sidebar_returns_to_servers(self):
         app = self.open(**{LIVE_TARGET: target()})
