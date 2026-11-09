@@ -80,7 +80,9 @@ def render_controls(snapshot):
 
 APPLIED = ('applied', 'reconciled_applied')
 NOT_APPLIED = ('refused', 'rolled_back', 'reconciled_not_applied')
-ICONS = {'Awaiting your decision': ':material/build:', 'Fix proposed': ':material/build:',
+SKIPPED = 'Skipped by the Remediation Agent'
+EXPLANATION_LABEL = 'Model-written explanation (unverified; does not affect the score):'
+ICONS = {'Awaiting your decision': ':material/build:', 'Fix proposed': ':material/build:', SKIPPED: ':material/skip_next:',
          'Approved, ready to execute': ':material/thumb_up:', 'Rejected': ':material/block:',
          'Running': ':material/hourglass_top:', 'Applied, re-scan pending': ':material/hourglass_top:',
          'Fixed, re-scan: Compliant': ':material/check_circle:', 'Not applied': ':material/cancel:',
@@ -112,6 +114,8 @@ def _card_state(row, fix, recovery, results):
         return 'Fixed, re-scan: Compliant' if status.value == 'Compliant' else 'Applied, re-scan: ' + status.value
     if result.execution_state == 'running':
         return 'Running'
+    if result.execution_state == 'skipped':  # Closed unexecuted by the Remediation Agent (precheck or a stop).
+        return SKIPPED
     return 'Not applied' if result.execution_state in NOT_APPLIED else 'Outcome unknown'
 
 
@@ -178,6 +182,21 @@ def _render_cards(snapshot, control_actions):
                     st.caption('Outcome: ' + md_escape(outcome.detail))
             if control_actions is not None:
                 control_actions(card)
+
+
+def render_explain(control_id, explain, round_id):
+    """FR17 inside a control's fix card: `explain(control_id)` asks the local model about that one finding. The
+    text is shown as unverified and changes nothing (administrator request 2026-11-09: in Fixes, per control)."""
+    key = 'ubuntu_explain_' + str(round_id) + '_' + control_id
+    if st.button('Explain with local AI', key='ubuntu_explain_' + control_id, icon=':material/chat:', type='tertiary'):
+        with st.spinner('Asking qwen3:8b…'):
+            try:
+                st.session_state[key] = explain(control_id) or 'The model returned no explanation.'
+            except Exception as exc:  # Optional: the deterministic ranking and plan stay valid without it.
+                st.session_state[key] = 'Explanation unavailable (' + type(exc).__name__ + ').'
+    if key in st.session_state:
+        st.caption(EXPLANATION_LABEL)
+        st.text(st.session_state[key])
 
 
 def render_snapshot_tabs(snapshot, *, tabs=None, fix_actions=None, fix_header=None, control_actions=None,

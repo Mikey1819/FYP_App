@@ -36,6 +36,7 @@ ROUND_LABEL = 'Round: Orchestrator → Scanner → Analysis → plan'
 EXECUTE_LABEL = 'Remediation Agent executing the approved fixes, then Scanner verifying'
 FALLBACK_LABEL = 'Executing the approved fixes in rank order without AI, then verifying'
 UBUNTU_EXECUTE_LABEL = 'Executing the approved fixes, then verifying'
+UBUNTU_AGENTS_EXECUTE_LABEL = 'Remediation Agent executing, then Scanner verifying'
 CLOCK = 'agentic_clock'                # Windows: the last check of the server clock (plain session key).
 CLOCK_NOTICE = 'agentic_clock_notice'  # What the last clock sync did, shown once.
 CLOCK_RECHECK = timedelta(minutes=2)   # The box checks again after this; Start and Execute always check afresh.
@@ -328,20 +329,20 @@ def _ubuntu_safety_check(operator):
 
 def _ubuntu_acceptance(backend, connection):
     """Execution acceptance: two live runs of a harmless marker prove the confirm and rollback paths on this VM.
-    While needed it is shown open; once both passed for the deployed runner it folds into a line that can run it again
-    (for example after the VM was reverted to a snapshot). With the login remembered, one button runs both tests."""
+    Shown only while needed; once both passed for the deployed runner it is gone (administrator request 2026-11-09),
+    and a reinstalled runner (a new digest) makes it needed, and shown, again. With the login remembered, one button
+    runs both tests."""
     from .reconnect import can_reconnect
     error, notice = (st.session_state.pop('ubuntu_acceptance_error', None),
                      st.session_state.pop('ubuntu_acceptance_notice', None))
-    complete = not error and backend.acceptance_complete(connection)
-    if complete and notice:
-        st.success(md_escape(notice))  # the last result stays visible once the panel folds
-    label = ('Safety check (execution acceptance): passed. Run it again' if complete
-             else 'Execution acceptance (required before any live fix)')
-    with st.expander(label, expanded=not complete or bool(error)):
+    if not error and backend.acceptance_complete(connection):
+        if notice:
+            st.success(md_escape(notice))  # the result shows once, right after the check passed
+        return
+    with st.expander('Safety check (execution acceptance): required before any live fix', expanded=True):
         if error:
             st.error(md_escape(error))
-        if notice and not complete:
+        if notice:
             st.success(md_escape(notice))
         deployment = backend.deployment_status(connection)
         if not deployment.ok:
@@ -1061,7 +1062,8 @@ def render_agentic(database_path: Path):
 # own boxes. Every decision and execution still goes through the backend's typed commands.
 UBUNTU_DONE = {'Fixed, re-scan: Compliant': ('Verified compliant', 'green'), 'Running': ('Running', 'blue'),
                'Applied, re-scan pending': ('Applied, re-scan pending', 'blue'), 'Not applied': ('Refused', 'gray'),
-               'Outcome unknown': ('Outcome uncertain', 'orange'), 'Restored to the before-state': ('Restored', 'gray')}
+               'Outcome unknown': ('Outcome uncertain', 'orange'), 'Restored to the before-state': ('Restored', 'gray'),
+               'Skipped by the Remediation Agent': ('Skipped', 'gray')}
 UBUNTU_CONFIRM = 'ubuntu_confirm_execution'
 
 
@@ -1150,7 +1152,7 @@ def _ubuntu_verification_box(backend, connection, snapshot):
 
 
 def _ubuntu_show_fixes(backend, connection, snapshot, capabilities):
-    from system.ui.components import NO_PLAN, plan_cards, plan_summary
+    from system.ui.components import NO_PLAN, plan_cards, plan_summary, render_explain
     for key, show in (('ubuntu_decision_error', st.error), ('ubuntu_verify_error', st.error),
                       ('ubuntu_execute_error', st.error), ('ubuntu_verify_notice', st.success)):
         message = st.session_state.pop(key, None)
@@ -1158,6 +1160,10 @@ def _ubuntu_show_fixes(backend, connection, snapshot, capabilities):
             show(md_escape(message))
     _ubuntu_verification_box(backend, connection, snapshot)
     workflow = st.session_state.get(WORKFLOW_KEY)
+    review = backend.remediation_review(connection, workflow) if workflow and hasattr(backend, 'remediation_review') \
+        else None
+    if review:  # The Orchestrator's next-step decision after the Remediation Agent ran (code-written sentence).
+        (st.success if review['next_step'] == 'finish' else st.info)('Orchestrator review: ' + md_escape(review['reason']))
     executed, applied, restoring = _ubuntu_states(snapshot)
     cards = plan_cards(snapshot)
     fixes = [c for c in cards if any(p.kind == 'control_remediation' for p in c['proposals'])]
@@ -1185,6 +1191,11 @@ def _ubuntu_show_fixes(backend, connection, snapshot, capabilities):
             st.rerun()
         st.caption('Each approval is bound to that exact request on this server and expires after one hour.')
     findings = {f.control_id: f for f in snapshot.findings}
+    explain = None
+    if capabilities.can_use_model and workflow and hasattr(backend, 'explain_finding'):
+        def explain(control_id):  # FR17: unverified model text about one finding; changes nothing.
+            return backend.explain_finding(connection, workflow, control_id)
+    round_id = snapshot.current_round_reference.record_id if snapshot.current_round_reference else 'none'
     for number, card in enumerate(fixes, 1):
         p = [q for q in card['proposals'] if q.kind == 'control_remediation'][-1]  # The latest plan for the control.
         finding = findings.get(card['control_id'])
@@ -1207,6 +1218,8 @@ def _ubuntu_show_fixes(backend, connection, snapshot, capabilities):
                             st.caption('Restore of ' + md_escape(card['control_id']) + ' awaits your decision:')
                             _ubuntu_decision_cell(backend, connection, dict(card, state='Awaiting your decision'), q,
                                                   operator, comment)
+            if explain is not None:  # Under each Non-Compliant control's card (administrator request 2026-11-09).
+                render_explain(card['control_id'], explain, round_id)
     skipped = [c for c in cards if c not in fixes]
     if skipped:
         st.markdown('**Not proposed this round**')
@@ -1256,17 +1269,25 @@ def _ubuntu_execute_bar(backend, connection, snapshot, capabilities):
                        'Approval valid until': myt(p.expiry) + (' (expired)' if datetime.fromisoformat(p.expiry) <= now
                                                                 else '') if p.expiry else '—'}
                       for p in pending], hide_index=True)
-        st.caption('The server re-checks each value and refuses anything that changed since the plan. A fresh scan '
-                   'verifies the result. Expired approvals are refused. SSH and firewall changes must be confirmed '
-                   'after reconnecting, or the server undoes them by itself.')
+        # An agentic round's fixes run in the remediation phase: the Remediation Agent prechecks, skips what is not
+        # ready and executes in its order; the Scanner verifies and the Orchestrator decides the next step. Only when
+        # the model is unavailable do they run in plan order; there is no separate button for that (administrator
+        # request 2026-11-09). The same server checks guard both.
+        agentic = bool(snapshot.plan) and capabilities.can_use_model
+        st.caption(('The Remediation Agent re-checks each fix read-only and skips anything that changed since the '
+                    'plan; the server checks it again before writing. ' if agentic else
+                    'The server re-checks each value and refuses anything that changed since the plan. ')
+                   + 'A fresh scan verifies the result. Expired approvals are refused. SSH and firewall changes must '
+                   'be confirmed after reconnecting, or the server undoes them by itself.')
         with st.container(horizontal=True):
             if st.button('Confirm and execute', type='primary', key='ubuntu_execute'):
                 st.session_state.pop(UBUNTU_CONFIRM, None)
                 ids = st.session_state.pop('ubuntu_confirm_requests', ())
                 workflow, round_ref, operation = (st.session_state.get(WORKFLOW_KEY), snapshot.current_round_reference,
                                                   uuid4().hex)
-                _start(UBUNTU_EXECUTE_LABEL,
-                       lambda: backend.execute_approved(connection, workflow, round_ref, ids, True, operation),
+                # In the background worker, so opening another page cannot stop it half-way.
+                _start(UBUNTU_AGENTS_EXECUTE_LABEL if agentic else UBUNTU_EXECUTE_LABEL,
+                       lambda: backend.execute_approved(connection, workflow, round_ref, ids, not agentic, operation),
                        _after_ubuntu_execute)
             if st.button('Cancel', key='ubuntu_execute_cancel'):
                 st.session_state.pop(UBUNTU_CONFIRM, None)

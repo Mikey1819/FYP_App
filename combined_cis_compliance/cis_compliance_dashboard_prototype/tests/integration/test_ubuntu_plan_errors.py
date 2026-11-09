@@ -15,7 +15,8 @@ def tools_for(failing, eligible):
     from backends.ubuntu.agents import OrchestratorTools
     evidence = types.SimpleNamespace(expected=types.SimpleNamespace(evidence_mode='fixture'), assessments=())
     rounds = types.SimpleNamespace(store=None, target_id='ubuntu:fixture', evidence=evidence, goal=None,
-                                   eligible=eligible, failing=lambda: list(failing))
+                                   eligible=eligible, failing=lambda: list(failing),
+                                   ranked=lambda: None)  # risk withheld: undeferred fixes follow in control order
     tools = OrchestratorTools(rounds)
     tools.scanned = tools.analysed = True
     return tools
