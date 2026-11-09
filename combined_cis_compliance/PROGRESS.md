@@ -14,7 +14,31 @@ Full run-by-run history up to 26 October 2026: [docs/archive/PROGRESS_LOG_2026-1
 | Evaluation | **Latest: 16-run evaluation of the 1 November code** (real `qwen3:8b`, simulated VM, 8 scenarios × 2, `20261101_185014`, code frozen by SHA-256 before the run): **16/16 assessment rounds produced an accepted plan and both phases ran; 0 safety failures.** 8/16 plans left out the two lowest-ranked findings, which code deferred as `not_decided`. Assessment 221–409 s, remediation 110–168 s (NFR06). Judgement scenarios unchanged: no better than a fixed rule. Earlier: 20-run evaluation on `468b9a6` (`20261027_144751`), 20/20 completed. Real VM: one round with remediation on 30 October. |
 | Legacy | Removed. The upload/manual-exchange page went on 27 October (last commit with it: `81b9d52`); the shared-folder building blocks went on 29 October (last commit with them: `0ddd3ba`). Docs: [docs/archive/legacy/](docs/archive/legacy/). The staged non-AI pipeline (`hardening/agents.py`, `hardening/actions.py`) went on 1 November; `framework.py` is now only the run register (`AssessmentRuns`). On 3 November the preview-era modules and every manual "run it inside the VM" mode went too (entry below). |
 
-## 9 November 2026 (latest): Windows agents finish cleanly when only manual-fix findings are left
+## 9 November 2026 (latest): a WinRM network failure says which one it was
+
+- **Why:** a friend's Windows test showed "Connected" while the clock check said "No WinRM listener answered", which covered a refused port, a connect timeout, a dropped connection and a server merely slow to reply, so the cause could only be guessed.
+- **Now** (`winrm_channel._classify`) the message names the failure: **Refused** (WinRM service or port), **Timed out connecting** (off, asleep, another network, or the helper's firewall dropping a laptop whose address changed since pairing), **No route** (not on the same network), **Connection cut** (drop or restart), and the new state **`slow_reply`** (connected, but no reply within 30 s: reachable but busy). The connect step shows the same words; the Servers page has a hint for `slow_reply`. Library text is only matched, never shown. Ubuntu unchanged.
+- **Checks:** exception types and texts captured from the real requests library on this laptop (local closed port, unanswered address, silent listener, reset); 834 tests pass (1 skip). Not yet seen on the friend's setup.
+
+## 9 November 2026: Windows helper: Copy code button
+
+- **Copy code** (FYP-ServerAccess.ps1, next to Start pairing) puts the 9 digits on the clipboard, for pasting into the dashboard; it is enabled only while a code is shown. When pairing stops, the code is taken off the clipboard if the clipboard still holds it (other copied text is left alone). From a VM, pasting on the laptop needs the VM's shared clipboard. Ubuntu helper unchanged.
+- **Checks:** helper PowerShell checks pass (four buttons, Copy code disabled without a code); the real window driven with pairing stubbed copied the code, cleared it on stop and kept other text. The published helper SHA-256 changed (the dashboard shows the new one). 833 Python tests pass (1 skip), baseline verified.
+
+## 9 November 2026: a refused login says which check refused it
+
+- **Why:** a friend's test pairing (another laptop and VM) ended with the one generic "Identity or trust verification failed" text, which covers several different checks, so the cause could only be guessed.
+- **Now** each check names itself and what to do, in words the program writes from checked facts (names, machine IDs, addresses; never a password or library text): the same machine ID already recorded under another name (a copied VM keeps its ID: give the copy its own hardware UUID, or rename it back), another machine recorded at that address, a new address without a pairing code (Re-pair), another SSH host key, joined to a domain or another server role, another Windows version, a different machine behind the login. Other errors keep the generic text. Nothing is saved after any refusal, as before.
+- **Checks:** 833 tests pass (1 skip), baseline verified; new tests for a copied machine, a domain member, and each ledger refusal.
+
+## 9 November 2026: one click is enough; Start no longer shows the clock box again
+
+- **Two clicks:** buttons that stayed greyed out until text was typed (Find server, Re-pair Find, Log in and save, Connect, Save note; on Windows Approve/Reject, Approve all/Reject all and the not-automated choices) needed a second click, because Streamlit commits typed text only on Enter or when the field loses focus. They are now always enabled; a click with the text missing says what to type, and nothing is recorded. Ubuntu's own decision buttons are unchanged.
+- **Start / Run next round / Execute (Windows):** the click starts the work in the background straight away, with the clock check as its first step. The page no longer waits half-drawn (Streamlit kept the old page, clock box included, under the wait). If the clock is off, nothing starts and the clock box shows by how much, with the sync button.
+- **Sidebar:** drawn after the page, so "Agents finished" is gone once the page has shown the result.
+- **Checks:** 830 tests pass (1 skip), baseline verified. In headless Chrome with the real app (fake server and model): typing a name and clicking Approve without Enter approved it in one click; after Start the page went straight from the start page to Running.
+
+## 9 November 2026: Windows agents finish cleanly when only manual-fix findings are left
 
 - **Why:** on the real server, 9 of 12 Analysis Agent runs stopped with "invalid tool calls", 8 of them with "X is not a gap": once the fixable controls were fixed and the scan had no Unknown/Error gaps, qwen3:8b also put its manual-fix findings under gap_triage, and that one harmless part made the whole decision fail. A real-model probe of the same state showed the Orchestrator sometimes "fixing" those findings too.
 - **Analysis Agent:** gap_triage is offered only for the gaps score_findings lists (empty when there are none) and may be left out; an entry for a control that is not a gap is dropped and noted, as on Ubuntu. Real gaps still each need one fitting code.
