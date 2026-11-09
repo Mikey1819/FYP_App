@@ -114,8 +114,34 @@ class LiveScannerTests(unittest.TestCase):
 
     def test_invalid_evidence_is_rejected_by_the_strict_importer(self):
         doc = evidence_fixture(); doc['target']['machine_uuid'] = '11111111-2222-3333-4444-555555555555'
-        with self.assertRaises(ValueError):
+        # A scan the checks refuse is a failed collection (ChannelError), so the Scanner Agent can report it.
+        with self.assertRaisesRegex(ChannelError, 'evidence_refused: The scan failed validation: Evidence does not match'):
             self.scanner(FakeSession(evidence=encode(doc).decode())).request('FIXTURE-SERVER', MACHINE_UUID)
+
+    def test_the_server_clock_is_read_and_set_after_the_identity_check(self):
+        from datetime import timedelta
+        from hardening.winrm_channel import CLOCK_SCRIPT, SET_CLOCK_SCRIPT
+        from test_agentic import FakeVm
+        vm = FakeVm()
+        vm.clock_ahead = timedelta(minutes=7)
+        scanner = LiveScanner(None, target(), session_factory=vm)
+        reading = scanner.clock_offset()
+        self.assertAlmostEqual(reading['offset'], 420, delta=2)
+        self.assertEqual(vm.scripts, [IDENTITY_SCRIPT, CLOCK_SCRIPT])
+        result = scanner.set_clock()
+        self.assertEqual(vm.scripts[2:], [IDENTITY_SCRIPT, SET_CLOCK_SCRIPT])
+        self.assertAlmostEqual((result['before'] - result['after']).total_seconds(), 420, delta=2)
+        self.assertAlmostEqual(scanner.clock_offset()['offset'], 0, delta=2)
+
+    def test_an_odd_clock_answer_is_refused(self):
+        class OddClock:
+            def __init__(self, _):
+                pass
+
+            def run(self, script, parameters=None):
+                return ([json.dumps(IDENTITY)] if script == IDENTITY_SCRIPT else ['tomorrow']), False, []
+        with self.assertRaisesRegex(ChannelError, 'unexpected form'):
+            LiveScanner(None, target(), session_factory=OddClock).clock_offset()
 
     def test_network_and_auth_failures_are_classified_without_leaking_password(self):
         class AuthenticationError(Exception):

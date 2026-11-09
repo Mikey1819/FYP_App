@@ -1,4 +1,5 @@
 """Agentic page walkthrough with a simulated VM and scripted model. No real VM or model."""
+from datetime import timedelta
 from pathlib import Path
 import os
 import tempfile
@@ -190,6 +191,34 @@ class AgenticPageTests(unittest.TestCase):
         app.run()
         self.assertEqual([e.value for e in app.error], [])
         self.assertIn('agentic_run', [b.key for b in app.button])  # Nothing is left running: it can start again.
+
+    def test_the_clock_is_checked_before_a_round_and_can_be_synced_in_one_click(self):
+        self.vm.clock_ahead = timedelta(minutes=7)
+        app = self._page()
+        self.assertEqual(len(app.exception), 0, [e.value for e in app.exception])
+        shown = ' '.join(m.value for m in app.markdown)
+        self.assertIn('Clocks differ', shown)
+        self.assertIn('7 min 0 s ahead of this laptop', shown)
+        self.assertTrue(any('Before you continue, check that the clocks match' in c.value for c in app.caption))
+        self.assertTrue(app.button(key='agentic_run').disabled)
+        app.button(key='agentic_clock_sync').click().run()
+        self.assertEqual(len(self.vm.clock_sets), 1)
+        self.assertTrue(any('Server clock set from' in m.value for m in app.success))
+        self.assertIn('Clocks match', ' '.join(m.value for m in app.markdown))
+        self.assertNotIn('agentic_clock_sync', [b.key for b in app.button])
+        self.assertFalse(app.button(key='agentic_run').disabled)
+        self.assertEqual(self.vm.writes, [])  # The clock is the only thing that changed.
+
+    def test_start_checks_the_clock_again_when_clicked(self):
+        app = self._page()
+        self.assertFalse(app.button(key='agentic_run').disabled)
+        self.vm.clock_ahead = timedelta(minutes=-9)  # The clock jumped after the page was drawn.
+        app.button(key='agentic_run').click().run()
+        self.assertEqual(len(app.exception), 0, [e.value for e in app.exception])
+        self.assertNotIn(self.vm.scripts[-1], (agentic_view.LiveScanner.collector_text(),))  # Nothing was scanned.
+        self.assertIn('9 min 0 s behind this laptop', ' '.join(m.value for m in app.markdown))
+        self.assertNotIn(agentic_view.SESSION, app.session_state)
+        self.assertTrue(app.button(key='agentic_run').disabled)
 
     def test_page_without_connection_asks_to_connect(self):
         app = AppTest.from_function(agentic_page, default_timeout=30).run()

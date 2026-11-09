@@ -18,7 +18,7 @@ from hardening.remediation import RUNNER, ApprovedActionExecutor, RemediationSto
 from hardening.domain import Status
 from hardening.risk import analyse
 from hardening.server2022_catalogue import CATALOGUE, SOURCES
-from hardening.winrm_channel import IDENTITY_SCRIPT, LiveScanner
+from hardening.winrm_channel import CLOCK_SCRIPT, IDENTITY_SCRIPT, SET_CLOCK_SCRIPT, LiveScanner
 from test_investigation import MockClient
 from evidence_fixture import evidence_fixture
 from test_winrm_channel import IDENTITY, target
@@ -29,7 +29,8 @@ LAB_STATE = {'1.2.2': 0, '1.2.1': None, '1.2.4': None, '1.1.1': 0, '1.1.3': 0, '
 
 
 class FakeVm:
-    """Answers only the three registered scripts and simulates the runner's guards."""
+    """Answers only the registered scripts and simulates the runner's guards. `clock_ahead` is how far the server
+    clock runs ahead of this laptop (a VM restored from a snapshot can be minutes off)."""
 
     def __init__(self, state=LAB_STATE, *, fail_action=False, firewall=True, error_controls=(), revert_controls=()):
         # fail_action: every write fails (True, or the failure message the runner reports).
@@ -39,13 +40,21 @@ class FakeVm:
         self.fail_action, self.firewall, self.error_controls = fail_action, firewall, set(error_controls)
         self.revert_controls = set(revert_controls)
         self.ledger, self.writes, self.scripts, self.attempts = set(), [], [], []
+        self.clock_ahead, self.clock_sets = timedelta(0), []
+
+    def now(self):
+        return datetime.now(timezone.utc) + self.clock_ahead
+
+    @staticmethod
+    def stamp(moment):
+        return moment.strftime('%Y-%m-%dT%H:%M:%S.') + f'{moment.microsecond // 1000:03d}Z'
 
     def __call__(self, target):
         return self
 
     def evidence(self):
         doc = evidence_fixture()
-        stamp = datetime.now(timezone.utc).isoformat()
+        stamp = self.now().isoformat()
         doc['started_at'] = doc['completed_at'] = stamp
         for row in doc['observations']:
             value = self.values[row['control_id']]
@@ -63,6 +72,14 @@ class FakeVm:
         self.scripts.append(script)
         if script == IDENTITY_SCRIPT:
             return [json.dumps(IDENTITY)], False, []
+        if script == CLOCK_SCRIPT:
+            return [self.stamp(self.now())], False, []
+        if script == SET_CLOCK_SCRIPT:
+            before = self.now()
+            wanted = datetime.fromisoformat(parameters['LaptopUtc'][:-1]).replace(tzinfo=timezone.utc)
+            self.clock_ahead = wanted - datetime.now(timezone.utc)
+            self.clock_sets.append(parameters['LaptopUtc'])
+            return [json.dumps({'before': self.stamp(before), 'after': self.stamp(self.now())})], False, []
         if script == LiveScanner.collector_text():
             return [self.evidence()], False, []
         if script == RUNNER.read_text(encoding='utf-8-sig'):
@@ -358,6 +375,31 @@ class AgenticRoundTests(AgenticTestCase):
         hardening.scanner.session_factory = lambda _: (_ for _ in ()).throw(ConnectionError('Connection refused'))
         result = hardening.run_round()
         self.assertEqual(result['outcome']['outcome'], 'collection_failed')
+
+    def test_a_server_clock_ahead_ends_the_round_as_a_failed_collection_that_names_the_clock(self):
+        # 9 November, real server: a VM clock minutes ahead made the scan fail validation; the agent's correct
+        # report_failure was then refused and the round showed "invalid tool calls". Now the agent's report stands.
+        t = 'windows:' + target().machine_uuid
+        vm = FakeVm()
+        vm.clock_ahead = timedelta(minutes=7)
+        hardening = self.hardening(vm, [call('delegate_scanner', t), plan(t)],
+            scanner=[call('scan_target', t), call('report_failure', t, reason='The server clock is ahead.')])
+        result = hardening.run_round()
+        self.assertEqual(result['outcome']['outcome'], 'collection_failed')
+        self.assertIn('clock_mismatch: The server clock is more than 5 minutes ahead', result['outcome']['reason'])
+        self.assertEqual([k for k, _ in self.calls(self.trace(hardening, result['round_id'], SCANNER)[0])],
+                         ['tool', 'tool'])  # Nothing refused.
+        self.assertEqual(vm.writes, [])
+
+    def test_a_failed_collection_the_agent_did_not_report_still_ends_as_one(self):
+        t = 'windows:' + target().machine_uuid
+        vm = FakeVm()
+        vm.clock_ahead = timedelta(minutes=7)
+        hardening = self.hardening(vm, [call('delegate_scanner', t), plan(t)],
+            scanner=[call('scan_target', t), call('read_coverage', t), call('read_coverage', t)])
+        result = hardening.run_round()
+        self.assertEqual(result['outcome']['outcome'], 'collection_failed')
+        self.assertIn('clock_mismatch', result['outcome']['reason'])
 
     def test_scanner_rescan_only_for_error_results(self):
         t = 'windows:' + target().machine_uuid

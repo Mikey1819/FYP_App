@@ -964,7 +964,9 @@ class OrchestratorTools(_RoleTools):
     def _summary(self, skipped):
         """Round summary written by code from records; the model contributes no free prose here."""
         if self.scanner_outcome['outcome'] == 'collection_failed':
-            return 'collection_failed', 'Scanner could not collect evidence. Nothing was proposed or executed.'
+            failure = self.scanner_outcome.get('failure')
+            return 'collection_failed', ('Scanner could not collect evidence' + (' (' + failure[:300] + ')' if failure
+                                                                                 else '') + '. Nothing was proposed or executed.')
         if self.scanner_outcome['outcome'] != 'handoff_analysis':
             # Evidence may exist, but no agent validated it; it is never analysed or acted on.
             return 'scan_not_handed_off', ('The Scanner Agent stopped without handing off a validated scan ('
@@ -1059,7 +1061,13 @@ class OrchestratorTools(_RoleTools):
         # The first request after another agent ran is slow (the model's prompt cache is cold), hence 120 s.
         child, finished = self._child(SCANNER, tools, steps=6, calls=8, seconds=180, request=120)
         self.scans += 1
-        outcome = tools.terminal_outcome or dict(outcome='incomplete', reason=stop_text(finished))
+        outcome = tools.terminal_outcome
+        if outcome is None and tools.failure and tools.record is None:
+            # Collection failed and the agent did not report it: the failure is a fact the code holds, so the round
+            # ends as a failed collection with its real reason, whatever the agent did next.
+            outcome = dict(outcome='collection_failed', reason='Collection failed.', failure=tools.failure,
+                           framework_run_id=None)
+        outcome = outcome or dict(outcome='incomplete', reason=stop_text(finished))
         if outcome['outcome'] == 'handoff_analysis':
             self.scanner_outcome, self.framework_run_id, self.record = outcome, outcome['framework_run_id'], tools.record
             self.analysis = self.analysis_outcome = None  # A new scan needs a new analysis.

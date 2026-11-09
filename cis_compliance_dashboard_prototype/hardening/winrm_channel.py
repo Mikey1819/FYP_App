@@ -6,6 +6,7 @@ string-built commands or model text). Credentials stay in the caller's memory.
 """
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
@@ -31,6 +32,38 @@ $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.
     is_admin = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 } | ConvertTo-Json -Compress
 '''
+
+
+# The server's clock, read and set over the same checked connection. Scans and fix evidence carry the server's time,
+# and evidence more than 5 minutes off this laptop's clock is refused, so the clocks must match before a round starts.
+MAX_CLOCK_OFFSET_SECONDS = 30  # As on Ubuntu (backends/ubuntu/adapter.py).
+CLOCK_FORMAT = "'yyyy-MM-ddTHH:mm:ss.fffZ', [Globalization.CultureInfo]::InvariantCulture"
+CLOCK_SCRIPT = "[DateTime]::UtcNow.ToString(" + CLOCK_FORMAT + ")"
+SET_CLOCK_SCRIPT = r'''
+param([Parameter(Mandatory)][string]$LaptopUtc)
+$styles = [Globalization.DateTimeStyles]::AdjustToUniversal -bor [Globalization.DateTimeStyles]::AssumeUniversal
+$wanted = [DateTime]::Parse($LaptopUtc, [Globalization.CultureInfo]::InvariantCulture, $styles)
+$before = [DateTime]::UtcNow
+Set-Date -Date $wanted.ToLocalTime() | Out-Null
+[ordered]@{
+    before = $before.ToString(''' + CLOCK_FORMAT + r''')
+    after = [DateTime]::UtcNow.ToString(''' + CLOCK_FORMAT + r''')
+} | ConvertTo-Json -Compress
+'''
+
+
+def _utc_text(value):
+    return value.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.') + f'{value.microsecond // 1000:03d}Z'
+
+
+def _server_time(text):
+    """A time the server reported, checked for its exact shape before it is read."""
+    if type(text) is not str or len(text) != 24 or not text.endswith('Z'):
+        raise ChannelError('channel_error', 'The server returned its clock in an unexpected form.')
+    try:
+        return datetime.fromisoformat(text[:-1]).replace(tzinfo=timezone.utc)
+    except ValueError:
+        raise ChannelError('channel_error', 'The server returned an unreadable clock.') from None
 
 
 class ChannelError(Exception):
@@ -256,6 +289,38 @@ class LiveScanner:
                                + str(self.target.port) + ' (' + found['hostname'] + '), not the saved server.')
         return found
 
+    def clock_offset(self):
+        """How far the server's clock is from this laptop's, in seconds (positive: the server is ahead). Read-only,
+        after the identity check; measured against the middle of the call, so the network delay does not count."""
+        with self.batch():
+            self.identity()
+            sent = datetime.now(timezone.utc)
+            output, had_errors, _ = self._run(CLOCK_SCRIPT)
+            received = datetime.now(timezone.utc)
+        if had_errors or len(output) != 1:
+            raise ChannelError('channel_error', 'The server did not report its clock.')
+        server = _server_time(output[0])
+        laptop = sent + (received - sent) / 2
+        return dict(server=server, laptop=laptop, offset=(server - laptop).total_seconds())
+
+    def set_clock(self):
+        """Set the server's clock to this laptop's time (UTC), after the identity check. Changes only the clock.
+        Returns the server's time before and after, as it reported them."""
+        with self.batch():
+            self.identity()
+            output, had_errors, errors = self._run(SET_CLOCK_SCRIPT,
+                                                   {'LaptopUtc': _utc_text(datetime.now(timezone.utc))})
+        if had_errors or len(output) != 1:
+            raise ChannelError('clock_not_set', ((errors[0] if errors else '') or
+                                                 'The server did not confirm the new time.')[:300])
+        try:
+            reported = json.loads(output[0])
+        except json.JSONDecodeError:
+            raise ChannelError('channel_error', 'The server confirmed the new time in an unexpected form.') from None
+        if type(reported) is not dict or set(reported) != {'before', 'after'}:
+            raise ChannelError('channel_error', 'The server confirmed the new time in an unexpected form.')
+        return dict(before=_server_time(reported['before']), after=_server_time(reported['after']))
+
     def worker_status(self, hostname, machine_uuid):
         """Read-only readiness check; never evidence of any setting."""
         try:
@@ -294,9 +359,16 @@ class LiveScanner:
         collector_sha256 = hashlib.sha256(COLLECTOR.read_bytes()).hexdigest()
         output = [self._collect()]
         request_id = uuid4().hex
-        run = self.runtime.start(output[0].encode('utf-8'), expected_hostname=self.target.hostname,
-                                 expected_machine_uuid=self.target.machine_uuid, collection_request_id=request_id,
-                                 mode=EvidenceMode.LIVE)
+        try:
+            run = self.runtime.start(output[0].encode('utf-8'), expected_hostname=self.target.hostname,
+                                     expected_machine_uuid=self.target.machine_uuid, collection_request_id=request_id,
+                                     mode=EvidenceMode.LIVE)
+        except ValueError as exc:  # A scan the checks refused is a failed collection, not a mistake by the agent.
+            if 'in the future' in str(exc):
+                raise ChannelError('clock_mismatch', 'The server clock is more than 5 minutes ahead of this laptop, so '
+                                   'its scan was refused. Use Sync server clock on the Agentic hardening page, then '
+                                   'start again.') from None
+            raise ChannelError('evidence_refused', 'The scan failed validation: ' + str(exc)[:200]) from None
         return dict(request_id=request_id, state='assessment_ready', channel=self.channel,
                     framework_run_id=run.run_id, evidence_sha256=run.evidence_sha256,
                     target_id=run.target_id, collector_sha256=collector_sha256, origin_run_id=origin_run_id)

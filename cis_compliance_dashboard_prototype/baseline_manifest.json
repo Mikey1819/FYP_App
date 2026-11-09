@@ -18,7 +18,7 @@
       "category": "metadata"
     },
     "PROGRESS.md": {
-      "sha256": "73db0081d292d0eb1e566de6228100a63e6a1da6e014dfa0b9f76e0bdb46b165",
+      "sha256": "03344de16f3dc30df86707115c00c5ddc9cfd5f33e9210e7299c89e1a22ea251",
       "category": "metadata"
     },
     "README.md": {
@@ -46,11 +46,11 @@
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/agentic.py": {
-      "sha256": "0286ee11c56d2bccf0503ae97c4945e23d19e9a4452d59f6ca0daf2dbf235941",
+      "sha256": "484f985f4b406e8b785fdd3f66b308ab37a7cfe86b57346c01971400b6848d7c",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/agentic_view.py": {
-      "sha256": "65d93d06d7ada1e0fa9a4769b69f462e51213ad156043971c08c70fe2ddf297b",
+      "sha256": "5cd8f2b4b56e69446fc2e96b8387cffea944b5e3dbc93d347972c60646657b23",
       "category": "authorized_ui"
     },
     "cis_compliance_dashboard_prototype/hardening/connection_view.py": {
@@ -146,7 +146,7 @@
       "category": "authorized_ui"
     },
     "cis_compliance_dashboard_prototype/hardening/winrm_channel.py": {
-      "sha256": "ee8ce3708e591dc261db89727e14a7444309946ccfac6755c9f48da5532a966f",
+      "sha256": "d058ecc57fe8dae6510985ea44b8db882a9e27764cd3d645391dd5ba1838d548",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/launch.py": {
@@ -170,11 +170,11 @@
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/tests/test_agentic.py": {
-      "sha256": "17f688dfe879b0e13c350cc3a59c16a3a3224adc394324e538a966f329132e5b",
+      "sha256": "88dac63a51559cb407131b23d90a2ddb46914f3f123af26f4d541767b5cbdc3f",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/tests/test_agentic_view.py": {
-      "sha256": "a16ed0105b9e274c30ab4e77884b90fe73b1a1f9984463511bbd587a79aa07b9",
+      "sha256": "a1d4a41a7a5003b5ec32cb0c84f392ce40d088bc3979bad8e03ad799df08f6fc",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/tests/test_app_navigation.py": {
@@ -250,7 +250,7 @@
       "sha256": "5ff3b8148610ac0c8609344e29b643350f6dd5a7e03a90c3f80789091cf9393d"
     },
     "cis_compliance_dashboard_prototype/tests/test_winrm_channel.py": {
-      "sha256": "9307a36f397ff757b853108c311c07b08f3920770e3b9ecd859611279434d107",
+      "sha256": "28821c7d079c4b6686c4e7881768a0e525500391905ddc27f3d52b09f40d9bf0",
       "category": "protected"
     },
     "docs/archive/ADMIN_GOALS_DESIGN.md": {

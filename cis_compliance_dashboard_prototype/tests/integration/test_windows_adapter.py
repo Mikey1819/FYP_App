@@ -48,6 +48,32 @@ class WindowsAdapterTests(unittest.TestCase):
             self.assertEqual(other_epoch.history(), ())
             self.assertFalse(other_epoch.compare(snapshot.summary.reference,snapshot.summary.reference).comparable)
 
+    def test_clock_sync_is_a_recorded_change_that_then_lets_a_scan_through(self):
+        import json
+        from datetime import timedelta
+        from backends.windows.adapter import WindowsBackend
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder); vm=FakeVm(); t=target()
+            vm.clock_ahead=timedelta(minutes=7)
+            session=VerifiedSession('connection',VerifiedIdentity('windows',t.hostname,t.machine_uuid,'Server 2022','winrm'),
+                                    'windows:'+t.machine_uuid,'epoch',t.username,t.host,t.port,None,t)
+            ledger=CoordinationLedger(path/'integration.db')
+            backend=WindowsBackend(path/'windows'/'imports.sqlite3',session=session,ledger=ledger,
+                scanner_factory=lambda runtime,t:LiveScanner(runtime,t,session_factory=vm))
+            self.assertAlmostEqual(backend.clock_offset('connection')['offset'],420,delta=2)
+            with self.assertRaises(ValueError):backend.clock_offset('wrong')
+            result=backend.sync_clock('connection',None,'sync-1')
+            self.assertAlmostEqual((result['before']-result['after']).total_seconds(),420,delta=2)
+            state=ledger.operation_state('sync-1')
+            self.assertEqual(state.state,'completed')
+            record=json.loads(state.detail)
+            self.assertEqual(record['account'],t.username)
+            self.assertEqual(set(record),{'account','server_before','server_after'})
+            self.assertAlmostEqual(backend.clock_offset('connection')['offset'],0,delta=2)
+            handle=backend.start_round('connection',None,None,AssessmentMode.DETERMINISTIC,'scan-after-sync')
+            self.assertEqual(handle.state,'completed')  # The scan now passes the time check.
+            self.assertEqual(vm.writes,[])
+
     def test_round_goal_is_refused_before_any_scan(self):
         from backends.windows.adapter import WindowsBackend
         with tempfile.TemporaryDirectory() as folder:
