@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from hardening.action_library import LIBRARY
 from hardening.agentic import (ANALYSIS, ATTENTION, ORCHESTRATOR, PROMPTS, REMEDIATION, REVIEW_PROMPT, SCANNER,
@@ -618,7 +619,7 @@ class OrchestratorAccountabilityTests(AgenticTestCase):
         result = hardening.run_round()
         self.assertEqual(self.rejected(hardening, result['round_id']), [])
         self.assertEqual(result['outcome']['outcome'], 'no_fix_proposed')
-        self.assertIn('Ignored skip entries for controls with nothing to decide: 1.2.1.', result['outcome']['reason'])
+        self.assertIn('Left out of the plan (nothing to decide for them): 1.2.1.', result['outcome']['reason'])
         self.assertNotIn('1.2.1', [s['control_id'] for s in result['outcome']['skipped']])
 
     def test_an_agent_that_answers_without_a_tool_call_gets_one_reminder(self):
@@ -778,6 +779,61 @@ class AnalysisAgentTests(AgenticTestCase):
         self.assertEqual(stored['analysis_outcome']['outcome'], 'incomplete')
         self.assertEqual(result['outcome']['outcome'], 'awaiting_approval')  # Deterministic ranking still available.
         self.assertEqual(self.store.for_run(result['framework_run_id'])[0]['proposal']['risk_score'], 69)
+
+    def test_triage_of_findings_when_there_are_no_gaps_is_dropped_not_fatal(self):
+        # 9 November, real server: with no Unknown/Error gaps, qwen3:8b also put its manual-fix findings under
+        # gap_triage; the whole decision was refused twice and the agent stopped. That entry changes nothing, so it is
+        # now dropped and noted, and the form offers no gap entries when there are none.
+        t = 'windows:' + target().machine_uuid
+        offered = []
+
+        class Recording(MockClient):
+            def chat(self, messages, tools, *, timeout):
+                offered.extend(s['function'] for s in tools if s['function']['name'] == 'submit_analysis')
+                return super().chat(messages, tools, timeout=timeout)
+        analysis = [call('score_findings', t),
+                    call('submit_analysis', t, manual_fix_needed=['9.3.1'],
+                         gap_triage=[dict(control_id='9.3.1', triage_code='manual_review')])]
+        vm = FakeVm(state={**LAB_STATE, '1.2.1': 30, '1.2.4': 30})  # No gaps in this scan.
+        hardening = self.hardening(vm, [call('delegate_scanner', t), call('delegate_analysis', t),
+                                        plan(t, skipped=DEFER_ALL)], analysis=Recording(analysis))
+        result = hardening.run_round()
+        self.assertEqual(self.rejected(hardening, result['round_id'], ANALYSIS), [])
+        stored = self.store.rounds(result['session_id'])[0]['analysis_outcome']
+        self.assertEqual(stored['outcome'], 'analysis_complete')
+        self.assertEqual([a['control_id'] for a in stored['attention']], ['9.3.1'])
+        self.assertEqual((stored['gap_triage'], stored['discarded_triage']), ([], ['9.3.1']))
+        self.assertIn('Gap triage for controls that are not gaps was discarded: 9.3.1.', stored['reason'])
+        self.assertEqual(offered[-1]['parameters']['properties']['gap_triage']['maxItems'], 0)
+
+    def test_when_nothing_has_a_fix_any_plan_entry_is_left_out_not_refused(self):
+        # Probe of 9 November (no-gap state): with only controls this program does not fix, qwen3:8b sometimes
+        # "fixes" them. Nothing can change, so the entries are left out and noted and the round ends cleanly.
+        t = 'windows:' + target().machine_uuid
+        state = dict(LAB_STATE)
+        state.update({a.control_id: a.target_value for a in LIBRARY.values()})
+        state.update({'1.2.1': 30, '1.2.4': 30, '9.3.1': None})
+        hardening = self.hardening(FakeVm(state=state), [call('delegate_scanner', t), call('delegate_analysis', t),
+                                                         call('submit_plan', t, decisions=[
+                                                             dict(control_id='9.3.1', decision='fix',
+                                                                  action_id='REM-9.3.1', reason_code='high_risk')])])
+        result = hardening.run_round()
+        self.assertEqual(self.rejected(hardening, result['round_id']), [])
+        self.assertEqual(result['outcome']['outcome'], 'no_fix_proposed')
+        self.assertIn('Left out of the plan (nothing to decide for them): 9.3.1.', result['outcome']['reason'])
+        self.assertEqual(self.store.for_run(result['framework_run_id']), [])
+
+    def test_gap_triage_may_be_left_out_when_there_are_no_gaps_but_never_when_there_are(self):
+        t = 'windows:' + target().machine_uuid
+        for state, rejected in (({**LAB_STATE, '1.2.1': 30, '1.2.4': 30}, []),
+                                (LAB_STATE, ['Every gap needs a triage_code; missing: 1.2.1, 1.2.4'])):
+            with self.subTest(gaps=state is LAB_STATE):
+                analysis = [call('score_findings', t), call('submit_analysis', t, manual_fix_needed=['9.3.1']),
+                            call('submit_analysis', t, manual_fix_needed=['9.3.1'])]
+                hardening = self.hardening(FakeVm(state=state), [call('delegate_scanner', t),
+                                           call('delegate_analysis', t), plan(t, skipped=DEFER_ALL)], analysis=analysis)
+                result = hardening.run_round()
+                self.assertEqual(self.rejected(hardening, result['round_id'], ANALYSIS)[:1], rejected)
 
     def test_investigation_is_bounded_so_the_agent_must_decide(self):
         t = 'windows:' + target().machine_uuid

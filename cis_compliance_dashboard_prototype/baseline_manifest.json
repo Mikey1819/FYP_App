@@ -18,7 +18,7 @@
       "category": "metadata"
     },
     "PROGRESS.md": {
-      "sha256": "f56f2cbcdca266a51df1331995bdbfd99fbb651edf15929eb25129053c7c9151",
+      "sha256": "d58bdbc95e7cb130418b4f281cc44b00bc62311e60d7e29b35bf92f5b2093569",
       "category": "metadata"
     },
     "README.md": {
@@ -46,7 +46,7 @@
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/agentic.py": {
-      "sha256": "97781baa932cbecae33b09bef5c53a6880f516ca108cc1b2853c9bb403edc8bb",
+      "sha256": "d3582f37f19734350634256b7ccce6d68d75d439fb185313724a6a6dccf27c89",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/agentic_view.py": {
@@ -170,7 +170,7 @@
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/tests/test_agentic.py": {
-      "sha256": "1df17505b67e98ddf940fd2121f19fb0b156f345be78f42b1d489c82204ba539",
+      "sha256": "bf8fea6d8f0fd1b9ea7cc37e885259ee7c77cd337dd75145217f1d2923afa360",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/tests/test_agentic_view.py": {
