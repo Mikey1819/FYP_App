@@ -518,7 +518,7 @@ function Invoke-RemoteAction([string]$Name, [string]$Id) {
 # ---------------------------------------------------------------------------------------------------------------
 $Remarks = @(
     'Run this on the server you want checked, not on the laptop.',
-    'Start pairing shows a one-time code. Type it into the dashboard on the laptop (Servers > Add a server).',
+    'Start pairing shows a one-time code. Type or paste it (Copy code) into the dashboard on the laptop: Servers > Add a server.',
     'Only laptops that typed the right code can reach WinRM here; the dashboard lists them and can disconnect them.',
     'This helper never changes a CIS setting, never enables Basic login or unencrypted WinRM, never sees a password.',
     'Click Revert changes when you have finished checking this server.'
@@ -548,9 +548,17 @@ function New-HelperForm {
     $script:Timer = New-Object Windows.Forms.Timer -Property @{ Interval = 250 }
     $script:Log = { param([string[]]$Lines) if ($Lines.Count) {
         $script:LogBox.AppendText((@("[$(Get-Date -Format 'HH:mm:ss')]") + $Lines + '') -join "`r`n") } }
+    $script:CopyButton = $null
+    $script:CopiedCode = $null
     $script:StopPairing = {
         $script:Timer.Stop(); Stop-PairingListener $script:Listener; $script:Listener = $null; $script:CodeLabel.Text = ''
         if ($script:PairButton) { $script:PairButton.Text = 'Start pairing' }  # The same button starts it again.
+        if ($script:CopyButton) { $script:CopyButton.Enabled = $false }
+        # A copied code that no longer works is taken off the clipboard (only if the clipboard still holds it).
+        if ($script:CopiedCode) {
+            try { if ([Windows.Forms.Clipboard]::GetText() -ceq $script:CopiedCode) { [Windows.Forms.Clipboard]::Clear() } } catch { }
+            $script:CopiedCode = $null
+        }
     }
     $script:Timer.Add_Tick({
         if (-not $script:Listener) { $script:Timer.Stop(); return }  # Pairing was stopped; nothing to listen to.
@@ -571,8 +579,16 @@ function New-HelperForm {
             $script:Listener = Start-PairingListener
             $script:Timer.Start()
             $script:PairButton.Text = 'Stop pairing'  # While a code is shown, this button withdraws it.
+            $script:CopyButton.Enabled = $true
             return @($script:Listener.done) + "Waiting for a laptop on UDP $PairingPort (local network only). The code works once, for $CodeMinutes minutes." } },
-        @{ Text = 'Revert changes'; X = 328; Run = {
+        @{ Text = 'Copy code'; X = 328; Run = {
+            if (-not $script:Listener -or $script:Listener.session.done) { return @('No code to copy: click Start pairing first.') }
+            # The 9 digits only; the dashboard accepts them with or without the dashes.
+            [Windows.Forms.Clipboard]::SetText($script:Listener.session.code)
+            $script:CopiedCode = $script:Listener.session.code
+            return @('Code copied. On the laptop, paste it into the dashboard (Servers > Add a server) with Ctrl+V.',
+                     'From a VM, the laptop can paste it only if the VM shares its clipboard (VirtualBox: Devices > Shared Clipboard > Bidirectional).') } },
+        @{ Text = 'Revert changes'; X = 486; Run = {
             $answer = [Windows.Forms.MessageBox]::Show('Undo everything this helper changed on this server, and disconnect every paired laptop?',
                 'Revert', 'YesNo', 'Question')
             if ($answer -eq 'Yes') { if ($script:Listener) { & $script:StopPairing }; Invoke-Revert } } })
@@ -590,6 +606,7 @@ function New-HelperForm {
             & $script:Log $lines
         })
         if ($spec.Text -eq 'Start pairing') { $script:PairButton = $button }
+        if ($spec.Text -eq 'Copy code') { $script:CopyButton = $button; $button.Enabled = $false }  # Until a code is shown.
         $form.Controls.Add($button)
     }
     $form.Add_Shown({ & $script:Log @(Get-StatusLines) })

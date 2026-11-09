@@ -18,7 +18,7 @@
       "category": "metadata"
     },
     "PROGRESS.md": {
-      "sha256": "d58bdbc95e7cb130418b4f281cc44b00bc62311e60d7e29b35bf92f5b2093569",
+      "sha256": "d0976ae221a294bac2c17f6833c5f562f093182a432ac1ae5bd6609965917d43",
       "category": "metadata"
     },
     "README.md": {
@@ -34,7 +34,7 @@
       "category": "metadata"
     },
     "cis_compliance_dashboard_prototype/app.py": {
-      "sha256": "b68217fcc635a1066504235728f302d74bcf30732622d90a777688613c53239f",
+      "sha256": "b6c3c786532d5636037b5d868fe869b4c3d6df33fe849b3218b1820e11fab9ed",
       "category": "authorized_ui"
     },
     "cis_compliance_dashboard_prototype/hardening/__init__.py": {
@@ -50,7 +50,7 @@
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/agentic_view.py": {
-      "sha256": "15b2692e6e254bc8aa9492e680ffa7674f785b23669cc16f76550f9d8c80942e",
+      "sha256": "fd22fb703adce59c761862aafe7a42b12c1b1b69e4715f2383810b17069ed69f",
       "category": "authorized_ui"
     },
     "cis_compliance_dashboard_prototype/hardening/connection_view.py": {
@@ -135,7 +135,7 @@
     },
     "cis_compliance_dashboard_prototype/hardening/servers_view.py": {
       "category": "protected",
-      "sha256": "4823be89247d0e93b7c03dcdeabf3c638d542ba3a652916bba3d3ab6217bfea9"
+      "sha256": "57654821541d565e9b0f94128e1466d453f040d8408bad7c0bb2fbbfce5aab5b"
     },
     "cis_compliance_dashboard_prototype/hardening/system_detect.py": {
       "category": "protected",
@@ -146,7 +146,7 @@
       "category": "authorized_ui"
     },
     "cis_compliance_dashboard_prototype/hardening/winrm_channel.py": {
-      "sha256": "d058ecc57fe8dae6510985ea44b8db882a9e27764cd3d645391dd5ba1838d548",
+      "sha256": "f27c68dd5622e08d9e399f38233a2fe1e438b1d15f6a16cfadc514c5d52e746e",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/launch.py": {
@@ -174,7 +174,7 @@
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/tests/test_agentic_view.py": {
-      "sha256": "8e64fba86d508b80c956b319f1d060177936c1c3012004a3f77055488c4f51e5",
+      "sha256": "e129c6f69373533bebc70647a1f26fd155c71f1749e8305bb0ec4fc838f6c5b7",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/tests/test_app_navigation.py": {
@@ -227,7 +227,7 @@
     },
     "cis_compliance_dashboard_prototype/tests/test_pairing_flow.py": {
       "category": "protected",
-      "sha256": "f89aed9c465f200547dc21490ca9c905fd514bcd74a31890a50c2f15ec17e6af"
+      "sha256": "262a34657c418be07a2cc7f9f046cb4bc34f53b2aa4b3fdb38a632046a35f34b"
     },
     "cis_compliance_dashboard_prototype/tests/test_round_report.py": {
       "sha256": "17cb24d6e0dcec411892b7ec5431820e85145ac855ce55d0de73f1f12e2c272f",
@@ -239,7 +239,7 @@
     },
     "cis_compliance_dashboard_prototype/tests/test_servers.py": {
       "category": "protected",
-      "sha256": "1a4fc5da3d083bbc0ab6a00de15503e89e8254ef1a7ad2234f414a6859a286dc"
+      "sha256": "10ca8e8fe6e4884e020f1aada4314658f49854c0913f3e7b127a376b3403cf96"
     },
     "cis_compliance_dashboard_prototype/tests/test_show_database.py": {
       "sha256": "390d626d3622aabbe2569dee78a33bcf024f111a1c85d2ecce3dae50ab4ea577",
@@ -250,7 +250,7 @@
       "sha256": "5ff3b8148610ac0c8609344e29b643350f6dd5a7e03a90c3f80789091cf9393d"
     },
     "cis_compliance_dashboard_prototype/tests/test_winrm_channel.py": {
-      "sha256": "28821c7d079c4b6686c4e7881768a0e525500391905ddc27f3d52b09f40d9bf0",
+      "sha256": "2c66cf1b04291cd2bc70a84d416bcf04f69a198453b4525f9bca13099cd0b5b9",
       "category": "protected"
     },
     "docs/archive/ADMIN_GOALS_DESIGN.md": {
@@ -370,11 +370,11 @@
       "category": "protected"
     },
     "scripts/server_access/FYP-ServerAccess-README.txt": {
-      "sha256": "c0bd36357f053d7101a39bdd3b05e929cf190242130d7abcc3a34225e2e91072",
+      "sha256": "7090325d37ccdf163a7dc1a018b306b069099bc3c91d126e6b1ad90a9a6c9b26",
       "category": "protected"
     },
     "scripts/server_access/FYP-ServerAccess.ps1": {
-      "sha256": "fe821134ca290d0524a35a0ef50b737fdb880a94b1845310707f9a186a10b8be",
+      "sha256": "58e379067fa2a8c1fd341c78341cff964fa7e6612101964119901248160b6325",
       "category": "protected"
     },
     "scripts/server_access/Start-ServerAccess.cmd": {
@@ -386,7 +386,7 @@
       "sha256": "bfea2ffa963d445a04594fb033d0cdaebb872543b48223a64a287a272bdb9563"
     },
     "scripts/server_access/test_server_access.ps1": {
-      "sha256": "70c352207ba9378c3af249f46c5e2c90fbf0da0648bd6bf606c4c3dfcf5c8888",
+      "sha256": "0370bfe5acace0a20d267f8cae4c64c0e4a782f8893c4c5637428ea9f68f149c",
       "category": "protected"
     },
     "scripts/tools/cross_check_controls.py": {
@@ -418,7 +418,7 @@
       "category": "protected"
     },
     "scripts/vm/Invoke-RemediationAction.ps1": {
-      "sha256": "5abe897b2adf9907ab4063d5e0dd61f331a3ae659e80d4734c7c4cfad4a30bf5",
+      "sha256": "02d98af17f6f4ec869737c4e4293f0f1c8f55057945d5ce24ccf92b9d9a7fe2a",
       "category": "protected"
     },
     "scripts/vm/test_collector_helpers.ps1": {

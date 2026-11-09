@@ -113,7 +113,9 @@ class UnattemptedFixTests(unittest.TestCase):
         # Five approved fixes; the store and the engine are simulated, the ledger and the backend are real.
         self.records = {f'r{n}': dict(proposal=dict(request_id=f'r{n}'), decision='approved', verdict=None)
                         for n in range(5)}
-        real = self.backend.store
+        real = self.real_store = self.backend.store
+        self.scanner, self.session_id = self.backend.engine.scanner, handle.binding.backend_session_id
+        self.run_id = real.rounds(self.session_id)[-1]['framework_run_id']
         self.backend.store = SimpleNamespace(rounds=real.rounds, for_run=lambda run_id: list(self.records.values()),
                                              get=lambda identifier: self.records[identifier])
         self.outcomes = []
@@ -137,6 +139,38 @@ class UnattemptedFixTests(unittest.TestCase):
         self.assertEqual(self.execute(tuple(self.records), 'exec-1').state, 'unresolved')
         with self.assertRaisesRegex(ValueError, 'unresolved operation'):
             self.execute(('r1', 'r2', 'r3', 'r4'), 'exec-2')
+
+    def uncertain_then_rescan(self, *, approved_read):
+        """Live 9 Nov: 1.1.1 was written, but the runner's own after-check failed (verification_unavailable). The
+        verification rescan after it read the approved value. Returns what that rescan read."""
+        rescan = self.scanner.request(self.backend.session.identity.hostname,
+                                      self.backend.session.identity.machine_identity)['framework_run_id']
+        result = next(r for r in self.backend.runtime.record(rescan).assessment.results if type(r.evidence.value) is int)
+        read = result.evidence.value
+        proposal = dict(request_id='r0', control_id=result.control.control_id,
+                        value=read if approved_read else read + 100, expected_before=read + 1)
+        self.records['r0'] = dict(self.records['r0'], proposal=proposal)
+        verdict = 'Unresolved: verification_unavailable'
+        self.outcomes = [{'r0': dict(self.records['r0'], verdict=verdict)}]
+        self.assertEqual(self.execute(tuple(self.records), 'exec-1').state, 'unresolved')
+        self.real_store.add_round(self.session_id, 'verification_scan', rescan, remediated_run_id=self.run_id,
+                                  verdicts=[dict(proposal_id='r0', control_id=proposal['control_id'], verdict=verdict)],
+                                  outcome={'outcome': 'remediation_review'})
+        return result.control.control_id, read
+
+    def test_an_uncertain_fix_the_verification_rescan_saw_applied_is_settled(self):
+        control, read = self.uncertain_then_rescan(approved_read=True)
+        self.outcomes = [{n: dict(self.records[n], verdict='Verified compliant') for n in ('r1', 'r2', 'r3', 'r4')}]
+        self.assertEqual(self.execute(('r1', 'r2', 'r3', 'r4'), 'exec-2').state, 'completed')
+        settled = self.ledger.operation_state('exec-1')
+        self.assertEqual(settled.state, 'completed')
+        self.assertIn(f'{control} applied (the rescan read {read!r})', settled.detail)
+
+    def test_an_uncertain_fix_the_rescan_cannot_explain_still_locks(self):
+        self.uncertain_then_rescan(approved_read=False)  # Neither the approved value nor the one from before.
+        with self.assertRaisesRegex(ValueError, 'unresolved operation'):
+            self.execute(('r1', 'r2', 'r3', 'r4'), 'exec-2')
+        self.assertEqual(self.ledger.operation_state('exec-1').state, 'unresolved')
 
     def test_an_execute_already_locked_by_unattempted_fixes_is_settled_from_the_records(self):
         # The state the live ledger was left in before this fix: unresolved with no detail, no uncertain verdict.

@@ -230,14 +230,19 @@ class AgenticPageTests(unittest.TestCase):
         self.assertEqual(text.count('Compliant now'), 3)  # Listed, never hidden or shown as Not applicable.
         self.assertEqual([b.key for b in app.button if b.key.startswith('agentic_manual_')],
                          ['agentic_manual_fix_9.3.1', 'agentic_manual_exception_9.3.1'])
-        self.assertTrue(app.button(key='agentic_manual_fix_9.3.1').disabled)  # The name comes first.
+        # The name comes first: a click without it records nothing and says why.
+        app.button(key='agentic_manual_fix_9.3.1').click().run()
+        self.assertTrue(any('Your name is recorded' in e.value for e in app.error))
+        self.assertIn('need your choice in **Fixes**', ' '.join(m.value for m in app.markdown))
         steps = ' '.join(m.value.replace('\\', '') for e in app.expander if e.label == 'How to fix it on the server'
                          for m in e.markdown)
         self.assertIn('Press Win+R, type gpedit.msc and press Enter.', steps)
 
         app.text_input(key='agentic_operator').input('admin01').run()
         app.button(key='agentic_manual_exception_9.3.1').click().run()
-        self.assertTrue(app.button(key='agentic_manual_accept_9.3.1').disabled)  # An exception needs a reason.
+        app.button(key='agentic_manual_accept_9.3.1').click().run()  # An exception needs a reason.
+        self.assertTrue(any('An exception needs a reason' in e.value for e in app.error))
+        app.button(key='agentic_manual_exception_9.3.1').click().run()
         app.text_input(key='agentic_manual_reason_9.3.1').input('Firewall run by the network team').run()
         app.button(key='agentic_manual_accept_9.3.1').click().run()
         self.assertEqual(len(app.exception), 0, [e.value for e in app.exception])
@@ -254,6 +259,23 @@ class AgenticPageTests(unittest.TestCase):
         rows = {r['Control']: r for frame in app.dataframe for r in frame.value.to_dict('records')
                 if 'Fix' in r and 'Area' in r}
         self.assertEqual((rows['9.3.1']['Fix'], rows['1.1.1']['Fix']), ('Manual: not automated', 'Program fix'))
+
+    def test_typing_a_name_and_clicking_approve_works_in_one_click(self):
+        # Streamlit commits typed text when the field loses focus, which a click on a button does. A button that
+        # stayed disabled until then needed a second click; now the first click carries the name with it.
+        app = self._start_round()
+        approve = [b for b in app.button if b.key.startswith('agentic_approve_') and b.key != 'agentic_approve_all']
+        self.assertFalse(approve[0].disabled)
+        approve[0].click().run()  # No name yet: nothing is decided, and the page says what to type.
+        self.assertEqual([w.value for w in app.warning], ['Type your name first: it is recorded with each decision.'])
+        self.assertEqual(len([b for b in app.button if b.key.startswith('agentic_approve_')
+                              and b.key != 'agentic_approve_all']), 2)
+        app.text_input(key='agentic_operator').set_value('admin01')
+        approve = [b for b in app.button if b.key.startswith('agentic_approve_') and b.key != 'agentic_approve_all']
+        approve[0].click().run()  # Typed and clicked in one go.
+        self.assertEqual(len([b for b in app.button if b.key.startswith('agentic_approve_')
+                              and b.key != 'agentic_approve_all']), 1)
+        self.assertTrue(any('by admin01' in c.value for c in app.caption))
 
     def test_page_without_connection_asks_to_connect(self):
         app = AppTest.from_function(agentic_page, default_timeout=30).run()

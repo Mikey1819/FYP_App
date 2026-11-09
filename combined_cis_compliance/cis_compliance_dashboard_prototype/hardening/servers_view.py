@@ -59,14 +59,15 @@ HINTS = {
     'disconnected': '',
     'connection_failed': 'Check the server is on and on the same network. If its address changed, start pairing on '
                          'the server and use Re-pair below.',
-    'verification_failed': 'If the server got a new address, or was reinstalled, start pairing on the server and use '
-                           'Re-pair below.',
+    'verification_failed': 'If the server got a new address, start pairing on the server and use Re-pair below.',
     'pending_change_elsewhere': '',
     'auth_failed': 'Check the account and password. On Ubuntu the account is the Linux user of the server, the name '
                    'before @ in its terminal prompt.',
     'unreachable': 'Check the server is on. Its address may have changed (pair again and use Re-pair below); on Windows, '
                    'access may have been reverted in the helper; on Ubuntu, check that the SSH service runs '
                    '(systemctl status ssh).',
+    'slow_reply': 'The server is reachable but slow. Give it a minute (a VM may still be starting or short of memory), '
+                  'then connect again.',
 }
 
 
@@ -113,7 +114,7 @@ def _open(platform, host, port, hostname, identity, username, *, password=None, 
         return None
     result = service.connect(request, paired=paired)
     if result.state != 'connected':
-        hint = HINTS.get(result.diagnostic_code, '')
+        hint = result.remedy or HINTS.get(result.diagnostic_code, '')
         st.error(f'Not connected ({result.diagnostic_code}): {md_escape(result.detail)} {md_escape(hint)}')
         return None
     session = service.session(result.connection_session_id)
@@ -176,9 +177,11 @@ def _show_saved(registry, saved, connected, busy=False):
                     password = st.text_input(f'Password for {chosen.username}', type='password', key='servers_password')
                 else:
                     st.caption('SSH key file: ' + md_escape(chosen.key_path))
-                if st.button('Connect', key='servers_connect', type='primary', icon=':material/lan:',
-                             disabled=chosen.auth == 'password' and not password):
-                    _connect(registry, chosen, password, st.session_state.get('servers_sudo'))
+                connect = st.button('Connect', key='servers_connect', type='primary', icon=':material/lan:')
+            if connect and chosen.auth == 'password' and not password:
+                st.warning('Type the password first.')
+            elif connect:
+                _connect(registry, chosen, password, st.session_state.get('servers_sudo'))
             if chosen.platform == 'ubuntu':
                 with st.expander('Separate sudo password (optional)'):
                     st.text_input('Sudo password', type='password', key='servers_sudo',
@@ -198,13 +201,15 @@ def _show_saved(registry, saved, connected, busy=False):
                        'is accepted.')
             with st.container(horizontal=True, vertical_alignment='bottom'):
                 code = st.text_input('Pairing code', key='servers_repair_code', placeholder='482-913-075')
-                if st.button('Find', key='servers_repair', disabled=not code.strip() or connected is not None,
-                             icon=':material/wifi_find:'):
-                    _find(code, expected=chosen.key, username=chosen.username)
+                find = st.button('Find', key='servers_repair', disabled=connected is not None, icon=':material/wifi_find:')
+            if find and not code.strip():
+                st.warning('Type the pairing code shown on the server.')
+            elif find:
+                _find(code, expected=chosen.key, username=chosen.username)
         with st.container(horizontal=True, vertical_alignment='bottom'):
             note = st.text_input('Note (only on this laptop)', value=chosen.note, max_chars=MAX_NOTE,
                                  key='servers_note_' + chosen.key)
-            if st.button('Save note', key='servers_note_save', disabled=note.strip() == chosen.note):
+            if st.button('Save note', key='servers_note_save'):
                 registry.set_note(chosen.platform, chosen.machine_identity, note)
                 st.rerun()
             locked = busy and is_connected
@@ -352,13 +357,15 @@ def _show_pending(registry, connected):
             'Note (optional, only on this laptop)', max_chars=MAX_NOTE, key='servers_pair_note',
             placeholder='For example: finance server, room 3')
         with st.container(horizontal=True):
-            if st.button('Log in and save', key='servers_pair_finish', type='primary',
-                         disabled=not ((password or (key_path or '').strip()) and username.strip()),
-                         icon=':material/link:'):
-                _finish_pairing(registry, pending, username, password, (key_path or '').strip() or None, sudo, note)
+            finish = st.button('Log in and save', key='servers_pair_finish', type='primary', icon=':material/link:')
             if st.button('Cancel', key='servers_pair_cancel'):
                 st.session_state.pop(PENDING, None)
                 st.rerun()
+        if finish and not ((password or (key_path or '').strip()) and username.strip()):
+            st.warning('Type the account and its password' + ('' if found.platform == 'windows' else
+                                                              ' (or the SSH key file)') + ' first.')
+        elif finish:
+            _finish_pairing(registry, pending, username, password, (key_path or '').strip() or None, sudo, note)
 
 
 def _show_add_by_code(connected):
@@ -368,9 +375,11 @@ def _show_add_by_code(connected):
                'name or identity: the program finds out by itself which server it is and which system it runs.')
     with st.container(horizontal=True, vertical_alignment='bottom'):
         code = st.text_input('Pairing code shown on the server', key='servers_code', placeholder='482-913-075')
-        if st.button('Find server', key='servers_find', type='primary', disabled=not code.strip(),
-                     icon=':material/wifi_find:'):
-            _find(code)
+        find = st.button('Find server', key='servers_find', type='primary', icon=':material/wifi_find:')
+    if find and not code.strip():
+        st.warning('Type the pairing code shown on the server.')
+    elif find:
+        _find(code)
 
 
 # ------------------------------------------------------------------ Ubuntu: one-step setup

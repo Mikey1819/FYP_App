@@ -127,12 +127,13 @@ def main():
             st.session_state[ARRIVED] = st.session_state.pop(NOTICE)
         st.switch_page(workspace[0])
     st.html(CARTOON_CSS)
-    with st.sidebar:
-        st.markdown('### Server Hardening Workspace')
-        _status_panel(server, servers)
     if ARRIVED in st.session_state:
         st.toast(md_escape(st.session_state.pop(ARRIVED)), icon=':material/lan:')
     pages.run()
+    # After the page: the page may just have taken a finished round's result, so the status says what is true now.
+    with st.sidebar:
+        st.markdown('### Server Hardening Workspace')
+        _status_panel(server, servers)
 
 
 if __name__ == "__main__":

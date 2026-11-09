@@ -43,6 +43,7 @@ UBUNTU_AGENTS_EXECUTE_LABEL = 'Remediation Agent executing, then Scanner verifyi
 CLOCK = 'agentic_clock'                # Windows: the last check of the server clock (plain session key).
 CLOCK_NOTICE = 'agentic_clock_notice'  # What the last clock sync did, shown once.
 CLOCK_RECHECK = timedelta(minutes=2)   # The box checks again after this; Start and Execute always check afresh.
+NAME_NEEDED = 'agentic_name_needed'   # A decision was clicked before a name was typed.
 MANUAL_ASK = 'agentic_manual_exception'  # The not-automated control whose exception reason is being typed.
 MANUAL_ERROR = 'agentic_manual_error'
 
@@ -233,18 +234,20 @@ def _reset_view():
         st.session_state.pop(key, None)
 
 
-def _run_round(hardening, session_id, mode=AssessmentMode.AGENTIC):
-    if hardening is not None and not _clock_still_ok(hardening):  # Windows; Ubuntu scans use this laptop's clock.
-        return
-    # The session is kept before the round starts, so its records stay reachable whatever happens to the page.
+def _round_work(hardening, session_id, mode=AssessmentMode.AGENTIC):
+    """Read on the page what a round needs; returns (work, its session)."""
     session_id = session_id or uuid4().hex
-    st.session_state[SESSION] = session_id
     backend = active_backend(st.session_state)
     if backend:
         connection, workflow, operation = st.session_state[CONNECTION_KEY], st.session_state.get(WORKFLOW_KEY), uuid4().hex
-        work = lambda: backend.start_round(connection, workflow, None, mode, operation)
-    else:
-        work = lambda: hardening.run_round(session_id)
+        return (lambda: backend.start_round(connection, workflow, None, mode, operation)), session_id
+    return (lambda: hardening.run_round(session_id)), session_id
+
+
+def _run_round(hardening, session_id, mode=AssessmentMode.AGENTIC):
+    work, session_id = _round_work(hardening, session_id, mode)
+    # The session is kept before the round starts, so its records stay reachable whatever happens to the page.
+    st.session_state[SESSION] = session_id
     _start(ROUND_LABEL, work, _after_round)
 
 
@@ -589,11 +592,68 @@ def _clock_ok(reading):
     return 'offset' in reading and abs(reading['offset']) <= MAX_CLOCK_OFFSET_SECONDS
 
 
-def _clock_still_ok(hardening):
-    """Checked again at the moment Start or Execute is clicked; when the clocks differ, the page shows why instead."""
-    if _clock_ok(_clock(hardening, fresh=True)):
-        return True
-    st.rerun()
+class ClockMismatch(Exception):
+    """The server clock was off when the work was about to start, so nothing started."""
+
+    def __init__(self, reading):
+        super().__init__('The server clock differs from this laptop.')
+        self.reading = reading
+
+
+def _clock_first(hardening, work):
+    """The work, with the clock check as its first step (in the background worker; nothing starts if it is off)."""
+    backend = active_backend(st.session_state)
+    connection = st.session_state.get(CONNECTION_KEY)
+
+    def checked():
+        reading = backend.clock_offset(connection) if backend else hardening.scanner.clock_offset()
+        if abs(reading['offset']) > MAX_CLOCK_OFFSET_SECONDS:
+            raise ClockMismatch(reading)
+        return work()
+    return checked
+
+
+def _clock_after(after, key):
+    """What the page applies afterwards; when the clock was off, the clock box shows by how much, and the sync."""
+    def apply(result, error):
+        if isinstance(error, ClockMismatch):
+            st.session_state[CLOCK] = dict(error.reading, key=key, checked_at=datetime.now(timezone.utc))
+            st.session_state[CLOCK_NOTICE] = ('error', 'Not started: the server clock is '
+                                              f"{_apart(error.reading['offset'])} "
+                                              f"{'ahead of' if error.reading['offset'] > 0 else 'behind'} this laptop. "
+                                              'Sync it, then start again.')
+            return True
+        return after(result, error)
+    return apply
+
+
+def _click_start(kind, hardening, session_id=None, expected=None):
+    """Button callback (Windows). It runs before the page is drawn again, so the page that follows shows the work
+    running (or its result), and never the old page under a wait."""
+    key = job_key()
+    if kind == 'round':
+        work, session_id = _round_work(hardening, session_id)
+        label = ROUND_LABEL
+
+        def after(result, error):
+            st.session_state[SESSION] = session_id  # Its records, whatever the outcome.
+            return _after_round(result, error)
+    else:
+        if kind == 'execute':
+            st.session_state.pop(CONFIRM, None)
+            expected = st.session_state.pop('agentic_confirm_requests', None)
+        try:
+            work = _execute(hardening, session_id, deterministic=kind == 'fallback', expected=expected)
+        except (ValueError, ChannelError) as exc:
+            st.session_state[JOB_ERROR] = _error_text(exc)
+            return
+        label, after = (EXECUTE_LABEL if kind == 'execute' else FALLBACK_LABEL), _after_execute
+    try:
+        job = background.start(key, label, _clock_first(hardening, work), after=_clock_after(after, key))
+    except ValueError as exc:
+        st.session_state[JOB_ERROR] = _error_text(exc)
+        return
+    job.wait(WAIT_SECONDS)  # Quick work shows its result at once; a round shows as running.
 
 
 def _apart(seconds):
@@ -667,8 +727,8 @@ def _show_start(hardening, store, runtime, target):
                    + (f', {open_items} fix(es) still open.' if open_items else '.'))
     ok = _clock_gate(hardening)
     with st.container(horizontal=True):
-        if st.button('Start agentic round', type='primary', key='agentic_run', disabled=not ok):
-            _run_round(hardening, None)
+        st.button('Start agentic round', type='primary', key='agentic_run', disabled=not ok, on_click=_click_start,
+                  args=('round', hardening))
         if previous and st.button('Resume earlier session', key='agentic_resume'):
             backend = active_backend(st.session_state)
             if backend:
@@ -703,9 +763,9 @@ def _action_bar(hardening, session_id, latest, state, rounds, target, manual_ope
     ok = _clock_gate(hardening) if can_run or state['pending'] else True
     with st.container(horizontal=True, vertical_alignment='center'):
         if can_run:
-            if st.button('Run next round', type='primary', key='agentic_run', icon=':material/refresh:', disabled=not ok,
-                         help='Rescan the server, re-rank the findings and propose again'):
-                _run_round(hardening, session_id)
+            st.button('Run next round', type='primary', key='agentic_run', icon=':material/refresh:', disabled=not ok,
+                      help='Rescan the server, re-rank the findings and propose again', on_click=_click_start,
+                      args=('round', hardening, session_id))
         if state['pending'] and st.session_state.get(CONFIRM) != latest['round_id']:
             if st.button(f"Execute {len(state['pending'])} approved fix(es)…", type='primary', disabled=not ok,
                          key='agentic_execute_review', icon=':material/play_arrow:'):
@@ -713,12 +773,11 @@ def _action_bar(hardening, session_id, latest, state, rounds, target, manual_ope
                 st.session_state['agentic_confirm_requests'] = tuple(r['proposal']['request_id'] for r in state['pending'])
                 st.rerun()
         if state['pending'] and stopped:
-            if st.button('Execute remaining without AI', key='agentic_execute_fallback', disabled=not ok,
-                         help='Same approval, expiry and precondition guards, in rank order; the result is still '
-                              'verified by a rescan.') and _clock_still_ok(hardening):
-                _start(FALLBACK_LABEL, _execute(hardening, session_id, deterministic=True,
-                                                expected=tuple(r['proposal']['request_id'] for r in state['pending'])),
-                       _after_execute)
+            st.button('Execute remaining without AI', key='agentic_execute_fallback', disabled=not ok,
+                      help='Same approval, expiry and precondition guards, in rank order; the result is still '
+                           'verified by a rescan.', on_click=_click_start,
+                      args=('fallback', hardening, session_id,
+                            tuple(r['proposal']['request_id'] for r in state['pending'])))
         if state['undecided']:
             st.markdown(f"{len(state['undecided'])} proposed fix(es) need your decision in **Fixes**.")
         if manual_open:
@@ -752,12 +811,8 @@ def _confirm_execution(hardening, session_id, state, target, clock_ok=True):
         st.caption('The Remediation Agent prechecks each value and skips anything that changed since the scan. '
                    'A fresh Scanner rescan verifies the result. Expired approvals are refused.')
         with st.container(horizontal=True):
-            if st.button('Confirm and execute', type='primary', key='agentic_execute', disabled=not clock_ok) \
-                    and _clock_still_ok(hardening):
-                st.session_state.pop(CONFIRM, None)
-                _start(EXECUTE_LABEL, _execute(hardening, session_id,
-                                               expected=st.session_state.pop('agentic_confirm_requests', None)),
-                       _after_execute)
+            st.button('Confirm and execute', type='primary', key='agentic_execute', disabled=not clock_ok,
+                      on_click=_click_start, args=('execute', hardening, session_id))
             if st.button('Cancel', key='agentic_execute_cancel'):
                 st.session_state.pop(CONFIRM, None)
                 st.rerun()
@@ -784,16 +839,17 @@ def _decision_cell(store, record, operator, comment, editable):
         st.markdown(badge('No decision'))
     else:
         with st.container(horizontal=True):
-            ready = bool(operator.strip())
-            hint = None if ready else 'Enter your name above first'
-            if st.button('Approve', key='agentic_approve_' + p['request_id'], disabled=not ready, help=hint):
-                _decide(store, p['request_id'], approve=True, operator=operator, comment=comment)
-                st.session_state.pop(COMMENT, None)
-                st.rerun()
-            if st.button('Reject', key='agentic_reject_' + p['request_id'], disabled=not ready, help=hint):
-                _decide(store, p['request_id'], approve=False, operator=operator, comment=comment)
-                st.session_state.pop(COMMENT, None)
-                st.rerun()
+            # Never disabled while the name is being typed: a disabled button would need a second click.
+            hint = None if operator.strip() else 'Your name above is recorded with the decision'
+            approve = st.button('Approve', key='agentic_approve_' + p['request_id'], help=hint)
+            reject = st.button('Reject', key='agentic_reject_' + p['request_id'], help=hint)
+        if (approve or reject) and not operator.strip():
+            st.session_state[NAME_NEEDED] = True
+            st.rerun()
+        if approve or reject:
+            _decide(store, p['request_id'], approve=approve, operator=operator, comment=comment)
+            st.session_state.pop(COMMENT, None)
+            st.rerun()
     if record['comment']:
         st.caption('Comment: ' + md_escape(record['comment']))
 
@@ -813,8 +869,11 @@ def _show_fixes(store, assessment_round, state, analysis, *, editable):
             operator = st.text_input('Your name (recorded with each decision)', key='agentic_operator',
                                      persist_state='session', width=320)
             ready = bool(operator.strip())
-            approve_all = st.button('Approve all undecided', key='agentic_approve_all', disabled=not ready)
-            reject_all = st.button('Reject all undecided', key='agentic_reject_all', disabled=not ready)
+            approve_all = st.button('Approve all undecided', key='agentic_approve_all')
+            reject_all = st.button('Reject all undecided', key='agentic_reject_all')
+        if (st.session_state.pop(NAME_NEEDED, False) or approve_all or reject_all) and not ready:
+            st.warning('Type your name first: it is recorded with each decision.', icon=':material/badge:')
+            approve_all = reject_all = False
         comment = st.text_input('Comment (optional, recorded with your next decision)', key=COMMENT, max_chars=500,
                                 placeholder='e.g. Approved for the Saturday maintenance window')
         if approve_all or reject_all:
@@ -876,7 +935,7 @@ def _manual_cell(decisions, target_id, control, decision, operator, round_id):
         st.rerun()
 
     if decision is not None:
-        if st.button('Change choice', key=f'agentic_manual_withdraw_{control}', disabled=not operator, width='stretch',
+        if st.button('Change choice', key=f'agentic_manual_withdraw_{control}', width='stretch',
                      help='Withdraws this choice (recorded too); the control waits for a new one.'):
             record(WITHDRAWN)
         return
@@ -884,22 +943,21 @@ def _manual_cell(decisions, target_id, control, decision, operator, round_id):
         reason = st.text_input('Why accept it?', key=f'agentic_manual_reason_{control}', max_chars=MAX_REASON,
                                placeholder='e.g. Firewall is managed by the network team')
         with st.container(horizontal=True):
-            if st.button('Accept', key=f'agentic_manual_accept_{control}', type='primary',
-                         disabled=not (operator and reason.strip())):
+            if st.button('Accept', key=f'agentic_manual_accept_{control}', type='primary'):
                 record('exception', reason)
             if st.button('Cancel', key=f'agentic_manual_cancel_{control}'):
                 st.session_state.pop(MANUAL_ASK, None)
                 st.rerun()
         return
-    if st.button('I will fix it by hand', key=f'agentic_manual_fix_{control}', type='primary', disabled=not operator,
+    if st.button('I will fix it by hand', key=f'agentic_manual_fix_{control}', type='primary',
                  width='stretch', help='Records your choice. The steps are under "How to fix it on the server".'):
         record('manual_fix')
-    if st.button('Accept as exception', key=f'agentic_manual_exception_{control}', disabled=not operator,
+    if st.button('Accept as exception', key=f'agentic_manual_exception_{control}',
                  width='stretch', help='Records that it stays as it is, with your reason.'):
         st.session_state[MANUAL_ASK] = control
         st.rerun()
     if not operator:
-        st.caption('Type your name first.')
+        st.caption('Your name is recorded with the choice.')
 
 
 def _show_not_automated(runtime, decisions, assessment_round, analysis, operator, *, editable):
@@ -1419,6 +1477,113 @@ def _ubuntu_show_fixes(backend, connection, snapshot, capabilities, editable=Tru
                 _ubuntu_decision_cell(backend, connection, {'state': 'Awaiting your decision', 'results': {}}, q,
                                       operator, comment)
         _ubuntu_maintenance_actions(backend, connection, snapshot, capabilities, workflow, executed, refresh, staged)
+
+
+UBUNTU_ROUND_VIEW = 'ubuntu_round_view'
+UBUNTU_FACTORS = (('I', 'I Security impact'), ('E', 'E Exposure'), ('P', 'P Privilege impact'), ('L', 'L Likelihood'),
+                  ('D', 'D Drift'))
+
+
+def _ubuntu_choose_round(rounds):
+    """As the Windows round picker: newest first; returns the chosen earlier round's reference, or None for the
+    latest round (or when the workflow has a single round)."""
+    if len(rounds) < 2:
+        return None
+    count = len(rounds)
+    labels = {f'Round {n} · {myt(at)}' + (' (latest)' if n == count else ''): ref
+              for n, (ref, at) in enumerate(rounds, 1)}  # unique: each label starts with its round number
+    chosen = labels[st.selectbox('Round', list(reversed(labels)), key=UBUNTU_ROUND_VIEW, width=320)]
+    return None if chosen == rounds[-1][0] else chosen
+
+
+def _ubuntu_report_button(backend, connection, workflow, snapshot, rounds):
+    """As the Windows "Round report": a self-contained HTML record of the latest round, built from stored records."""
+    from system.ui.round_report import ubuntu_round_report
+    if snapshot.current_round_reference is None:
+        return
+    html = ubuntu_round_report(snapshot, rounds, backend.remediation_review(connection, workflow),
+                               backend.verification_changes(connection, workflow, snapshot.current_round_reference))
+    started = next((at for ref, at in rounds if ref == snapshot.current_round_reference), None)
+    st.download_button('Round report', html, icon=':material/download:', mime='text/html', key='ubuntu_report',
+                       file_name='cis-round-' + backend.session.identity.hostname + '-'
+                       + (myt(started, '%Y-%m-%dT%H%M') if started else 'round') + '.html',
+                       help='Self-contained HTML record of this round. Open it in a browser to print to PDF.')
+
+
+def _ubuntu_finding_detail(backend, connection, workflow, snapshot, finding):
+    """As the Windows finding detail: the score's factors with the rule behind each, the benchmark rationale, then
+    the optional explanation by the local model (FR17: unverified, changes nothing)."""
+    control = next((c for c in snapshot.controls if c.control_id == finding.control_id), None)
+    st.markdown(f"**{md_escape(finding.control_id)} · {md_escape(control.title if control else '')}** "
+                f'{level_badge(finding.level)} risk {finding.score}')
+    st.caption(f'6×{finding.I} + 5×{finding.E} + 4×{finding.P} + 3×{finding.L} + 2×{finding.D} = {finding.score}')
+    rules = {r[0]: r for r in finding.derivation_reasons if len(r) > 1 and r[1] == '=' and r[0] in 'IEPLD'}
+    rationale = [r for r in finding.derivation_reasons if r not in rules.values()]
+    st.dataframe([{'Factor': label, 'Value': getattr(finding, name), 'Rule': rules.get(name, '')}
+                  for name, label in UBUNTU_FACTORS], hide_index=True)
+    if rationale:
+        st.caption('Benchmark rationale (paraphrased): ' + md_escape(' '.join(rationale)))
+    round_id = snapshot.current_round_reference.record_id
+    key = 'ubuntu_explain_' + round_id + '_' + finding.control_id
+    if st.button('Explain with local AI', key=key + '_btn', icon=':material/chat:'):
+        with st.spinner('Asking qwen3:8b…'):
+            try:
+                st.session_state[key] = backend.explain_finding(connection, workflow, finding.control_id,
+                    round_ref=snapshot.current_round_reference) or 'The model returned no explanation.'
+            except Exception as exc:  # Explanation is optional; the assessment remains valid.
+                st.session_state[key] = 'Explanation unavailable (' + type(exc).__name__ + ').'
+    if key in st.session_state:
+        st.caption('Model-written explanation (unverified; does not affect the score):')
+        st.text(st.session_state[key])
+
+
+def _ubuntu_show_risk(backend, connection, workflow, snapshot):
+    """As the Windows Risk ranking tab: the ranking, the chosen finding's details (with Explain), then the gaps."""
+    if snapshot.summary is None:
+        st.info('No risk analysis for this round.')
+        return
+    if snapshot.findings:
+        st.caption('R = 6I + 5E + 4P + 3L + 2D, computed by code (' + snapshot.findings[0].risk_policy_version + '). '
+                   'The Analysis Agent can flag findings but cannot change a score.')
+        controls = {c.control_id: c for c in snapshot.controls}
+        flags = {row.control_id: row.flag for row in snapshot.plan if row.flag}
+        st.dataframe([{'Rank': f.rank, 'Control': f.control_id, 'Title': controls[f.control_id].title,
+                       'Sub-checks': controls[f.control_id].observed, 'Risk': f.score, 'Level': f.level,
+                       'Analysis Agent flag': flags.get(f.control_id, '')} for f in snapshot.findings],
+                     hide_index=True, column_config={'Rank': st.column_config.NumberColumn(width='small'),
+                                                     'Risk': st.column_config.NumberColumn(width='small')})
+        by_id = {f.control_id: f for f in snapshot.findings}
+        chosen = st.selectbox('Finding details', list(by_id),
+                              format_func=lambda c: c + ' · ' + controls[c].title,
+                              key='ubuntu_finding_' + snapshot.current_round_reference.record_id)
+        with st.container(border=True):
+            _ubuntu_finding_detail(backend, connection, workflow, snapshot, by_id[chosen])
+    elif snapshot.summary.non_compliant:
+        st.info('No scored findings are available for this assessment.')
+    else:
+        st.success('No scored non-compliant findings.')
+    gaps = [c for c in snapshot.controls if c.status.value in ('Unknown', 'Error')]
+    if gaps:
+        st.markdown('**Gaps (not scored, no fix)**')
+        st.dataframe([{'Control': c.control_id, 'Status': c.status.value, 'Sub-checks': c.observed} for c in gaps],
+                     hide_index=True)
+
+
+def _ubuntu_show_results(backend, connection, workflow, snapshot, editable):
+    """As the Windows Results tab: the Orchestrator's review, the execution results, then the configuration changes
+    the verification scan found."""
+    from system.ui.components import render_results_table
+    review = backend.remediation_review(connection, workflow) if editable and workflow else None
+    if review:
+        _ubuntu_review_line(review)
+    render_results_table(snapshot)
+    changes = backend.verification_changes(connection, workflow, snapshot.current_round_reference) \
+        if workflow and snapshot.current_round_reference else None
+    if changes is not None:
+        st.markdown('**Configuration changes found by the verification rescan**')
+        st.dataframe([{'Control': c['control_id'], 'Title': c['title'], 'Before': c['before'], 'After': c['after'],
+                       'Change': c['change'], 'Sub-checks': c['subchecks']} for c in changes]
+                     or [{'Change': 'No changes detected'}], hide_index=True)
 
 
 UBUNTU_ROUND_VIEW = 'ubuntu_round_view'

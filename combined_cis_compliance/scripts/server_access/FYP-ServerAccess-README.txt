@@ -9,8 +9,9 @@ runs the dashboard, so that laptop can reach the server over WinRM (TCP 5985). I
        Get-FileHash .\FYP-ServerAccess.ps1 -Algorithm SHA256
    It must match the SHA-256 shown in the dashboard under the download button.
 3. Double-click Start-ServerAccess.cmd and accept the administrator prompt.
-4. Click "Start pairing". The window shows a one-time code such as 482-913-075.
-5. On the laptop, in the dashboard: Servers > Add a server > type the code > Find. Then type the Administrator
+4. Click "Start pairing". The window shows a one-time code such as 482-913-075. "Copy code" puts it on the
+   clipboard (from a VM, the laptop can paste it only if the VM shares its clipboard).
+5. On the laptop, in the dashboard: Servers > Add a server > type or paste the code > Find. Then type the Administrator
    password. The laptop and the server must be on the same network (for example the same Wi-Fi).
 6. Check the server from the dashboard.
 7. When you have finished, click "Revert changes".
