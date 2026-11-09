@@ -27,7 +27,7 @@ Every page action goes through `WorkspaceBackend` (`system/contracts.py`). Each 
 | `start_round` | Assessment, `AssessmentMode.DETERMINISTIC` (no AI) or `AGENTIC`, at most once per operation ID |
 | `decide` | Approve or reject one proposal; an approval binds the exact request bytes and expires |
 | `execute_approved` | Dispatch exactly the expected approved set, at most once |
-| `request_auxiliary` / `dispatch_auxiliary` | Restore, package-list refresh, reboot: proposed, approved and run like fixes, never counted as CIS fixes |
+| `request_auxiliary` / `dispatch_auxiliary` | Restore, package-list refresh, reboot: proposed, approved and run like fixes, never counted as CIS fixes. The Ubuntu page offers the refresh only after a package install (1.3.1.1, 6.3.1.1) could not be planned or run, and the reboot only after an applied fix that completes at the next boot (6.3.1.3) |
 | `operation_state`, `reconcile_operation`, `cancel_operation` | Long or interrupted operations, settled from the target's own record |
 | `history`, `compare` | Per-platform history and drift, with qualified record references |
 | `record_manual_review` | Bound human review for Manual controls (none in catalogue v2; 1.2.2.1 was retired 2026-11-08) |

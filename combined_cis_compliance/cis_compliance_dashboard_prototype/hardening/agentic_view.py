@@ -255,13 +255,35 @@ def _ubuntu_states(snapshot):
     return executed, applied, restoring
 
 
-def _ubuntu_maintenance_actions(backend, connection, snapshot, capabilities, workflow, applied, executed):
-    """Package-list refresh and a reboot completing applied changes: prepare, approve above, confirm, run once."""
+# Maintenance is offered only when a fix of the round needs it (administrator request 2026-11-09).
+# The package installs need current package lists: their read-only apt simulation, or the download, fails without
+# them (1.5.4 purges from the local package database, so it needs none).
+REFRESH_HELPS = frozenset({'1.3.1.1', '6.3.1.1'})
+# GRUB audit=1: the boot entries comply at once, but early-process auditing starts at the next boot.
+REBOOT_COMPLETES = frozenset({'6.3.1.3'})
+MAINTENANCE_KINDS = ('metadata_refresh', 'reboot')
+
+
+def _ubuntu_maintenance_needs(cards, applied):
+    """(package-install controls a package-list refresh may unblock, approved request IDs of applied fixes a reboot
+    completes), from the round's fix cards. A refresh follows an install that could not be planned or run; a
+    reboot names only fixes that are applied and not restored."""
+    from system.ui.components import NO_PLAN, SKIPPED
+    blocked = (NO_PLAN, SKIPPED, 'Not applied', 'Outcome unknown')
+    refresh = tuple(c['control_id'] for c in cards if c['control_id'] in REFRESH_HELPS and c['state'] in blocked)
+    reboot = tuple(p.approved_request_id for c in cards if c['control_id'] in REBOOT_COMPLETES
+                   and (c['state'].startswith('Applied') or c['state'] == 'Fixed, re-scan: Compliant')
+                   for p in c['proposals'] if p.kind == 'control_remediation' and p.reference in applied)
+    return refresh, reboot
+
+
+def _ubuntu_maintenance_actions(backend, connection, snapshot, capabilities, workflow, executed, refresh, staged):
+    """Package-list refresh and a reboot completing applied changes, each offered only when the round needs it:
+    prepare, approve above, confirm, run once. `refresh` and `staged` come from `_ubuntu_maintenance_needs`."""
     from system.contracts import AuxiliaryKind, MetadataRefreshInput, RebootInput
-    open_kinds = {p.kind for p in snapshot.proposals
-                  if p.kind in ('metadata_refresh', 'reboot') and p.reference not in executed and p.decision != 'rejected'}
-    staged = tuple(p.approved_request_id for p in snapshot.proposals
-                   if p.kind == 'control_remediation' and p.reference in applied)
+    ours = [p for p in snapshot.proposals if p.kind in MAINTENANCE_KINDS]
+    open_kinds = {p.kind for p in ours if p.reference not in executed and p.decision != 'rejected'}
+    ran = {p.kind for p in ours if p.reference in executed}
 
     def prepare(kind):
         try:
@@ -269,14 +291,33 @@ def _ubuntu_maintenance_actions(backend, connection, snapshot, capabilities, wor
             backend.request_auxiliary(connection, workflow, kind, None, inputs, uuid4().hex)
         except (ValueError, OSError) as failure:
             st.session_state['ubuntu_execute_error'] = str(failure)[:300]
+
+    def named(ids):
+        return ', '.join(ids) + (' is' if len(ids) == 1 else ' are')
+    if refresh and 'metadata_refresh' in ran:
+        st.caption('Package lists refreshed. Start a new round so ' + md_escape(', '.join(refresh))
+                   + ' is planned and installed again.')
+    elif refresh:
+        st.caption(md_escape(', '.join(refresh)) + " could not be installed: the server's package lists may be out of "
+                   'date. A package-list refresh (apt-get update) downloads current lists and installs nothing; '
+                   'start a new round afterwards so the fix is planned again.')
+    reboot_controls = sorted({p.control_id for p in snapshot.proposals
+                              if p.kind == 'control_remediation' and p.approved_request_id in staged})
+    if staged and 'reboot' in ran:
+        st.caption('Reboot sent in this round. When the server is back, connect again and use Check status.')
+    elif staged:
+        st.caption(md_escape(named(reboot_controls)) + ' applied but takes full effect after a restart. The server is '
+                   'never restarted automatically: prepare the reboot when it can go down.')
     with st.container(horizontal=True):
-        st.button('Prepare package-list refresh', key='ubuntu_prepare_refresh', on_click=prepare,
-                  args=(AuxiliaryKind.METADATA_REFRESH,),
-                  disabled=not capabilities.can_remediate or 'metadata_refresh' in open_kinds,
-                  help='apt-get update only: installs nothing and changes no configuration.')
-        st.button('Prepare reboot to complete applied changes', key='ubuntu_prepare_reboot', on_click=prepare,
-                  args=(AuxiliaryKind.REBOOT,), disabled=not capabilities.can_remediate or 'reboot' in open_kinds or not staged,
-                  help='Needs applied fixes. The server restarts 60 s after it runs; connect again, then Check status.')
+        if refresh and 'metadata_refresh' not in ran:
+            st.button('Prepare package-list refresh', key='ubuntu_prepare_refresh', on_click=prepare,
+                      args=(AuxiliaryKind.METADATA_REFRESH,),
+                      disabled=not capabilities.can_remediate or 'metadata_refresh' in open_kinds,
+                      help='apt-get update only: installs nothing and changes no configuration.')
+        if staged and 'reboot' not in ran:
+            st.button('Prepare reboot to complete applied changes', key='ubuntu_prepare_reboot', on_click=prepare,
+                      args=(AuxiliaryKind.REBOOT,), disabled=not capabilities.can_remediate or 'reboot' in open_kinds,
+                      help='The server restarts 60 s after it runs; connect again, then Check status.')
     for p in snapshot.proposals:
         if p.kind not in ('metadata_refresh', 'reboot') or p.decision != 'approved' or p.reference in executed:
             continue
@@ -1365,15 +1406,19 @@ def _ubuntu_show_fixes(backend, connection, snapshot, capabilities, editable=Tru
             else c['decision'] + ': ' + c['reason'])} for c in skipped], hide_index=True)
     if snapshot.current_round_reference is None or not editable:
         return  # Maintenance belongs to the latest round's applied fixes: nothing before the first round.
+    refresh, staged = _ubuntu_maintenance_needs(cards, applied)
+    waiting = [q for q in snapshot.proposals if q.kind in MAINTENANCE_KINDS and q.reference not in executed
+               and q.decision != 'rejected']
+    if not (refresh or staged or waiting):
+        return  # No fix of this round needs a package-list refresh or a reboot.
     with st.container(border=True):
         st.markdown('**Maintenance**')
-        carded = {q.reference for c in cards for q in c['proposals']}
-        for q in snapshot.proposals:  # Package-list refresh and reboot proposals, which belong to no control.
-            if q.reference not in carded and q.eligible_commands:
+        for q in waiting:  # Package-list refresh and reboot proposals, which belong to no control.
+            if q.eligible_commands:
                 st.caption(md_escape(q.title) + ' awaits your decision.')
                 _ubuntu_decision_cell(backend, connection, {'state': 'Awaiting your decision', 'results': {}}, q,
                                       operator, comment)
-        _ubuntu_maintenance_actions(backend, connection, snapshot, capabilities, workflow, applied, executed)
+        _ubuntu_maintenance_actions(backend, connection, snapshot, capabilities, workflow, executed, refresh, staged)
 
 
 UBUNTU_ROUND_VIEW = 'ubuntu_round_view'

@@ -193,7 +193,9 @@ class FixUiTests(StoreFixture):
             self.assertFalse(list(app.error), [e.value for e in app.error])
             self.assertNotIn('agentic_run', keys())  # a fix awaits a decision: no new round yet
             self.assertIn('1 proposed fix(es) need your decision', self.text(app))
-            self.assertIn('ubuntu_prepare_refresh', keys())  # the round exists, so maintenance is offered
+            # Nothing went wrong and no fix needs a restart: no Maintenance (administrator request 2026-11-09).
+            self.assertFalse({'ubuntu_prepare_refresh', 'ubuntu_prepare_reboot'} & keys())
+            self.assertNotIn('Maintenance', self.text(app))
             app.text_input(key='agentic_operator').input('fixture-operator').run()
             app.text_input(key='agentic_comment').input('Approved for the Saturday window').run()
             self.approve_buttons(app)[0].click().run()
