@@ -47,6 +47,9 @@ REPORT = 'servers_access_report'     # The last paired-laptops list read from th
 CONFIRM_ACCESS = 'servers_confirm_access'
 SETUP_COPIED = 'servers_setup_copied'  # Ubuntu: the folder the setup files were copied to, per server key.
 SETUP_REFRESH = 'servers_setup_refresh'
+SHOW_FOUND = 'servers_show_found'    # Set by Find: on the next run the page scrolls once to the Found panel.
+FINDS = 'servers_finds'              # How many times Find answered in this session.
+FOUND_BOX = 'servers_found'          # The Found panel's container key (Streamlit gives it the class st-key-<key>).
 LOST = ('The connection to the server stopped answering (it may have restarted). Click **Disconnect** above, then '
         '**Connect** again under My servers.')
 SECRETS = ('servers_password', 'servers_pair_password', 'servers_pair_sudo', 'servers_sudo')
@@ -237,6 +240,8 @@ def _find(code, *, expected=None, username=None):
         return
     st.session_state[PENDING] = dict(found=asdict(found), expected=expected,
                                      username=username or ('Administrator' if found.platform == 'windows' else ''))
+    st.session_state[FINDS] = st.session_state.get(FINDS, 0) + 1
+    st.session_state[SHOW_FOUND] = st.session_state[FINDS]
     st.rerun()
 
 
@@ -296,7 +301,7 @@ def _show_pending(registry, connected):
     pending = st.session_state[PENDING]
     found = FoundServer(**pending['found'])
     system = found.system
-    with st.container(border=True):
+    with st.container(border=True, key=FOUND_BOX):
         st.markdown(f':green-badge[:material/wifi_find: Found] **{md_escape(found.hostname)}** at '
                     f'{md_escape(found.address)}, answering with the right code.')
         # The system the server reported about itself: the administrator never has to say it.
@@ -513,6 +518,22 @@ def _show_helpers():
                    f'`{ubuntu_helper_sha256()}`.')
 
 
+def _scroll_to_found(count):
+    """Bring the Found panel into view once. The code is typed lower on the page (Add a server, or Re-pair), and
+    Streamlit keeps the scroll position, so the panel would otherwise open out of sight above. Only fixed text goes into
+    the script; the count makes each Find a new element, so a second Find scrolls again."""
+    st.html(f'''<script>/* find {int(count)} */
+(function () {{
+  let tries = 0;
+  (function go() {{
+    const box = document.querySelector('.st-key-{FOUND_BOX}');
+    if (box) {{ box.style.scrollMarginTop = '80px'; box.scrollIntoView({{behavior: 'smooth', block: 'start'}}); }}
+    else if (++tries < 30) {{ setTimeout(go, 100); }}
+  }})();
+}})();
+</script>''', unsafe_allow_javascript=True)
+
+
 def render_servers(database_path: Path):
     st.title('Servers')
     st.caption(f'This program supports only {SUPPORTED_SYSTEMS}. Servers are added by their pairing code.')
@@ -526,10 +547,13 @@ def render_servers(database_path: Path):
             if st.button('Disconnect', key='servers_disconnect', type='tertiary',
                          help='End this session with the server. Nothing changes on the server.'):
                 forget_connection(f'Disconnected from {connected.identity.hostname}. Nothing changed on the server.')
+    scroll = st.session_state.pop(SHOW_FOUND, None)
     try:
         registry = ServerRegistry(database_path)
         if PENDING in st.session_state:
             _show_pending(registry, connected)
+            if scroll:
+                _scroll_to_found(scroll)
         saved = registry.all()
         st.subheader('My servers')
         if saved:

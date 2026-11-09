@@ -358,6 +358,21 @@ class PairingPageTests(unittest.TestCase):
         self.assertIsNone(self.connected(app))
         self.assertEqual(self.registry().all(), [])
 
+    def test_the_page_scrolls_once_to_the_found_panel(self):
+        # The code is typed low on the page; the Found panel opens above it. The page scrolls to it once, after Find,
+        # not again while the administrator types the account and password.
+        def scrolls(app):
+            return [h for h in app.get('html') if 'st-key-servers_found' in h.proto.body]
+        app = self.page()
+        self.assertEqual(scrolls(app), [])
+        app.text_input(key='servers_code').input('482-913-075').run()
+        app = self.ok(app.button(key='servers_find').click().run())
+        self.assertEqual(len(scrolls(app)), 1)
+        self.assertTrue(scrolls(app)[0].proto.unsafe_allow_javascript)
+        app = self.ok(app.text_input(key='servers_pair_password').input('secret').run())
+        self.assertEqual(scrolls(app), [])
+        self.assertIn('servers_pair_password', [t.key for t in app.text_input])
+
     def test_the_detected_system_is_shown_before_login(self):
         app = self.page()
         app.text_input(key='servers_code').input('482-913-075').run()

@@ -14,7 +14,11 @@ Full run-by-run history up to 26 October 2026: [docs/archive/PROGRESS_LOG_2026-1
 | Evaluation | **Latest: 16-run evaluation of the 1 November code** (real `qwen3:8b`, simulated VM, 8 scenarios × 2, `20261101_185014`, code frozen by SHA-256 before the run): **16/16 assessment rounds produced an accepted plan and both phases ran; 0 safety failures.** 8/16 plans left out the two lowest-ranked findings, which code deferred as `not_decided`. Assessment 221–409 s, remediation 110–168 s (NFR06). Judgement scenarios unchanged: no better than a fixed rule. Earlier: 20-run evaluation on `468b9a6` (`20261027_144751`), 20/20 completed. Real VM: one round with remediation on 30 October. |
 | Legacy | Removed. The upload/manual-exchange page went on 27 October (last commit with it: `81b9d52`); the shared-folder building blocks went on 29 October (last commit with them: `0ddd3ba`). Docs: [docs/archive/legacy/](docs/archive/legacy/). The staged non-AI pipeline (`hardening/agents.py`, `hardening/actions.py`) went on 1 November; `framework.py` is now only the run register (`AssessmentRuns`). On 3 November the preview-era modules and every manual "run it inside the VM" mode went too (entry below). |
 
-## 9 November 2026 (latest): Windows fixes in one round, one connection per batch
+## 9 November 2026 (latest): pairing scrolls to the found server
+
+- After **Find server** (or **Re-pair**), the page scrolls once to the Found panel. The panel opens above where the code was typed, and Streamlit keeps the scroll position, so it used to open out of sight. Checked in headless Chrome; 779 tests pass (1 skip), baseline verified.
+
+## 9 November 2026: Windows fixes in one round, one connection per batch
 
 - **Why:** the real server run of 8 November took three rounds and about 22 minutes of machine time for 18 fixes. The Orchestrator deferred seven Moderate fixes as `lower_priority`, which cost a whole extra round, and each fix spent about 10 of its 13 seconds opening two WinRM connections.
 - **Plan:** `lower_priority` is no longer offered. A fixable finding the plan leaves out, or defers with a reason that does not fit, is proposed by code as `not_deferred` in the same round, as on Ubuntu. A finding that waits for its prerequisite is still deferred. The administrator still approves every fix.
