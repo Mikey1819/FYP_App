@@ -181,7 +181,10 @@ class ServersPageTests(unittest.TestCase):
         keys = [t.key for t in app.text_input]
         self.assertEqual(keys, ['servers_code'], 'No address, port or password box: only the pairing code')
         self.assertEqual(len(app.tabs), 0)
-        self.assertTrue(app.button(key='servers_find').disabled, 'Needs a code first')
+        # Never greyed out while a code is typed (that needed two clicks); an empty code is explained instead.
+        self.assertFalse(app.button(key='servers_find').disabled)
+        app = self.ok(app.button(key='servers_find').click().run())
+        self.assertEqual([w.value for w in app.warning], ['Type the pairing code shown on the server.'])
         self.assertEqual([b.label for b in app.get('download_button')],
                          ['Download helper (.zip)', 'Download pairing helper (.py)'])
 
