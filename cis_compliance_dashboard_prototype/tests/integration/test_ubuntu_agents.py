@@ -143,7 +143,10 @@ class AgentRoundTests(unittest.TestCase):
         result = self.run_round(clients)
         events = self.events(result['orchestrator_run_id'])
         self.assertEqual(events[1]['kind'], 'tool_rejected')
-        self.assertEqual(events[-1]['data']['status'], 'Repeated call blocked')
+        # A second Scanner delegation is allowed only after a stop without a decision or a rescan request
+        # (test_ubuntu_agent_features); otherwise its own guard refuses it and nothing is collected again.
+        rejected = [e['data'] for e in events if e['kind'] == 'tool_rejected']
+        self.assertEqual([r['name'] for r in rejected], ['submit_plan', 'delegate_scanner'])
         self.assertEqual(len(self.collected), 1)
         self.assertIsNone(result['plan'])
 

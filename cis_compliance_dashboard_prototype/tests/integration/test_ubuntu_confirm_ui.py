@@ -46,7 +46,7 @@ class ConfirmUiTests(FixUiTests):
             RankingAware.target = session.target_id
             return UbuntuBackend(self.root / 'ubuntu' / 'imports.sqlite3', session=session, ledger=ledger,
                                  families={spec.action_id: spec}, model_client_factory=clients.__getitem__,
-                                 model_probe=lambda: True)
+                                 model_probe=lambda: getattr(self, 'model_up', True))
 
         service = ConnectionService(ledger, ssh_factory=lambda *a: self.make_channel(), backend_factory=backend_factory)
         app = AppTest.from_function(existing_page, default_timeout=60)
@@ -66,6 +66,7 @@ class ConfirmUiTests(FixUiTests):
             app.button(key='agentic_run').click().run()
             app.text_input(key='agentic_operator').input('fixture-operator').run()
             keyed('ubuntu_approve_', exclude='ubuntu_approve_all')[0].click().run()
+            self.model_up = False  # without the model, Confirm runs the fixes in plan order (agentic: test_ubuntu_remediation_ui)
             app.button(key='ubuntu_execute_review').click().run()  # Windows-style: review, then confirm
             app.button(key='ubuntu_execute').click().run()
             self.assertFalse(list(app.error), [e.value for e in app.error])
@@ -129,7 +130,7 @@ class ConfirmUiTests(FixUiTests):
             RankingAware.target = session.target_id
             return UbuntuBackend(self.root / 'ubuntu' / 'imports.sqlite3', session=session, ledger=ledger,
                                  families={spec.action_id: spec}, model_client_factory=clients.__getitem__,
-                                 model_probe=lambda: True)
+                                 model_probe=lambda: getattr(self, 'model_up', True))
 
         service = ConnectionService(ledger, ssh_factory=lambda *a: self.make_channel(), backend_factory=backend_factory)
         app = AppTest.from_function(existing_page, default_timeout=60)
@@ -150,6 +151,7 @@ class ConfirmUiTests(FixUiTests):
             app.button(key='agentic_run').click().run()
             app.text_input(key='agentic_operator').input('fixture-operator').run()
             keyed('ubuntu_approve_', exclude='ubuntu_approve_all')[0].click().run()
+            self.model_up = False  # without the model, Confirm runs the fixes in plan order (agentic: test_ubuntu_remediation_ui)
             app.button(key='ubuntu_execute_review').click().run()
             app.button(key='ubuntu_execute').click().run()
             self.assertFalse(list(app.error), [e.value for e in app.error])

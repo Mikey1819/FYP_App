@@ -392,6 +392,8 @@ class UbuntuBackend(BoundBackend):
                         kinds['verified' if r.verification_status is ComplianceStatus.COMPLIANT else 'failed'] += 1
                 elif r.execution_state == 'running':
                     kinds['running'] += 1
+                elif r.execution_state == 'skipped':
+                    kinds['skipped'] += 1
                 else:
                     kinds['refused' if r.execution_state in ('refused', 'rolled_back', 'reconciled_not_applied')
                           else 'uncertain'] += 1
@@ -518,7 +520,7 @@ class UbuntuBackend(BoundBackend):
                      ('done' if executed else 'pending') if any(p.decision == 'approved' for p in proposals) else 'skipped',
                      ('done' if all(r.verification_status is not None for r in executed) else 'pending')
                      if executed else 'skipped')  # verification is a fresh scan
-            events = self._agent_events(store, details)
+            events = self._agent_events(store, details, row.round_id)
             plan = _plan_rows(details, evidence, catalogue)
         else:
             plan = ()
@@ -537,6 +539,7 @@ class UbuntuBackend(BoundBackend):
         verified = self._evidence(store, checks[-1].evidence_sha256) if checks else None
         fresh = {a.control_id: a.status for a in verified.assessments} if verified else {}
         round_proposals = store.proposals(binding, row.round_id)
+        skipped = self._agent_skipped(store, row.round_id, round_proposals)
         for p in round_proposals:
             approved = json.loads(p.approved_raw) if p.approved_raw else None
             recovery = p.payload['fields']['recovery']
@@ -554,6 +557,10 @@ class UbuntuBackend(BoundBackend):
                 (('reject',) if blocked else ('approve', 'reject')) if latest and p.decision is None else (),
                 approved['request_id'] if approved else None, approved['before_state_sha256'] if approved else None,
                 approved.get('approver') if approved else None, p.rejected_by, p.comments))
+            if not p.receipts and approved and approved['request_id'] in skipped:
+                results.append(ResultRow(self._ref(p.proposal_id), 'skipped', None, None, None, 'not_requested',
+                                         'Skipped by the Remediation Agent: ' + skipped[approved['request_id']]
+                                         + '. Not executed; a new round plans it again.'))
             if p.receipts:
                 last = p.receipts[-1]
                 applied = last['outcome'] in ('applied', 'reconciled_applied')
@@ -583,12 +590,47 @@ class UbuntuBackend(BoundBackend):
                                          'not_requested', detail))
         return tuple(proposals), tuple(results)
 
-    def _agent_events(self, store, details):
-        """Durable Coordinator events of the round's agents, as common Agent log rows."""
+    def _phase_runs(self, store, round_id):
+        """The remediation phases' agent runs for one assessment round (review, Remediation Agent, verification),
+        oldest first. They share the phase's team ID in the agent log; nothing else is stored for them."""
+        from hardening.investigation import InvestigationLog
+        from .remediation_agents import Phase
+        log = store.agent_log()
+        team = Phase.team_prefix + round_id
+        with log._connection() as db:
+            rows = db.execute("SELECT run_id FROM investigation_runs WHERE json_extract(payload, '$.team_id')=? "
+                              'ORDER BY rowid', (team,)).fetchall()
+        reader = InvestigationLog(log)
+        return [reader.get(run_id) for (run_id,) in rows]
+
+    def _agent_skipped(self, store, round_id, proposals):
+        """Approved fixes of this round the Remediation Agent closed unexecuted: request ID -> the code-written reason.
+        Read from its own recorded tool results (skip_fix, stop_execution), never from model text or comments."""
+        from .remediation_agents import REMEDIATION, SKIP_REASONS
+        requests = {p.payload['fields']['control_id']: json.loads(p.approved_raw)['request_id']
+                    for p in proposals if p.decision == 'approved' and p.approved_raw
+                    and not p.payload['action']['action_id'].startswith(AUXILIARY_PREFIXES)}
+        skipped = {}
+        for run in self._phase_runs(store, round_id) if requests else ():
+            if run.get('agent_role') != REMEDIATION:
+                continue
+            for event in run['events']:
+                data = event['data']
+                if event['kind'] != 'tool' or data.get('name') not in ('skip_fix', 'stop_execution'):
+                    continue
+                result = data.get('result') or {}
+                for entry in [result] if data['name'] == 'skip_fix' else result.get('skipped', ()):
+                    if entry.get('control_id') in requests and entry.get('reason_code') in SKIP_REASONS:
+                        skipped[requests[entry['control_id']]] = SKIP_REASONS[entry['reason_code']]
+        return skipped
+
+    def _agent_events(self, store, details, round_id=None):
+        """Durable Coordinator events of the round's agents (and of its remediation phases), as Agent log rows."""
         from hardening.investigation import InvestigationLog
         log, rows = InvestigationLog(store.agent_log()), []
-        for run_id in [details['orchestrator_run_id'], *details['children'].values()]:
-            run = log.get(run_id)
+        runs = [log.get(run_id) for run_id in [details['orchestrator_run_id'], *details['children'].values()]]
+        for run in runs + (self._phase_runs(store, round_id) if round_id else []):
+            run_id = run['run_id']
             for event in run['events']:
                 data, kind = event['data'], event['kind']
                 if kind == 'tool':
@@ -669,17 +711,36 @@ class UbuntuBackend(BoundBackend):
         run = store.start_run(self.session.channel.invoke_helper(message), expected, binding)
         return run.run_id, self._evidence(store, run.digest)
 
+    def _earlier_assessments(self, store):
+        """Every stored scan of this target and registration epoch (assessment and verification rounds) as
+        (round, evidence), newest first: the history the risk engine's D factor and check_history read."""
+        found = [(r, self._evidence(store, r.evidence_sha256)) for r, _ in self._all_rounds(store)]
+        return sorted(found, key=lambda pair: pair[1].completed_at, reverse=True)
+
     def _agentic_round(self, store, binding, collect, goal):
         from .agents import run_agentic_round
+        from .risk import RiskInput, rank as derive
+        earlier = []  # loaded once, on first use, from rounds stored before this one
+
+        def previous():
+            if not earlier:
+                earlier.append(self._earlier_assessments(store))
+            return earlier[0]
+
         def rank(run_id, evidence):
             policy = _risk_policy()
             if not policy.activated:
                 return None
-            from .risk import RiskInput, rank as derive
-            return derive(RiskInput(self._ref(run_id), 'current', evidence), (), policy)
+            # The same history as the Risk ranking tab, so D (and the persistent_failure flag) can be true here too.
+            prior = [RiskInput(self._ref(r.framework_run_id), r.round_id, ev) for r, ev in previous()]
+            return derive(RiskInput(self._ref(run_id), 'current', evidence), prior, policy)
+
+        def history(control_id):
+            return [(ev.completed_at, a.status.value) for _, ev in previous() for a in ev.assessments
+                    if a.control_id == control_id]
         result = run_agentic_round(client_factory=self.model_client_factory, collect=collect, log_store=store.agent_log(),
                                    target_id=self.session.target_id, titles={c: x.title for c, x in _controls().items()},
-                                   rank=rank, goal=goal, eligible=self._eligible)
+                                   rank=rank, goal=goal, eligible=self._eligible, history=history)
         if result['run_id'] is None:
             raise ValueError(f"The agentic round stopped before an assessment was collected ({result['status']}). Its agent "
                              'log is kept; start the round again.')
@@ -817,26 +878,29 @@ class UbuntuBackend(BoundBackend):
 
     def execute_approved(self, connection_session_id, workflow_session_id, round_ref,
                          expected_approved_request_ids, deterministic, operation_id):
-        """Dispatch exactly the expected approved set, sequentially; stop at the first uncertain outcome."""
-        from datetime import datetime, timezone
-        from vm.ubuntu.remediation_schema import parse_request
-        from .approvals import ApprovedRequest
-        from .executor import execute
+        """Run exactly the expected approved set. With the model (deterministic=False): the remediation phase, in which
+        the Orchestrator delegates the Remediation Agent and a verification scan and decides the next step. Without it
+        (the administrator's choice): sequentially in plan order, stopping at the first uncertain outcome. The same
+        executor, ledger claim and runner checks guard both, and a fix is never dispatched twice."""
         binding = self.check(connection_session_id, workflow_session_id, round_ref)
         gate = execution_gate(self)
         if gate:
             raise ValueError(gate[0])
         store = self._store()
         latest = self._latest(store, binding, round_ref)
-        approved = [p for p in store.proposals(binding, latest.round_id)
+        proposals = store.proposals(binding, latest.round_id)
+        approved = [p for p in proposals
                     if p.decision == 'approved' and not p.payload['action']['action_id'].startswith(AUXILIARY_PREFIXES)]
         requests = {json.loads(p.approved_raw)['request_id']: p for p in approved}
         if not requests or set(expected_approved_request_ids) != set(requests):
             raise ValueError('The approved set changed or is empty; review the current approvals. No write was dispatched.')
+        skipped = self._agent_skipped(store, latest.round_id, proposals)  # closed by the Remediation Agent: never run
+        if not deterministic:
+            return self._agentic_execution(store, binding, latest, requests, skipped, round_ref, operation_id)
         state, applied = 'completed', []
         for request_id, proposal in requests.items():
-            if proposal.receipts:
-                continue  # already dispatched once; never again
+            if proposal.receipts or request_id in skipped:
+                continue  # already dispatched once, or closed unexecuted by the Remediation Agent; never again
             result = self._dispatch_one(store, binding, proposal, operation_id)
             if result.state == 'completed':
                 applied.append(request_id)
@@ -847,6 +911,166 @@ class UbuntuBackend(BoundBackend):
             # A refusal is definite (nothing was written), so the independent fixes still run. Live 13:44: after 1.5.1
             # changed the shared sysctl file, 1.5.3/3.3.1/3.3.8 were refused stale and 5.2.3 never ran.
         return RoundHandle(operation_id, binding, round_ref, self._verify(store, binding, latest, applied, state))
+
+    def _precheck(self, proposal):
+        """Read-only readiness of one approved fix, for the Remediation Agent: approval expiry, and a fresh preview
+        compared byte for byte with the approved plan. Raises only when the server cannot be reached (nothing is
+        then skipped); a refused or malformed preview is a fact, not an error."""
+        from datetime import datetime, timezone
+        from vm.ubuntu.remediation_schema import canonical, utc
+        fields, action = proposal.payload['fields'], proposal.payload['action']['action_id']
+        facts = {'expired': datetime.now(timezone.utc) >= utc(json.loads(proposal.approved_raw)['expires_at']),
+                 'precondition_changed': False, 'preview_refused': False}
+        header = canonical({'op': 'preview', 'action_id': action, 'parameters': fields['parameters']})
+        try:
+            preview = json.loads(self.session.channel.invoke_runner(header + b'\n'))
+        except ValueError:  # The runner refused (non-zero exit) or answered with something that is not JSON.
+            facts['preview_refused'] = True
+            return facts
+        if type(preview) is not dict or preview.get('action_id') != action:
+            facts['preview_refused'] = True
+        elif (preview.get('before_state_sha256'), preview.get('expected_after_sha256')) != (
+                fields['before_state_sha256'], fields['expected_after_sha256']):
+            facts['precondition_changed'] = True
+        return facts
+
+    def _agentic_execution(self, store, binding, latest, requests, skipped, round_ref, operation_id):
+        """The remediation phase with the local model (remediation_agents.py). Code keeps every hard guard; when the
+        Orchestrator leaves an applied fix without a verification scan, code runs that scan itself."""
+        from datetime import datetime, timezone
+        from .remediation_agents import Phase, run_remediation_phase
+        if not self.model_probe():
+            raise ValueError('The local model became unavailable, so no write was dispatched and every approval stays '
+                             'open. Start Ollama with qwen3:8b and confirm again; while the model stays unavailable, '
+                             'Confirm runs the approved fixes in plan order.')
+        open_requests = {rid: p for rid, p in requests.items() if not p.receipts and rid not in skipped}
+        if not open_requests:
+            raise ValueError('Every approved fix of this round has already run or was skipped. No write was dispatched.')
+        evidence = self._evidence(store, latest.evidence_sha256)
+        ranks = {f.control_id: f.rank for f in self._findings(store, latest, evidence)}
+        rows = [{'request_id': rid, 'control_id': p.payload['fields']['control_id'],
+                 'action_id': p.payload['action']['action_id'], 'title': p.payload['title'],
+                 'expires_at': json.loads(p.approved_raw)['expires_at'],
+                 'rank': ranks.get(p.payload['fields']['control_id'])} for rid, p in open_requests.items()]
+
+        def execute(request_id):
+            try:
+                result = self._dispatch_one(store, binding, open_requests[request_id], operation_id)
+            except ValueError as exc:  # Refused before any dispatch, e.g. the approval expired meanwhile.
+                return 'refused', 'refused_before_dispatch: ' + str(exc)[:60]
+            return result.state, (result.receipt or {}).get('code', 'recorded')
+
+        def skip(request_id, reason):
+            store.add_comment(binding, open_requests[request_id].proposal_id, 'Remediation Agent',
+                              'Skipped by the Remediation Agent: ' + reason + '. Not executed; a new round plans it '
+                              'again.', datetime.now(timezone.utc))
+
+        def verify(request_ids):
+            run_id, scanned = self._collect(store, binding)
+            store.record_round(binding, run_id, mode='deterministic', kind='verification',
+                               details={'verifies_round': latest.round_id, 'request_ids': sorted(request_ids)})
+            return run_id, scanned
+        phase = Phase(target_id=self.session.target_id, round_id=latest.round_id, log_store=store.agent_log(),
+                      requests=rows, precheck=lambda rid: self._precheck(open_requests[rid]), execute=execute,
+                      skip=skip, verify=verify, eligible=self._eligible, before=evidence)
+        result = run_remediation_phase(phase, client_factory=self.model_client_factory)
+        kinds = {r['result'] for r in (result['remediation'] or {}).get('results', ())}
+        state = ('unresolved' if 'uncertain' in kinds else 'running' if 'running' in kinds
+                 else 'refused' if 'refused' in kinds else 'completed')
+        # A possible write never stays unobserved: applied fixes no verification scan covers get one from code.
+        uncovered = self._unverified(store, binding, latest)
+        return RoundHandle(operation_id, binding, round_ref, self._verify(store, binding, latest, uncovered, state))
+
+    def remediation_review(self, connection_session_id, workflow_session_id):
+        """The latest remediation phase's next-step decision for the latest round (code-written), or None. When the
+        agents stopped early and a fix of the round then ran without them, this is the Windows engine's `fallback`
+        outcome instead: executed without AI."""
+        from .remediation_agents import REMEDIATION, REVIEW_ROLE
+        binding = self.check(connection_session_id, workflow_session_id)
+        store = self._store()
+        rounds = [r for r in store.rounds(binding) if r.kind == 'assessment'] if store and binding else []
+        if not rounds:
+            return None
+        runs = self._phase_runs(store, rounds[-1].round_id)
+        for run in reversed(runs):
+            if run.get('agent_role') == REVIEW_ROLE and run['events']:
+                finished = run['events'][-1]['data']
+                outcome = finished.get('outcome')
+                review = ({'next_step': outcome['outcome'], 'reason_code': outcome['reason_code'],
+                           'reason': outcome['reason']} if outcome else
+                          {'next_step': None, 'reason_code': None, 'reason': 'The Orchestrator stopped without deciding '
+                           'the next step (' + str(finished.get('status')) + ').'})
+                if review['next_step'] is None or review['reason_code'] == 'remediation_incomplete':
+                    # Executed by the Remediation Agent: its own recorded execute_fixes results, never model text.
+                    by_agents = {entry.get('control_id') for r in runs if r.get('agent_role') == REMEDIATION
+                                 for e in r['events'] if e['kind'] == 'tool' and e['data'].get('name') == 'execute_fixes'
+                                 for entry in (e['data'].get('result') or {}).get('results', ())}
+                    if any(p.receipts and p.payload['fields']['control_id'] not in by_agents
+                           and not p.payload['action']['action_id'].startswith(AUXILIARY_PREFIXES)
+                           for p in store.proposals(binding, rounds[-1].round_id)):
+                        return {'next_step': 'fallback', 'reason_code': None,
+                                'reason': 'Executed without AI after the agents stopped early: the remaining approved '
+                                          'fixes ran in plan order with the same approvals and server checks, and a '
+                                          'fresh verification scan checked the result.'}
+                return review
+        return None
+
+    def assessment_rounds(self, connection_session_id, workflow_session_id):
+        """The workflow's assessment rounds, oldest first, as (round reference, started at), for the page's round
+        picker as on Windows. Read-only."""
+        binding = self.check(connection_session_id, workflow_session_id)
+        store = self._store() if binding else None
+        return tuple((self._ref(r.round_id), r.created_at)
+                     for r in (store.rounds(binding) if store else ()) if r.kind == 'assessment')
+
+    def verification_changes(self, connection_session_id, workflow_session_id, round_ref):
+        """What the latest verification scan of a round found changed against the round's own scan, as the Windows
+        Results tab shows: one row per control whose status or any sub-check state changed. None while the round has
+        no verification scan. Sub-check states only; raw observed values are never shown."""
+        binding = self.check(connection_session_id, workflow_session_id, round_ref)
+        store = self._store() if binding else None
+        rounds = store.rounds(binding) if store else ()
+        row = next((r for r in rounds if r.kind == 'assessment' and r.round_id == round_ref.record_id), None)
+        if row is None:
+            raise ValueError('Round is outside this workflow')
+        checks = [r for r in rounds if r.kind == 'verification' and (r.details or {}).get('verifies_round') == row.round_id]
+        if not checks:
+            return None
+        before, after = (self._evidence(store, r.evidence_sha256) for r in (row, checks[-1]))
+        old = {a.control_id: a for a in before.assessments}
+        titles = {cid: c.title for cid, c in _controls().items()}
+        rows = []
+        for a in after.assessments:
+            b = old.get(a.control_id)
+            if b is None:
+                continue
+            states = {c.name: c.state for c in b.checks}
+            moved = [f'{c.name}: {states[c.name]} → {c.state}' for c in a.checks
+                     if c.name in states and states[c.name] != c.state]
+            if a.status is b.status and not moved:
+                continue
+            rows.append({'control_id': a.control_id, 'title': titles.get(a.control_id, ''), 'before': b.status.value,
+                         'after': a.status.value, 'change': self._change(b.status.value, a.status.value),
+                         'subchecks': '; '.join(moved) or 'No sub-check changed'})
+        return tuple(rows)
+
+    def explain_finding(self, connection_session_id, workflow_session_id, control_id, *, timeout=60, round_ref=None):
+        """FR17: the local model's plain-language explanation of one finding of a round (the latest by default),
+        from code-written facts only. Unverified text that changes nothing; the page labels it so."""
+        from .agents import explain_finding
+        snapshot = self.snapshot(connection_session_id, workflow_session_id, round_ref)
+        finding = next((f for f in snapshot.findings if f.control_id == control_id), None)
+        control = next((c for c in snapshot.controls if c.control_id == control_id), None)
+        if control is None:
+            raise ValueError('No such control in this assessment')
+        facts = {'control_id': control.control_id, 'title': control.title, 'area': control.area,
+                 'status': control.status.value, 'required': control.expected,
+                 'subchecks': [{'name': s.name, 'status': s.status.value, 'reason': s.detail} for s in control.subchecks]}
+        if finding is not None:
+            facts.update(risk_score=finding.score, level=finding.level, rank=finding.rank,
+                         factors={'I': finding.I, 'E': finding.E, 'P': finding.P, 'L': finding.L, 'D': finding.D},
+                         factor_reasons=list(finding.derivation_reasons))
+        return explain_finding(facts, self.model_client_factory('explanation'), timeout=timeout)
 
     def _dispatch_one(self, store, binding, proposal, operation_id):
         from datetime import datetime, timezone

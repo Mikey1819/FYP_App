@@ -81,7 +81,7 @@ class FixUiTests(StoreFixture):
             RankingAware.target = session.target_id
             return UbuntuBackend(self.root / 'ubuntu' / 'imports.sqlite3', session=session, ledger=ledger,
                                  families={spec.action_id: spec}, model_client_factory=clients.__getitem__,
-                                 model_probe=lambda: True)
+                                 model_probe=lambda: getattr(self, 'model_up', True))
 
         service = ConnectionService(ledger, ssh_factory=lambda *a: channel, backend_factory=backend_factory)
         app = AppTest.from_function(existing_page, default_timeout=60)
@@ -115,10 +115,11 @@ class FixUiTests(StoreFixture):
             with mock.patch('backends.ubuntu.adapter.execution_gate', return_value=()):
                 app.run()
                 self.assertEqual([b for b in app.button if b.key == 'ubuntu_execute'], [])  # confirmation first
+                self.model_up = False  # without the model, Confirm runs the fixes in plan order
                 app.button(key='ubuntu_execute_review').click().run()
                 self.assertIn('Confirm: change 1 setting(s) on', self.text(app))
                 self.assertEqual(self.writes(), [])
-                app.button(key='ubuntu_execute').click().run()
+                app.button(key='ubuntu_execute').click().run()  # the model is down: plan order (agentic: test_ubuntu_remediation_ui)
                 self.assertFalse(list(app.error), [e.value for e in app.error])
                 app.run()
                 self.assertEqual(self.writes(), ['alpha'])
@@ -173,7 +174,7 @@ class FixUiTests(StoreFixture):
             RankingAware.target = session.target_id
             return UbuntuBackend(self.root / 'ubuntu' / 'imports.sqlite3', session=session, ledger=ledger,
                                  families={spec.action_id: spec}, model_client_factory=clients.__getitem__,
-                                 model_probe=lambda: True)
+                                 model_probe=lambda: getattr(self, 'model_up', True))
 
         service = ConnectionService(ledger, ssh_factory=lambda *a: self.make_channel(), backend_factory=backend_factory)
         app = AppTest.from_function(existing_page, default_timeout=60)

@@ -39,6 +39,7 @@ ROUND_LABEL = 'Round: Orchestrator → Scanner → Analysis → plan'
 EXECUTE_LABEL = 'Remediation Agent executing the approved fixes, then Scanner verifying'
 FALLBACK_LABEL = 'Executing the approved fixes in rank order without AI, then verifying'
 UBUNTU_EXECUTE_LABEL = 'Executing the approved fixes, then verifying'
+UBUNTU_AGENTS_EXECUTE_LABEL = 'Remediation Agent executing, then Scanner verifying'
 CLOCK = 'agentic_clock'                # Windows: the last check of the server clock (plain session key).
 CLOCK_NOTICE = 'agentic_clock_notice'  # What the last clock sync did, shown once.
 CLOCK_RECHECK = timedelta(minutes=2)   # The box checks again after this; Start and Execute always check afresh.
@@ -228,7 +229,7 @@ def _previous_session(store, runtime, target):
 
 
 def _reset_view():
-    for key in (TAB, ROUND_VIEW, CONFIRM):
+    for key in (TAB, ROUND_VIEW, CONFIRM, 'ubuntu_round_view'):  # A finished round opens on the latest round.
         st.session_state.pop(key, None)
 
 
@@ -333,20 +334,20 @@ def _ubuntu_safety_check(operator):
 
 def _ubuntu_acceptance(backend, connection):
     """Execution acceptance: two live runs of a harmless marker prove the confirm and rollback paths on this VM.
-    While needed it is shown open; once both passed for the deployed runner it folds into a line that can run it again
-    (for example after the VM was reverted to a snapshot). With the login remembered, one button runs both tests."""
+    Shown only while needed; once both passed for the deployed runner it is gone (administrator request 2026-11-09),
+    and a reinstalled runner (a new digest) makes it needed, and shown, again. With the login remembered, one button
+    runs both tests."""
     from .reconnect import can_reconnect
     error, notice = (st.session_state.pop('ubuntu_acceptance_error', None),
                      st.session_state.pop('ubuntu_acceptance_notice', None))
-    complete = not error and backend.acceptance_complete(connection)
-    if complete and notice:
-        st.success(md_escape(notice))  # the last result stays visible once the panel folds
-    label = ('Safety check (execution acceptance): passed. Run it again' if complete
-             else 'Execution acceptance (required before any live fix)')
-    with st.expander(label, expanded=not complete or bool(error)):
+    if not error and backend.acceptance_complete(connection):
+        if notice:
+            st.success(md_escape(notice))  # the result shows once, right after the check passed
+        return
+    with st.expander('Safety check (execution acceptance): required before any live fix', expanded=True):
         if error:
             st.error(md_escape(error))
-        if notice and not complete:
+        if notice:
             st.success(md_escape(notice))
         deployment = backend.deployment_status(connection)
         if not deployment.ok:
@@ -1080,7 +1081,20 @@ def render_agentic(database_path: Path):
                     earlier, at, open_count = previous
                     st.caption(f'Earlier session on {md_escape(backend.session.identity.hostname)}: last round {myt(at)}'
                                + (f', {open_count} fix(es) still open.' if open_count else '.'))
-                _show_progress(dict(zip(STEPS, snapshot.step_states)), None)
+                # As on Windows: a round picker once the session has more than one round; earlier rounds are read-only.
+                rounds = backend.assessment_rounds(connection, workflow) if workflow else ()
+                chosen = _ubuntu_choose_round(rounds)
+                viewed = snapshot if chosen is None else backend.snapshot(connection, workflow, chosen)
+                _show_progress(dict(zip(STEPS, viewed.step_states)), None)
+                tabs = dict(fixes_panel=lambda: _ubuntu_show_fixes(backend, connection, viewed, capabilities,
+                                                                   editable=chosen is None),
+                            risk_panel=lambda: _ubuntu_show_risk(backend, connection, workflow, viewed),
+                            results_panel=lambda: _ubuntu_show_results(backend, connection, workflow, viewed,
+                                                                       chosen is None))
+                if chosen is not None:
+                    st.caption('An earlier round, read-only. Decisions and execution happen in the latest round.')
+                    render_snapshot_tabs(viewed, **tabs)
+                    return
                 undecided, pending = _ubuntu_open_fixes(snapshot)
                 with st.container(horizontal=True, vertical_alignment='center'):
                     # As on Windows, a new round is offered once nothing in this one awaits a decision or execution,
@@ -1098,19 +1112,22 @@ def render_agentic(database_path: Path):
                     if previous and st.button('Resume earlier session', key='agentic_resume'):
                         st.session_state[WORKFLOW_KEY] = earlier
                         st.session_state.pop(UBUNTU_CONFIRM, None)
+                        st.session_state.pop(UBUNTU_ROUND_VIEW, None)
                         st.rerun()
                     st.button('Refresh status', key='ubuntu_refresh', icon=':material/refresh:',
                               help='Reload this page from the stored records; the server connection stays open.')
                     if undecided:
                         st.markdown(f'{len(undecided)} proposed fix(es) need your decision in **Fixes**.')
+                    if workflow:
+                        _ubuntu_report_button(backend, connection, workflow, snapshot, rounds)
                     if workflow and st.button('New session', key='agentic_reset', type='tertiary',
                                               help='Leave this session; its records stay and it can be resumed.'):
                         st.session_state.pop(WORKFLOW_KEY, None)
                         st.session_state.pop(UBUNTU_CONFIRM, None)
+                        st.session_state.pop(UBUNTU_ROUND_VIEW, None)
                         st.rerun()
                 _ubuntu_execute_bar(backend, connection, snapshot, capabilities)
-                render_snapshot_tabs(snapshot, fixes_panel=lambda: _ubuntu_show_fixes(backend, connection, snapshot,
-                                                                                     capabilities))
+                render_snapshot_tabs(snapshot, **tabs)
                 return
         runtime, store, hardening = _services(database_path, target)
         decisions = _manual_store(database_path)
@@ -1177,7 +1194,8 @@ def render_agentic(database_path: Path):
 # own boxes. Every decision and execution still goes through the backend's typed commands.
 UBUNTU_DONE = {'Fixed, re-scan: Compliant': ('Verified compliant', 'green'), 'Running': ('Running', 'blue'),
                'Applied, re-scan pending': ('Applied, re-scan pending', 'blue'), 'Not applied': ('Refused', 'gray'),
-               'Outcome unknown': ('Outcome uncertain', 'orange'), 'Restored to the before-state': ('Restored', 'gray')}
+               'Outcome unknown': ('Outcome uncertain', 'orange'), 'Restored to the before-state': ('Restored', 'gray'),
+               'Skipped by the Remediation Agent': ('Skipped', 'gray')}
 UBUNTU_CONFIRM = 'ubuntu_confirm_execution'
 
 
@@ -1265,15 +1283,30 @@ def _ubuntu_verification_box(backend, connection, snapshot):
                   on_click=verify, help='Read-only re-scan for applied changes that have none yet; never re-runs a fix.')
 
 
-def _ubuntu_show_fixes(backend, connection, snapshot, capabilities):
+def _ubuntu_review_line(review):
+    """The Orchestrator's next-step decision after the remediation phase, or (`fallback`) that the remaining fixes
+    then ran without AI, as the Windows page shows its outcome."""
+    text = md_escape(review['reason']) if review['next_step'] == 'fallback' \
+        else 'Orchestrator review: ' + md_escape(review['reason'])
+    (st.success if review['next_step'] == 'finish' else st.info)(text)
+
+
+def _ubuntu_show_fixes(backend, connection, snapshot, capabilities, editable=True):
+    """As the Windows Fixes tab. An earlier round (`editable` false) is read-only: no verification, restore or
+    maintenance actions, and its proposals carry no decision commands."""
     from system.ui.components import NO_PLAN, plan_cards, plan_summary
     for key, show in (('ubuntu_decision_error', st.error), ('ubuntu_verify_error', st.error),
                       ('ubuntu_execute_error', st.error), ('ubuntu_verify_notice', st.success)):
         message = st.session_state.pop(key, None)
         if message:
             show(md_escape(message))
-    _ubuntu_verification_box(backend, connection, snapshot)
+    if editable:
+        _ubuntu_verification_box(backend, connection, snapshot)
     workflow = st.session_state.get(WORKFLOW_KEY)
+    review = backend.remediation_review(connection, workflow) \
+        if editable and workflow and hasattr(backend, 'remediation_review') else None
+    if review:  # The Orchestrator's next-step decision after the Remediation Agent ran (code-written sentence).
+        _ubuntu_review_line(review)
     executed, applied, restoring = _ubuntu_states(snapshot)
     cards = plan_cards(snapshot)
     fixes = [c for c in cards if any(p.kind == 'control_remediation' for p in c['proposals'])]
@@ -1314,7 +1347,7 @@ def _ubuntu_show_fixes(backend, connection, snapshot, capabilities):
             with right:
                 _ubuntu_decision_cell(backend, connection, card, p, operator, comment)
             restores = [q for q in card['proposals'] if q.kind == 'recovery']
-            if p.reference in applied or restores:
+            if editable and (p.reference in applied or restores):
                 with left:
                     _ubuntu_restore_actions(backend, connection, card['proposals'], capabilities, workflow, applied,
                                             executed, restoring)
@@ -1330,8 +1363,8 @@ def _ubuntu_show_fixes(backend, connection, snapshot, capabilities):
             'Fix proposed, but the read-only check on the server refused it (a prerequisite is missing, for example '
             'an SSH allow rule before the firewall is enabled)' if c['state'] == NO_PLAN
             else c['decision'] + ': ' + c['reason'])} for c in skipped], hide_index=True)
-    if snapshot.current_round_reference is None:
-        return  # Maintenance belongs to a round's applied fixes: nothing to offer before the first round.
+    if snapshot.current_round_reference is None or not editable:
+        return  # Maintenance belongs to the latest round's applied fixes: nothing before the first round.
     with st.container(border=True):
         st.markdown('**Maintenance**')
         carded = {q.reference for c in cards for q in c['proposals']}
@@ -1343,6 +1376,113 @@ def _ubuntu_show_fixes(backend, connection, snapshot, capabilities):
         _ubuntu_maintenance_actions(backend, connection, snapshot, capabilities, workflow, applied, executed)
 
 
+UBUNTU_ROUND_VIEW = 'ubuntu_round_view'
+UBUNTU_FACTORS = (('I', 'I Security impact'), ('E', 'E Exposure'), ('P', 'P Privilege impact'), ('L', 'L Likelihood'),
+                  ('D', 'D Drift'))
+
+
+def _ubuntu_choose_round(rounds):
+    """As the Windows round picker: newest first; returns the chosen earlier round's reference, or None for the
+    latest round (or when the workflow has a single round)."""
+    if len(rounds) < 2:
+        return None
+    count = len(rounds)
+    labels = {f'Round {n} · {myt(at)}' + (' (latest)' if n == count else ''): ref
+              for n, (ref, at) in enumerate(rounds, 1)}  # unique: each label starts with its round number
+    chosen = labels[st.selectbox('Round', list(reversed(labels)), key=UBUNTU_ROUND_VIEW, width=320)]
+    return None if chosen == rounds[-1][0] else chosen
+
+
+def _ubuntu_report_button(backend, connection, workflow, snapshot, rounds):
+    """As the Windows "Round report": a self-contained HTML record of the latest round, built from stored records."""
+    from system.ui.round_report import ubuntu_round_report
+    if snapshot.current_round_reference is None:
+        return
+    html = ubuntu_round_report(snapshot, rounds, backend.remediation_review(connection, workflow),
+                               backend.verification_changes(connection, workflow, snapshot.current_round_reference))
+    started = next((at for ref, at in rounds if ref == snapshot.current_round_reference), None)
+    st.download_button('Round report', html, icon=':material/download:', mime='text/html', key='ubuntu_report',
+                       file_name='cis-round-' + backend.session.identity.hostname + '-'
+                       + (myt(started, '%Y-%m-%dT%H%M') if started else 'round') + '.html',
+                       help='Self-contained HTML record of this round. Open it in a browser to print to PDF.')
+
+
+def _ubuntu_finding_detail(backend, connection, workflow, snapshot, finding):
+    """As the Windows finding detail: the score's factors with the rule behind each, the benchmark rationale, then
+    the optional explanation by the local model (FR17: unverified, changes nothing)."""
+    control = next((c for c in snapshot.controls if c.control_id == finding.control_id), None)
+    st.markdown(f"**{md_escape(finding.control_id)} · {md_escape(control.title if control else '')}** "
+                f'{level_badge(finding.level)} risk {finding.score}')
+    st.caption(f'6×{finding.I} + 5×{finding.E} + 4×{finding.P} + 3×{finding.L} + 2×{finding.D} = {finding.score}')
+    rules = {r[0]: r for r in finding.derivation_reasons if len(r) > 1 and r[1] == '=' and r[0] in 'IEPLD'}
+    rationale = [r for r in finding.derivation_reasons if r not in rules.values()]
+    st.dataframe([{'Factor': label, 'Value': getattr(finding, name), 'Rule': rules.get(name, '')}
+                  for name, label in UBUNTU_FACTORS], hide_index=True)
+    if rationale:
+        st.caption('Benchmark rationale (paraphrased): ' + md_escape(' '.join(rationale)))
+    round_id = snapshot.current_round_reference.record_id
+    key = 'ubuntu_explain_' + round_id + '_' + finding.control_id
+    if st.button('Explain with local AI', key=key + '_btn', icon=':material/chat:'):
+        with st.spinner('Asking qwen3:8b…'):
+            try:
+                st.session_state[key] = backend.explain_finding(connection, workflow, finding.control_id,
+                    round_ref=snapshot.current_round_reference) or 'The model returned no explanation.'
+            except Exception as exc:  # Explanation is optional; the assessment remains valid.
+                st.session_state[key] = 'Explanation unavailable (' + type(exc).__name__ + ').'
+    if key in st.session_state:
+        st.caption('Model-written explanation (unverified; does not affect the score):')
+        st.text(st.session_state[key])
+
+
+def _ubuntu_show_risk(backend, connection, workflow, snapshot):
+    """As the Windows Risk ranking tab: the ranking, the chosen finding's details (with Explain), then the gaps."""
+    if snapshot.summary is None:
+        st.info('No risk analysis for this round.')
+        return
+    if snapshot.findings:
+        st.caption('R = 6I + 5E + 4P + 3L + 2D, computed by code (' + snapshot.findings[0].risk_policy_version + '). '
+                   'The Analysis Agent can flag findings but cannot change a score.')
+        controls = {c.control_id: c for c in snapshot.controls}
+        flags = {row.control_id: row.flag for row in snapshot.plan if row.flag}
+        st.dataframe([{'Rank': f.rank, 'Control': f.control_id, 'Title': controls[f.control_id].title,
+                       'Sub-checks': controls[f.control_id].observed, 'Risk': f.score, 'Level': f.level,
+                       'Analysis Agent flag': flags.get(f.control_id, '')} for f in snapshot.findings],
+                     hide_index=True, column_config={'Rank': st.column_config.NumberColumn(width='small'),
+                                                     'Risk': st.column_config.NumberColumn(width='small')})
+        by_id = {f.control_id: f for f in snapshot.findings}
+        chosen = st.selectbox('Finding details', list(by_id),
+                              format_func=lambda c: c + ' · ' + controls[c].title,
+                              key='ubuntu_finding_' + snapshot.current_round_reference.record_id)
+        with st.container(border=True):
+            _ubuntu_finding_detail(backend, connection, workflow, snapshot, by_id[chosen])
+    elif snapshot.summary.non_compliant:
+        st.info('No scored findings are available for this assessment.')
+    else:
+        st.success('No scored non-compliant findings.')
+    gaps = [c for c in snapshot.controls if c.status.value in ('Unknown', 'Error')]
+    if gaps:
+        st.markdown('**Gaps (not scored, no fix)**')
+        st.dataframe([{'Control': c.control_id, 'Status': c.status.value, 'Sub-checks': c.observed} for c in gaps],
+                     hide_index=True)
+
+
+def _ubuntu_show_results(backend, connection, workflow, snapshot, editable):
+    """As the Windows Results tab: the Orchestrator's review, the execution results, then the configuration changes
+    the verification scan found."""
+    from system.ui.components import render_results_table
+    review = backend.remediation_review(connection, workflow) if editable and workflow else None
+    if review:
+        _ubuntu_review_line(review)
+    render_results_table(snapshot)
+    changes = backend.verification_changes(connection, workflow, snapshot.current_round_reference) \
+        if workflow and snapshot.current_round_reference else None
+    if changes is not None:
+        st.markdown('**Configuration changes found by the verification rescan**')
+        st.dataframe([{'Control': c['control_id'], 'Title': c['title'], 'Before': c['before'], 'After': c['after'],
+                       'Change': c['change'], 'Sub-checks': c['subchecks']} for c in changes]
+                     or [{'Change': 'No changes detected'}], hide_index=True)
+
+
 def _ubuntu_execute_bar(backend, connection, snapshot, capabilities):
     """Above the tabs, as on Windows: Execute N approved fix(es)…, then a confirmation listing exactly those changes."""
     executed = {r.proposal_reference for r in snapshot.results}
@@ -1351,16 +1491,30 @@ def _ubuntu_execute_bar(backend, connection, snapshot, capabilities):
     if not pending:
         st.session_state.pop(UBUNTU_CONFIRM, None)
         return
+    # The backend takes the round's whole approved set (fixes already run are skipped, never repeated).
+    approved = tuple(p.approved_request_id for p in snapshot.proposals
+                     if p.kind == 'control_remediation' and p.decision == 'approved' and p.approved_request_id)
     if st.session_state.get(UBUNTU_CONFIRM) != snapshot.current_round_reference.record_id:
-        if st.button(f'Execute {len(pending)} approved fix(es)…', type='primary', key='ubuntu_execute_review',
-                     icon=':material/play_arrow:', disabled=not capabilities.can_remediate,
-                     help=None if capabilities.can_remediate else 'Execution is not enabled on this server yet.'):
-            st.session_state[UBUNTU_CONFIRM] = snapshot.current_round_reference.record_id
-            # The backend takes the round's whole approved set (fixes already run are skipped, never repeated).
-            st.session_state['ubuntu_confirm_requests'] = tuple(
-                p.approved_request_id for p in snapshot.proposals
-                if p.kind == 'control_remediation' and p.decision == 'approved' and p.approved_request_id)
-            st.rerun()
+        workflow = st.session_state.get(WORKFLOW_KEY)
+        review = backend.remediation_review(connection, workflow) if workflow else None
+        # As on Windows: once the agents stopped early (the review decided nothing, or found fixes not attempted),
+        # the approved fixes still waiting can run without AI, in plan order, with the same approvals and checks.
+        stopped = bool(review) and (review['next_step'] is None or review['reason_code'] == 'remediation_incomplete')
+        hint = None if capabilities.can_remediate else 'Execution is not enabled on this server yet.'
+        with st.container(horizontal=True):
+            if st.button(f'Execute {len(pending)} approved fix(es)…', type='primary', key='ubuntu_execute_review',
+                         icon=':material/play_arrow:', disabled=not capabilities.can_remediate, help=hint):
+                st.session_state[UBUNTU_CONFIRM] = snapshot.current_round_reference.record_id
+                st.session_state['ubuntu_confirm_requests'] = approved
+                st.rerun()
+            if stopped and st.button('Execute remaining without AI', key='ubuntu_execute_fallback',
+                                     disabled=not capabilities.can_remediate,
+                                     help=hint or 'Same approval, expiry and server checks, in plan order; the result '
+                                                  'is still verified by a fresh scan.'):
+                round_ref, operation = snapshot.current_round_reference, uuid4().hex
+                _start(FALLBACK_LABEL,
+                       lambda: backend.execute_approved(connection, workflow, round_ref, approved, True, operation),
+                       _after_ubuntu_execute)
         return
     findings = {f.control_id: f for f in snapshot.findings}
     now = datetime.now(timezone.utc)
@@ -1372,17 +1526,25 @@ def _ubuntu_execute_bar(backend, connection, snapshot, capabilities):
                        'Approval valid until': myt(p.expiry) + (' (expired)' if datetime.fromisoformat(p.expiry) <= now
                                                                 else '') if p.expiry else '—'}
                       for p in pending], hide_index=True)
-        st.caption('The server re-checks each value and refuses anything that changed since the plan. A fresh scan '
-                   'verifies the result. Expired approvals are refused. SSH and firewall changes must be confirmed '
-                   'after reconnecting, or the server undoes them by itself.')
+        # An agentic round's fixes run in the remediation phase: the Remediation Agent prechecks, skips what is not
+        # ready and executes in its order; the Scanner verifies and the Orchestrator decides the next step. Only when
+        # the model is unavailable do they run in plan order; there is no separate button for that (administrator
+        # request 2026-11-09). The same server checks guard both.
+        agentic = bool(snapshot.plan) and capabilities.can_use_model
+        st.caption(('The Remediation Agent re-checks each fix read-only and skips anything that changed since the '
+                    'plan; the server checks it again before writing. ' if agentic else
+                    'The server re-checks each value and refuses anything that changed since the plan. ')
+                   + 'A fresh scan verifies the result. Expired approvals are refused. SSH and firewall changes must '
+                   'be confirmed after reconnecting, or the server undoes them by itself.')
         with st.container(horizontal=True):
             if st.button('Confirm and execute', type='primary', key='ubuntu_execute'):
                 st.session_state.pop(UBUNTU_CONFIRM, None)
                 ids = st.session_state.pop('ubuntu_confirm_requests', ())
                 workflow, round_ref, operation = (st.session_state.get(WORKFLOW_KEY), snapshot.current_round_reference,
                                                   uuid4().hex)
-                _start(UBUNTU_EXECUTE_LABEL,
-                       lambda: backend.execute_approved(connection, workflow, round_ref, ids, True, operation),
+                # In the background worker, so opening another page cannot stop it half-way.
+                _start(UBUNTU_AGENTS_EXECUTE_LABEL if agentic else UBUNTU_EXECUTE_LABEL,
+                       lambda: backend.execute_approved(connection, workflow, round_ref, ids, not agentic, operation),
                        _after_ubuntu_execute)
             if st.button('Cancel', key='ubuntu_execute_cancel'):
                 st.session_state.pop(UBUNTU_CONFIRM, None)

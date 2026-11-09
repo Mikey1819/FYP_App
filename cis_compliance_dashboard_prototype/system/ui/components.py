@@ -82,7 +82,9 @@ def render_controls(snapshot):
 
 APPLIED = ('applied', 'reconciled_applied')
 NOT_APPLIED = ('refused', 'rolled_back', 'reconciled_not_applied')
-ICONS = {'Awaiting your decision': ':material/build:', 'Fix proposed': ':material/build:',
+SKIPPED = 'Skipped by the Remediation Agent'
+EXPLANATION_LABEL = 'Model-written explanation (unverified; does not affect the score):'
+ICONS = {'Awaiting your decision': ':material/build:', 'Fix proposed': ':material/build:', SKIPPED: ':material/skip_next:',
          'Approved, ready to execute': ':material/thumb_up:', 'Rejected': ':material/block:',
          'Running': ':material/hourglass_top:', 'Applied, re-scan pending': ':material/hourglass_top:',
          'Fixed, re-scan: Compliant': ':material/check_circle:', 'Not applied': ':material/cancel:',
@@ -114,6 +116,8 @@ def _card_state(row, fix, recovery, results):
         return 'Fixed, re-scan: Compliant' if status.value == 'Compliant' else 'Applied, re-scan: ' + status.value
     if result.execution_state == 'running':
         return 'Running'
+    if result.execution_state == 'skipped':  # Closed unexecuted by the Remediation Agent (precheck or a stop).
+        return SKIPPED
     return 'Not applied' if result.execution_state in NOT_APPLIED else 'Outcome unknown'
 
 
@@ -182,11 +186,22 @@ def _render_cards(snapshot, control_actions):
                 control_actions(card)
 
 
+def render_results_table(snapshot):
+    """One row per execution result of the round (also used by the Ubuntu page's Results layout)."""
+    if snapshot.results:
+        st.dataframe([{'Proposal': r.proposal_reference.record_id, 'Execution': r.execution_state,
+            'Verification': r.verification_status.value if r.verification_status else 'Not verified',
+            'Recovery': r.recovery_state, 'Detail': r.detail} for r in snapshot.results], hide_index=True)
+    else:
+        st.info('No execution results for this target.')
+
+
 def render_snapshot_tabs(snapshot, *, tabs=None, fix_actions=None, fix_header=None, control_actions=None,
-                         fixes_panel=None):
+                         fixes_panel=None, risk_panel=None, results_panel=None):
     """Common panels, also used while a verified backend requires setup. `fix_actions` renders the page's own
     decision/execution controls inside Fixes; with a plan (Ubuntu), `fix_header` renders above the per-control
-    cards and `control_actions(card)` inside each card. The panels themselves never call a backend."""
+    cards and `control_actions(card)` inside each card. `fixes_panel`, `risk_panel` and `results_panel` replace a
+    tab with the page's own layout (Ubuntu: the Windows page's layout). The panels themselves never call a backend."""
     fixes, risk, controls, results, log = tabs or st.tabs(TABS)
     with fixes:
         if fixes_panel is not None:  # The page's own Fixes layout (Ubuntu: the same layout as the Windows page).
@@ -212,7 +227,9 @@ def render_snapshot_tabs(snapshot, *, tabs=None, fix_actions=None, fix_header=No
         if fix_actions is not None and fixes_panel is None:
             fix_actions()
     with risk:
-        if snapshot.findings:
+        if risk_panel is not None:
+            risk_panel()
+        elif snapshot.findings:
             st.dataframe([{'Rank': f.rank, 'Control': f.control_id, 'Risk': f.score, 'Level': f.level,
                            'I': f.I, 'E': f.E, 'P': f.P, 'L': f.L, 'D': f.D,
                            'Derivation': '\n'.join(f.derivation_reasons)} for f in snapshot.findings], hide_index=True)
@@ -221,12 +238,10 @@ def render_snapshot_tabs(snapshot, *, tabs=None, fix_actions=None, fix_header=No
     with controls:
         render_controls(snapshot)
     with results:
-        if snapshot.results:
-            st.dataframe([{'Proposal': r.proposal_reference.record_id, 'Execution': r.execution_state,
-                'Verification': r.verification_status.value if r.verification_status else 'Not verified',
-                'Recovery': r.recovery_state, 'Detail': r.detail} for r in snapshot.results], hide_index=True)
+        if results_panel is not None:
+            results_panel()
         else:
-            st.info('No execution results for this target.')
+            render_results_table(snapshot)
     with log:
         if snapshot.events:
             st.dataframe([{'Role': e.role, 'Event': e.event_kind, 'Tool': e.tool_name,
