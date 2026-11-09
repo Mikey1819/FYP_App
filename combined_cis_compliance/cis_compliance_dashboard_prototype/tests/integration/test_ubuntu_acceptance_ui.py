@@ -85,7 +85,13 @@ class AcceptanceUiTests(ConfirmUiTests):
             self.assertFalse(list(app.error), [e.value for e in app.error])
             self.assertTrue(any('Safety check passed' in s.value for s in app.success), [s.value for s in app.success])
             self.assertNotEqual(app.session_state[CONNECTION_KEY], first)
-            [folded] = [e for e in app.expander if e.label.startswith('Safety check (execution acceptance): passed')]
+            # Once passed, the safety check is no longer shown (administrator request 2026-11-09); the result line
+            # above shows once, then the page carries nothing of it.
+            self.assertEqual([e.label for e in app.expander if 'acceptance' in e.label.lower()], [])
+            self.assertEqual([b.key for b in app.button if b.key and b.key.startswith(('ubuntu_acceptance',
+                                                                                      'ubuntu_safety'))], [])
+            app.run()
+            self.assertFalse([s.value for s in app.success if 'Safety check' in s.value])
             session = service.session(app.session_state[CONNECTION_KEY])
             outcomes = [(r['scenario'], r['outcome']) for r in ledger.acceptance_runs(session.target_id,
                                                                                      session.registration_epoch)]
@@ -165,12 +171,11 @@ class AcceptanceUiTests(ConfirmUiTests):
             keyed('ubuntu_acceptance_status_')[0].click().run()  # the operator checks status once the timer fired
             self.assertFalse(list(app.error), [e.value for e in app.error])
             self.assertNotIn('not enabled', gate_text())
-            # Both scenarios passed for this runner: the required panel is gone (administrator request 2026-11-08) and
-            # folds into a line that can run the check again, e.g. after a snapshot revert (request 2026-11-09).
+            # Both scenarios passed for this runner: the panel is gone (administrator requests 2026-11-08 and
+            # 2026-11-09). A reinstalled runner changes its digest, which makes the check needed, and shown, again.
             app.run()
-            self.assertEqual([e for e in app.expander if e.label.startswith('Execution acceptance')], [])
-            [folded] = [e for e in app.expander if e.label.startswith('Safety check (execution acceptance): passed')]
-            self.assertTrue(keyed('ubuntu_acceptance_'))  # Still there, to run again.
+            self.assertEqual([e.label for e in app.expander if 'acceptance' in e.label.lower()], [])
+            self.assertEqual(keyed('ubuntu_acceptance_') + keyed('ubuntu_safety'), [])
         # The rollback run restored its before-state: the marker the confirmed run left, never its own.
         self.assertTrue(self.marker.content.startswith('confirm:'))
         for database in self.root.rglob('*.sqlite3'):
