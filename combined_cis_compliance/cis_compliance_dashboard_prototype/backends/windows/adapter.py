@@ -169,6 +169,28 @@ class WindowsBackend(BoundBackend):
                              'from before, so the outcome stays uncertain. Check the setting on the server.')
         return state.detail
 
+    def final_scan(self, connection_session_id, workflow_session_id, operation_id):
+        """The read-only scan before a hardening session is completed. Claimed like an assessment (it waits for any
+        change on the server, and it is recorded); refused, not left unresolved, when it fails, since it writes nothing.
+        Returns its framework run."""
+        binding = self.check(connection_session_id, workflow_session_id)
+        self._settle_unattempted(binding)
+        if binding is None:
+            raise ValueError('No hardening session to complete.')
+        owner, state = self.ledger.claim(binding, operation_id, 'assessment',
+                                         {'intent': operation_id, 'mode': 'final_scan'})
+        if not owner:
+            raise ValueError('This final scan was already started.')
+        try:
+            identity = self.session.identity
+            run_id = self.engine.scanner.request(identity.hostname, identity.machine_identity)['framework_run_id']
+            self.engine.history.record_drift(run_id)
+        except Exception:
+            self.ledger.transition(operation_id, 'refused', detail='Final scan failed; nothing was changed.')
+            raise
+        self.ledger.transition(operation_id, 'completed', detail=run_id)
+        return run_id
+
     def clock_offset(self, connection_session_id):
         """The server's clock against this laptop's (read-only); see LiveScanner.clock_offset."""
         self.check(connection_session_id)

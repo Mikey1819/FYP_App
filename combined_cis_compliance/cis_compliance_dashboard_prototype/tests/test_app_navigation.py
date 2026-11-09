@@ -79,6 +79,16 @@ class AppNavigationTests(unittest.TestCase):
         self.assertNotIn(NOTICE, app.session_state)  # Not shown again later on the Servers page.
         self.assertEqual(self.open('history', app=app).title[0].value, 'History and configuration drift')
 
+    def test_completing_a_hardening_session_opens_overview_with_the_message(self):
+        from hardening.agentic_view import COMPLETED, GO_OVERVIEW
+        app = self.open(**{LIVE_TARGET: target()})
+        app = self.open('agentic', app=app, **{COMPLETED: '**Hardening complete for FIXTURE-SERVER.** All 32 controls '
+                                               'this program checks are compliant.', GO_OVERVIEW: True})
+        self.assertEqual(app.title[0].value, 'Overview')
+        self.assertTrue(any('Hardening complete for FIXTURE-SERVER' in s.value for s in app.success))
+        self.assertEqual(self.open('overview', app=app).title[0].value, 'Overview')  # Shown once.
+        self.assertFalse(any('Hardening complete' in s.value for s in app.success))
+
     def test_the_servers_page_stays_reachable_once_connected(self):
         app = self.open(**{LIVE_TARGET: target()})
         self.assertEqual(self.open('servers', app=app).title[0].value, 'Servers')  # Moved there once only.

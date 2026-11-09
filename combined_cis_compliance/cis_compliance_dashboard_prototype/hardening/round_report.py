@@ -62,9 +62,51 @@ def _decision(record):
     return record['decision'].capitalize(), f'{who}, {myt(when, FULL)} MYT' if when else who
 
 
-def round_report(hardening, rounds, assessment_round, *, now=None, manual=None):
+PHASE_LIMIT_SECONDS = 600  # NFR06: each phase (assessment, or remediation with verification) within 10 minutes.
+
+
+def duration_text(seconds):
+    seconds = round(seconds)
+    return f'{seconds // 60} min {seconds % 60:02d} s' if seconds >= 60 else f'{seconds} s'
+
+
+def phase_time(hardening, phase_round):
+    """(total seconds or None, {agent: seconds}) for one phase. The total is from the phase's recorded start to its
+    stored end; a round from before starts were recorded uses the Orchestrator's own run time, which covers the
+    agents it delegated. A phase without either (for example executed without AI before starts were recorded) has
+    no total."""
+    agents = {}
+    for trace in hardening.traces(phase_round['round_id']):
+        finished = next((e['data'] for e in reversed(trace['events']) if e['kind'] == 'finished'), {})
+        if finished.get('duration_seconds') is not None:  # A Scanner may run twice in one phase.
+            agents[trace['agent_role']] = agents.get(trace['agent_role'], 0) + finished['duration_seconds']
+    total = None
+    if phase_round.get('started_at'):
+        total = (datetime.fromisoformat(phase_round['created_at'])
+                 - datetime.fromisoformat(phase_round['started_at'])).total_seconds()
+    elif ORCHESTRATOR in agents:
+        total = agents[ORCHESTRATOR]
+    return total, agents
+
+
+def phase_line(hardening, phase_round, name):
+    """'Assessment took 4 min 53 s (Scanner 37 s · ...), within the 10-minute limit per phase.' or None."""
+    total, agents = phase_time(hardening, phase_round)
+    if total is None:
+        return None
+    own = agents.get(ORCHESTRATOR, 0) - sum(s for role, s in agents.items() if role != ORCHESTRATOR)
+    parts = [f'{role.replace(" Agent", "")} {duration_text(s)}' for role, s in agents.items() if role != ORCHESTRATOR]
+    if own > 1:
+        parts.append(f'Orchestrator {"planning" if name == "Assessment" else "review"} {duration_text(own)}')
+    limit = ('within the 10-minute limit per phase' if total <= PHASE_LIMIT_SECONDS
+             else 'over the 10-minute limit per phase')
+    return f'{name} took {duration_text(total)}' + (f' ({" · ".join(parts)})' if parts else '') + f', {limit}.'
+
+
+def round_report(hardening, rounds, assessment_round, *, now=None, manual=None, completion=None):
     """HTML for one assessment round and, once run, its remediation and verification. `manual`: the administrator's
-    latest choice per control this program does not fix (manual_controls.py)."""
+    latest choice per control this program does not fix (manual_controls.py). `completion`: the session's completion
+    record, which adds the completion section (the completion report)."""
     now = now or datetime.now(timezone.utc)
     run_id = assessment_round['framework_run_id']
     outcome = assessment_round['outcome']
@@ -154,8 +196,12 @@ def round_report(hardening, rounds, assessment_round, *, now=None, manual=None):
                 [(c['control_id'], c['title'], shown(c['before'], c['status_before']), shown(c['after'], c['status_after']),
                   c['change']) for c in changed], 'No changes detected.'))
 
+    times = [line for line in (phase_line(hardening, assessment_round, 'Assessment'),
+                               verification and phase_line(hardening, verification, 'Execution and verification'))
+             if line]
     parts.append('<h2>5. Agent activity</h2><p class="muted">Every tool call was chosen by an agent and validated by '
-                 'code; rejected calls had no effect.</p>' + _agents(hardening, assessment_round))
+                 'code; rejected calls had no effect.</p>' + ''.join(f'<p>{escape(t)}</p>' for t in times)
+                 + _agents(hardening, assessment_round))
     if verification is not None:
         parts.append('<h3>Remediation phase</h3>' + _agents(hardening, verification))
 
@@ -163,6 +209,18 @@ def round_report(hardening, rounds, assessment_round, *, now=None, manual=None):
         ('Control', 'Title', 'Area', 'Status', 'Observed'),
         [(r.control.control_id, r.control.title, r.control.area, r.status.value, shown(r.evidence.value, r.status.value))
          for r in results], 'No assessment was collected in this round.'))
+    if completion:
+        exceptions = completion['exceptions']
+        parts.append('<h2>7. Completion</h2><p>The hardening session was completed after a final read-only scan in which '
+                     'every control was compliant or accepted as an exception. The session is closed; a later check '
+                     'starts a new session.</p>' + _table(
+                         ('Completed by', 'When (MYT)', 'Final scan', 'Compliant', 'Accepted as exceptions'),
+                         [(completion['operator'], myt(completion['completed_at'], FULL), completion['final_run_id'],
+                           f"{completion['compliant']} of {completion['total']}", str(len(exceptions)))]))
+        if exceptions:
+            parts.append('<h3>Accepted exceptions</h3>' + _table(
+                ('Control', 'Title', 'Status in the final scan', 'Reason', 'Accepted by'),
+                [(e['control_id'], e['title'], e['status'], e['reason'], e['operator']) for e in exceptions]))
     return _PAGE.format(title=title, body='\n'.join(parts), benchmark=escape(BENCHMARK))
 
 

@@ -46,7 +46,7 @@
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/agentic.py": {
-      "sha256": "d71301519cb3312393eb5e42cc9d3357b27357b4d7bf56012ff0c418bee0bde0",
+      "sha256": "036235b84b17ceb3b5bbe5a50ac9af15d55eb753135c6feed25b29f3ca05d603",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/agentic_view.py": {
@@ -114,7 +114,7 @@
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/round_report.py": {
-      "sha256": "4d29058c322fd0970a2ddc4bf90276678d4de2efaf06711910f95b1b6428daba",
+      "sha256": "3cc9e807b167ba0caa5d8c4aa5723bece676f13370f067549cde030ef156702e",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/server2022_catalogue.py": {
@@ -135,7 +135,7 @@
     },
     "cis_compliance_dashboard_prototype/hardening/servers_view.py": {
       "category": "protected",
-      "sha256": "57654821541d565e9b0f94128e1466d453f040d8408bad7c0bb2fbbfce5aab5b"
+      "sha256": "e01537a089a36992d3db7f65194885c71b8356de4b4378af59e9d4e8e765f032"
     },
     "cis_compliance_dashboard_prototype/hardening/system_detect.py": {
       "category": "protected",
@@ -174,12 +174,12 @@
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/tests/test_agentic_view.py": {
-      "sha256": "b0563c30a10ff4501e91bf0208d3c4ef5e77a7349b8720009a1f63c8b73a153f",
+      "sha256": "13db13ce04a9cde4df22039b80aa8ef02f29b874ed80b60a3eed47e05b40a43d",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/tests/test_app_navigation.py": {
       "category": "protected",
-      "sha256": "dc695bfe51d6e3949335851eb3e851df5441235886b685dafaa19aa68031e7d4"
+      "sha256": "366820c7ac9e0958eb830ea236f090b1bb4b86bb43f27fe14174398e269e9a56"
     },
     "cis_compliance_dashboard_prototype/tests/test_catalogue.py": {
       "sha256": "80321763092f23ddd15d9880dde1b1a134cb71c173616569b8baa29d180c7430",
@@ -227,7 +227,7 @@
     },
     "cis_compliance_dashboard_prototype/tests/test_pairing_flow.py": {
       "category": "protected",
-      "sha256": "262a34657c418be07a2cc7f9f046cb4bc34f53b2aa4b3fdb38a632046a35f34b"
+      "sha256": "329371f6a3419e073ce8ce1eab730a3f730f1911e337e2ebfdc2d5a4b241bcda"
     },
     "cis_compliance_dashboard_prototype/tests/test_round_report.py": {
       "sha256": "17cb24d6e0dcec411892b7ec5431820e85145ac855ce55d0de73f1f12e2c272f",

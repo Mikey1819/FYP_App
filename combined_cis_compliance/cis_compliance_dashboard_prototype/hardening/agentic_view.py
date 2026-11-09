@@ -15,9 +15,10 @@ from .domain import Status
 from .framework import AssessmentRuns
 from .import_storage import ImportedEvidenceStore
 from .manual_controls import (AUTOMATED, CHOICES, MANUAL_FIX, MAX_REASON, NOT_AUTOMATED, PROGRAM_FIX, WHY, WITHDRAWN,
-                              ManualDecisionStore, in_words, setting, steps)
+                              ManualDecisionStore, completion_steps, in_words, open_items, setting, steps)
+from .overview_view import COMPLETED
 from .remediation import RemediationStore
-from .round_report import round_analysis, round_report, shown
+from .round_report import duration_text, phase_line, round_analysis, round_report, shown
 from .ui import VERDICT_COLOR, badge, level_badge, md_escape, myt
 from .winrm_channel import MAX_CLOCK_OFFSET_SECONDS, ChannelError, LiveScanner
 from system.bootstrap import active_backend, CONNECTION_KEY, SERVICE_KEY, WORKFLOW_KEY
@@ -47,6 +48,12 @@ NAME_NEEDED = 'agentic_name_needed'   # A decision was clicked before a name was
 MANUAL_ASK = 'agentic_manual_exception'  # The not-automated control whose exception reason is being typed.
 MANUAL_ERROR = 'agentic_manual_error'
 SETTLE_LABEL = 'Rescanning the server (read-only) to settle an uncertain fix'
+FINAL_LABEL = 'Final scan before completing (read-only)'
+COMPLETE_ASK = 'agentic_complete_ask'      # The latest round whose Complete hardening panel is open.
+COMPLETE_OPEN = 'agentic_complete_open'    # What the last final scan still found open (time, items).
+COMPLETE_ERROR = 'agentic_complete_error'
+GO_OVERVIEW = 'workspace_go_overview'      # A session was just completed: app.py opens Overview, which says so.
+SCANS = ('assessment', 'verification_scan', 'settle_scan', 'final_scan')  # Round rows that hold a scan of the server.
 SETTLE_NOTICE = 'agentic_settle_notice'  # What the rescan to settle found, shown once.
 
 TABS = ('Fixes', 'Risk ranking', 'Controls', 'Results', 'Agent log')
@@ -70,6 +77,8 @@ def _services(database_path, target):
 
 
 def _decide(store, request_id, *, approve, operator, comment):
+    if store.get(request_id)['decision'] is not None:
+        return  # Already decided: a repeated click, or another browser tab. Nothing changes.
     backend = active_backend(st.session_state)
     if backend:
         backend.decide(st.session_state[CONNECTION_KEY], st.session_state[WORKFLOW_KEY],
@@ -119,10 +128,21 @@ def _collect_finished(key):
 
 def _show_running(job):
     with st.container(border=True):
-        st.markdown(f':blue-badge[:material/progress_activity: Running] **{md_escape(job.label)}**')
+        _running_clock(job.key)
         st.caption(f'Started {myt(job.started_at, "%H:%M:%S")}. It keeps running if you open another page; this page '
                    'shows the result when it has finished. Starting other work and disconnecting wait until then.')
         st.button('Refresh', key='agentic_job_refresh', icon=':material/refresh:')
+
+
+@st.fragment(run_every=1)
+def _running_clock(key):
+    """The running work and how long it has taken so far, every second; the page shows the result once it ends."""
+    job = background.running(key)
+    if job is None:
+        st.rerun(scope='app')
+    seconds = (datetime.now(timezone.utc) - job.started_at).total_seconds()
+    st.markdown(f':blue-badge[:material/progress_activity: Running] **{md_escape(job.label)}** · '
+                f'{duration_text(seconds)} so far')
 
 
 def _after_round(result, error):
@@ -824,6 +844,11 @@ def _action_bar(hardening, session_id, latest, state, rounds, target, manual_ope
                 st.session_state[CONFIRM] = latest['round_id']
                 st.session_state['agentic_confirm_requests'] = tuple(r['proposal']['request_id'] for r in state['pending'])
                 st.rerun()
+        if not locked and not state['undecided'] and not live and st.session_state.get(COMPLETE_ASK) != latest['round_id']:
+            st.button('Complete hardening…', key='agentic_complete', icon=':material/flag:',
+                      help='A final read-only scan, then the session is completed if every control is compliant or '
+                           'accepted as an exception.', on_click=st.session_state.__setitem__,
+                      args=(COMPLETE_ASK, latest['round_id']))
         if expired:
             st.markdown(f'{expired} approval(s) expired before they ran'
                         + ('; run the next round to propose them again.' if not live else '.'))
@@ -958,6 +983,161 @@ def _show_fixes(store, assessment_round, state, analysis, *, editable):
     return operator if asked else None
 
 
+# ------------------------------------------------------------------ Windows: completing a hardening session
+def _newest_scan(runtime, rounds):
+    """(run id, results) of the newest scan in this session: a round, a verification, a rescan or a final scan."""
+    run_id = next(r['framework_run_id'] for r in reversed(rounds) if r['kind'] in SCANS and r['framework_run_id'])
+    return run_id, runtime.imports.get(runtime.get(run_id).evidence_sha256).assessment.results
+
+
+def _completion_message(hostname, compliant, total, exceptions):
+    """What Overview says once a session is completed (Markdown)."""
+    host = md_escape(hostname)
+    after = ' The full record is in History. Run a new round at any time to check that nothing has changed.'
+    if not exceptions:
+        return f'**Hardening complete for {host}.** All {total} controls this program checks are compliant.' + after
+    return (f'**Hardening complete for {host}.** Every control this program checks is compliant, except '
+            f'{len(exceptions)} you accepted as an exception ({md_escape(", ".join(e["control_id"] for e in exceptions))})'
+            f': {compliant} of {total} compliant.' + after)
+
+
+def _click_complete(hardening, runtime, store, decisions, session_id, target_id, assessed_run, hostname):
+    """Button callback: the final scan in the background (clock check first), then completion if nothing is open."""
+    operator = (st.session_state.get('agentic_complete_operator') or '').strip()
+    if not operator:
+        st.session_state[COMPLETE_ERROR] = 'Type your name first: it is recorded with the completion.'
+        return
+    backend, key = active_backend(st.session_state), job_key()
+    connection, workflow = st.session_state.get(CONNECTION_KEY), st.session_state.get(WORKFLOW_KEY)
+
+    def work():
+        if backend:
+            run_id = backend.final_scan(connection, workflow, uuid4().hex)
+        else:
+            run_id = hardening.scanner.request(hardening.target.hostname, hardening.target.machine_uuid)['framework_run_id']
+            hardening.history.record_drift(run_id)
+        results = runtime.imports.get(runtime.get(run_id).evidence_sha256).assessment.results
+        choices = decisions.latest(target_id, session_id)
+        items = open_items(results, choices)
+        compliant = sum(r.status == Status.COMPLIANT for r in results)
+        if items:
+            store.add_round(session_id, 'final_scan', run_id, remediated_run_id=assessed_run, verdicts=[], outcome=dict(
+                outcome='not_complete', reason=f'{len(items)} control(s) still open: '
+                + ', '.join(i['control_id'] for i in items) + '.'))
+            return dict(completed=False, items=items)
+        exceptions = [dict(control_id=r.control.control_id, title=r.control.title, status=r.status.value,
+                           reason=choices[r.control.control_id]['reason'],
+                           operator=choices[r.control.control_id]['operator'])
+                      for r in results if r.status != Status.COMPLIANT]
+        decisions.complete(target_id, session_id, operator=operator, final_run_id=run_id, compliant=compliant,
+                           total=len(results), exceptions=exceptions)
+        store.add_round(session_id, 'final_scan', run_id, remediated_run_id=assessed_run, verdicts=[], outcome=dict(
+            outcome='completed', reason=f'{compliant} of {len(results)} compliant, {len(exceptions)} accepted as '
+            f'exception(s). Completed by {operator}.'))
+        return dict(completed=True, compliant=compliant, total=len(results), exceptions=exceptions)
+
+    def after(result, error):
+        if error is not None:
+            return False  # Shown as the job's error, as for a round.
+        if result['completed']:
+            for name in (COMPLETE_ASK, COMPLETE_OPEN, COMPLETE_ERROR):
+                st.session_state.pop(name, None)
+            st.session_state[COMPLETED] = _completion_message(hostname, result['compliant'], result['total'],
+                                                              result['exceptions'])
+            st.session_state[GO_OVERVIEW] = True
+            st.rerun()  # Once, now: app.py then opens Overview, which shows the message.
+        else:
+            st.session_state[COMPLETE_OPEN] = dict(at=datetime.now(timezone.utc), items=result['items'])
+        return True
+    try:
+        job = background.start(key, FINAL_LABEL, _clock_first(hardening, work), after=_clock_after(after, key))
+    except ValueError as exc:
+        st.session_state[JOB_ERROR] = _error_text(exc)
+        return
+    job.wait(WAIT_SECONDS)
+
+
+def _show_completion(hardening, runtime, store, decisions, rounds, latest, session_id, target_id, target, clock_ok):
+    """The Complete hardening panel: what is still open in the newest scan, accepting any of it as an exception,
+    and the final scan that completes the session."""
+    run_id, results = _newest_scan(runtime, rounds)
+    choices = decisions.latest(target_id, session_id)
+    items = open_items(results, choices)
+    found = st.session_state.get(COMPLETE_OPEN)
+    with st.container(border=True):
+        st.markdown('**Complete hardening**')
+        st.caption('A final read-only scan checks the server now. The session is completed when every control is '
+                   'compliant or accepted as an exception; it is then closed (read-only), and a later check starts a '
+                   'new session. A control you will fix by hand counts once the final scan finds it compliant.')
+        error = st.session_state.pop(COMPLETE_ERROR, None)
+        if error:
+            st.error(md_escape(error))
+        if found:
+            st.warning(f"Not completed: the final scan at {myt(found['at'], '%H:%M:%S')} still found "
+                       f"{len(found['items'])} control(s) open. Fix them, or accept them as exceptions, then run the "
+                       'final scan again.')
+        operator = st.text_input('Your name (recorded with the completion and each exception)',
+                                 key='agentic_complete_operator', width=320,
+                                 value=st.session_state.get('agentic_operator') or '')
+        if items:
+            st.markdown(f'**{len(items)} control(s) still open** in the newest scan:')
+            for item in items:
+                left, right = st.columns([3, 1.4], vertical_alignment='center')
+                left.markdown(f"**{item['control_id']}** · {md_escape(item['title'])} "
+                              f":orange-badge[{md_escape(item['status'])}]")
+                left.caption(md_escape(item['why']))
+                with left.expander('How to fix it on the server' if item['control_id'] in NOT_AUTOMATED
+                                   else 'How to close it'):
+                    st.markdown('\n'.join(f'{n}. {md_escape(text)}' for n, text in
+                                          enumerate(completion_steps(item['control_id'], item['status']), 1)))
+                with right:
+                    reason = st.text_input('Reason to accept it', key='agentic_complete_reason_' + item['control_id'],
+                                           max_chars=MAX_REASON, label_visibility='collapsed',
+                                           placeholder='Reason to accept it as an exception')
+                    if st.button('Accept as exception', key='agentic_complete_accept_' + item['control_id']):
+                        try:
+                            decisions.record(target_id, item['control_id'], 'exception', operator=operator,
+                                             reason=reason, round_id=latest['round_id'], session_id=session_id)
+                            st.session_state.pop(COMPLETE_OPEN, None)  # The last final scan's verdict is now out of date.
+                        except ValueError as exc:
+                            st.session_state[COMPLETE_ERROR] = str(exc)
+                        st.rerun()
+        else:
+            st.success('In the newest scan, every control is compliant or accepted as an exception. The final scan '
+                       'checks it once more.')
+        with st.container(horizontal=True):
+            st.button('Run final scan and complete', type='primary', key='agentic_complete_run', icon=':material/flag:',
+                      disabled=not clock_ok, on_click=_click_complete,
+                      args=(hardening, runtime, store, decisions, session_id, target_id, latest['framework_run_id'],
+                            target.hostname))
+            if st.button('Cancel', key='agentic_complete_cancel'):
+                st.session_state.pop(COMPLETE_ASK, None)
+                st.session_state.pop(COMPLETE_OPEN, None)
+                st.rerun()
+
+
+def _show_completed(hardening, rounds, latest, target, completion, choices):
+    """A completed session: read-only, with its completion report."""
+    exceptions = completion['exceptions']
+    st.success(f"**Hardening complete.** Completed by {md_escape(completion['operator'])} on "
+               f"{myt(completion['completed_at'])}: {completion['compliant']} of {completion['total']} controls compliant"
+               + (f', {len(exceptions)} accepted as exception(s)' if exceptions else '')
+               + '. This session is closed (read-only); a new check starts a new session.', icon=':material/verified:')
+    with st.container(horizontal=True, vertical_alignment='center'):
+        st.download_button('Completion report', round_report(hardening, rounds, latest, manual=choices,
+                                                             completion=completion),
+                           icon=':material/download:', mime='text/html', key='agentic_completion_report',
+                           file_name='cis-completion-' + target.hostname + '-'
+                           + myt(completion['completed_at'], '%Y-%m-%dT%H%M') + '.html',
+                           help='The last round, plus who completed the session, when, the final scan and each '
+                                'accepted exception. Open it in a browser to print to PDF.')
+        if st.button('New session', key='agentic_reset', type='tertiary'):
+            del st.session_state[SESSION]
+            st.session_state.pop(WORKFLOW_KEY, None)
+            _reset_view()
+            st.rerun()
+
+
 # ------------------------------------------------------------------ Windows: controls this program does not fix
 def _manual_store(database_path):
     return ManualDecisionStore(Path(database_path).with_name('manual_decisions.sqlite3'))
@@ -973,17 +1153,18 @@ def _manual_results(runtime, assessment_round):
                        if r.control.control_id in NOT_AUTOMATED}
 
 
-def _manual_open(runtime, decisions, assessment_round):
-    """Not-automated controls that are not compliant and have no choice recorded yet."""
+def _manual_open(runtime, decisions, assessment_round, session_id):
+    """Not-automated controls that are not compliant and have no choice recorded yet in this session."""
     target_id, results = _manual_results(runtime, assessment_round)
-    chosen = decisions.latest(target_id) if target_id else {}
+    chosen = decisions.latest(target_id, session_id) if target_id else {}
     return [c for c, r in results.items() if r.status != Status.COMPLIANT and c not in chosen]
 
 
-def _manual_cell(decisions, target_id, control, decision, operator, round_id):
+def _manual_cell(decisions, target_id, control, decision, operator, round_id, session_id):
     def record(choice, reason=''):
         try:
-            decisions.record(target_id, control, choice, operator=operator, reason=reason, round_id=round_id)
+            decisions.record(target_id, control, choice, operator=operator, reason=reason, round_id=round_id,
+                             session_id=session_id)
         except ValueError as exc:
             st.session_state[MANUAL_ERROR] = str(exc)
         st.session_state.pop(MANUAL_ASK, None)
@@ -1015,13 +1196,13 @@ def _manual_cell(decisions, target_id, control, decision, operator, round_id):
         st.caption('Your name is recorded with the choice.')
 
 
-def _show_not_automated(runtime, decisions, assessment_round, analysis, operator, *, editable):
+def _show_not_automated(runtime, decisions, assessment_round, analysis, operator, *, editable, session_id):
     """The controls this program assesses but never changes: why, how to fix each by hand, and the administrator's
     choice for each (fix it by hand, or accept it as an exception)."""
     target_id, results = _manual_results(runtime, assessment_round)
     if not results:
         return
-    chosen = decisions.latest(target_id)
+    chosen = decisions.latest(target_id, session_id)  # This session's choices only: a new session starts fresh.
     scores = {f['control_id']: f for f in (analysis or {}).get('ranked', [])}
     st.markdown('**Not fixed by this program**')
     st.caption(md_escape(WHY))
@@ -1054,7 +1235,8 @@ def _show_not_automated(runtime, decisions, assessment_round, analysis, operator
                 st.markdown('\n'.join(f'{n}. {md_escape(text)}' for n, text in enumerate(steps(control), 1)))
             with right:
                 if editable and not compliant:
-                    _manual_cell(decisions, target_id, control, decision, operator, assessment_round['round_id'])
+                    _manual_cell(decisions, target_id, control, decision, operator, assessment_round['round_id'],
+                                 session_id)
 
 
 def _finding_detail(finding, round_id):
@@ -1306,27 +1488,39 @@ def render_agentic(database_path: Path):
         state = _round_state(store, rounds, viewing)
         analysis = round_analysis(hardening, viewing) if viewing['framework_run_id'] else None
         _show_progress(_steps(viewing, state, analysis), state['verification'])
+        times = [line for line in (phase_line(hardening, viewing, 'Assessment'), state['verification'] and phase_line(
+            hardening, state['verification'], 'Execution and verification')) if line]
+        if times:
+            st.caption(':material/timer: ' + '  \n:material/timer: '.join(md_escape(t) for t in times))
         if viewing['outcome']['outcome'] not in PLANNED:
             st.warning(md_escape(viewing['outcome']['reason']))
         settled = st.session_state.pop(SETTLE_NOTICE, None)
         if settled:
             st.success(md_escape(settled))
-        if is_latest:
-            manual_target = _round_target(runtime, latest)
+        manual_target = _round_target(runtime, latest)
+        completion = decisions.completion(manual_target, session_id) if manual_target else None
+        choices = decisions.latest(manual_target, session_id) if manual_target else {}
+        if completion:
+            _show_completed(hardening, rounds, latest, target, completion, choices)
+        elif is_latest:
             locked = _locked()
             clock_ok = _action_bar(hardening, session_id, latest, state, rounds, target,
-                                   _manual_open(runtime, decisions, latest),
-                                   decisions.latest(manual_target) if manual_target else {}, locked)
+                                   _manual_open(runtime, decisions, latest, session_id), choices, locked)
             if state['pending'] and not locked and st.session_state.get(CONFIRM) == latest['round_id']:
                 _confirm_execution(hardening, session_id, state, target, clock_ok)
-        else:
+            if st.session_state.get(COMPLETE_ASK) == latest['round_id'] and not locked and not state['undecided']:
+                _show_completion(hardening, runtime, store, decisions, rounds, latest, session_id, manual_target,
+                                 target, clock_ok)
+        if not is_latest:
             st.caption('An earlier round, read-only. Decisions and execution happen in the latest round.')
+        editable = is_latest and not completion
         if TAB not in st.session_state:
             st.session_state[TAB] = _default_tab(state)
         fixes, risk, controls, results, log = st.tabs(TABS, key=TAB, on_change='rerun')
         with fixes:
-            operator = _show_fixes(store, viewing, state, analysis, editable=is_latest)
-            _show_not_automated(runtime, decisions, viewing, analysis, operator, editable=is_latest)
+            operator = _show_fixes(store, viewing, state, analysis, editable=editable)
+            _show_not_automated(runtime, decisions, viewing, analysis, operator, editable=editable,
+                                session_id=session_id)
         with risk:
             _show_risk(analysis, viewing['round_id'], viewing.get('analysis_outcome'))
         with controls:

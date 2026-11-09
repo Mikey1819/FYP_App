@@ -96,6 +96,53 @@ class AgenticPageTests(unittest.TestCase):
         self.assertTrue(all(r['Fix'] for r in rows))
         self.assertTrue(any('flags at most 3 findings' in c.value for c in app.caption))
 
+    def test_complete_hardening_needs_a_final_scan_with_nothing_open_then_closes_the_session(self):
+        from hardening.databases import imports_database
+        from hardening.manual_controls import ManualDecisionStore
+        app = self._start_round()
+        app.text_input(key='agentic_operator').input('kk').run()
+        app.button(key='agentic_reject_all').click().run()  # Rejected fixes stay open: they block completion.
+        app.button(key='agentic_complete').click().run()
+        self.assertEqual(len(app.exception), 0, [e.value for e in app.exception])
+        self.assertTrue(any('still open' in m.value for m in app.markdown))
+        labels = {e.label for e in app.expander}
+        self.assertIn('How to fix it on the server', labels)  # The firewall controls: the gpedit steps, here too.
+        self.assertIn('How to close it', labels)  # A rejected fix: run the next round, approve and execute it.
+        app.text_input(key='agentic_complete_operator').input('kk').run()
+        app.button(key='agentic_complete_run').click().run()  # The final scan still finds open controls.
+        self.assertEqual(len(app.exception), 0, [e.value for e in app.exception])
+        self.assertTrue(any('Not completed: the final scan' in w.value for w in app.warning), [w.value for w in app.warning])
+        session = app.session_state[agentic_view.SESSION]
+        decisions = ManualDecisionStore(Path(imports_database()).with_name('manual_decisions.sqlite3'))
+        server = 'windows:' + MACHINE_UUID.lower()
+        self.assertIsNone(decisions.completion(server, session))
+        # Accepting one open control on the panel records it for this session only.
+        first = next(b.key for b in app.button if b.key.startswith('agentic_complete_accept_'))
+        control = first.rsplit('_', 1)[1]
+        app.text_input(key='agentic_complete_reason_' + control).input('Accepted for the lab').run()
+        app.button(key=first).click().run()
+        self.assertEqual(decisions.latest(server, session)[control]['reason'], 'Accepted for the lab')
+        for key in [b.key for b in app.button if b.key.startswith('agentic_complete_accept_')]:
+            decisions.record(server, key.rsplit('_', 1)[1], 'exception', operator='kk', reason='Lab', session_id=session)
+        app.run()
+        self.assertTrue(any('every control is compliant or accepted' in s.value for s in app.success))
+        writes = list(self.vm.writes)
+        app.button(key='agentic_complete_run').click().run()
+        self.assertEqual(len(app.exception), 0, [e.value for e in app.exception])
+        self.assertEqual(self.vm.writes, writes, 'The final scan changes nothing on the server')
+        done = decisions.completion(server, session)
+        self.assertEqual(done['operator'], 'kk')
+        self.assertEqual(done['compliant'] + len(done['exceptions']), done['total'])
+        self.assertIn('Hardening complete for FIXTURE', app.session_state[agentic_view.COMPLETED].replace('\\', ''))
+        self.assertTrue(app.session_state[agentic_view.GO_OVERVIEW])  # app.py opens Overview, which shows it.
+        # The completed session is read-only, with its completion report; a new session starts with no choice.
+        keys = [b.key for b in app.button]
+        self.assertFalse([k for k in keys if k.startswith(('agentic_approve', 'agentic_manual', 'agentic_complete'))])
+        self.assertNotIn('agentic_run', keys)
+        self.assertIn('agentic_completion_report', [b.key for b in app.get('download_button')])
+        app.button(key='agentic_reset').click().run()
+        self.assertEqual(decisions.latest(server, app.session_state.get(agentic_view.SESSION, 'new')), {})
+
     def test_expired_approvals_do_not_hold_the_next_round(self):
         # Live check 9 Nov: expired approvals could only be cleared by "executing" them.
         from hardening import remediation

@@ -314,6 +314,35 @@ class PairingPageTests(unittest.TestCase):
         connection = app.session_state[CONNECTION_KEY] if CONNECTION_KEY in app.session_state else None
         return self.service.session(connection) if connection else None
 
+    def test_a_slow_login_finishes_once_whatever_the_page_does_meanwhile(self):
+        # Live 9 Nov: clicking "Log in and save" again restarted the page half-way, so the server was connected in the
+        # service but not on the page, and the next try failed. Now the login runs in the background worker.
+        from hardening import background
+        self.addCleanup(background._jobs.clear)
+        gate = threading.Event()
+        self.addCleanup(gate.set)
+        run = self.session.run
+
+        def slow(script, parameters=None):
+            gate.wait(10)
+            return run(script, parameters)
+        self.session.run = slow
+        with patch.object(servers_view, 'WAIT_SECONDS', 0):
+            app = self.pair()  # The click starts the login and the page comes back at once.
+            self.assertTrue(any('Logging in to FIXTURE-SERVER' in i.value.replace('\\', '') for i in app.info),
+                            [i.value for i in app.info])
+            self.assertTrue(app.button(key='servers_pair_finish').disabled)  # Clicking again is not possible...
+            app = self.ok(app.run())  # ...and the page running again (a click elsewhere) does not stop the login.
+            self.assertIsNone(self.connected(app))
+            gate.set()
+            job = next(iter(background._jobs.values()))
+            self.assertTrue(job.wait(10))
+            app = self.ok(app.run())
+        self.assertEqual(self.connected(app).identity.machine_identity, MACHINE_UUID)
+        self.assertTrue(any('Paired and connected to FIXTURE' in s.value for s in app.success))
+        self.assertEqual(len(self.registry().all()), 1)
+        self.assertEqual([c[1] for c in self.session.calls], [None, None, {'Action': 'ListPairings'}])  # One login.
+
     def test_pairing_by_code_saves_and_connects_after_every_check(self):
         app = self.pair()
         self.assertEqual(self.codes, ['482913075'])

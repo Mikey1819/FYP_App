@@ -16,13 +16,15 @@ SSH fingerprint. Pairing (docs/design/LAN_PAIRING_DESIGN.md), in the order the c
 Only then is the server saved. Passwords are never saved.
 """
 from dataclasses import asdict
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 import sqlite3
 import tempfile
+from uuid import uuid4
 
 import streamlit as st
 
+from . import background
 from .connection_view import LIVE_TARGET, LOCKED, connected_session, disconnect, running_job
 from .pairing import PairingError, normalize_code
 from .pairing_client import FoundServer, find_server
@@ -53,6 +55,9 @@ FOUND_BOX = 'servers_found'          # The Found panel's container key (Streamli
 LOST = ('The connection to the server stopped answering (it may have restarted). Click **Disconnect** above, then '
         '**Connect** again under My servers.')
 SECRETS = ('servers_password', 'servers_pair_password', 'servers_pair_sudo', 'servers_sudo')
+JOB = 'servers_job_key'              # This browser session's key for its background network work (background.py).
+FAILED = 'servers_failed'            # Why the last background Find or login failed, shown once.
+WAIT_SECONDS = 3                     # Quick work shows its result at once; slower work shows as running.
 
 # What a failed connection to a saved server most likely means, in the administrator's terms.
 HINTS = {
@@ -98,50 +103,123 @@ def forget_connection(notice):
     st.rerun()
 
 
-def _open(platform, host, port, hostname, identity, username, *, password=None, key_path=None, sudo=None,
-          fingerprint=None, paired=False):
-    """Connect through the shared connection service. Returns the verified session, or None after showing why not.
-    The credentials go into the service's one-use vault and are cleared whatever happens."""
+# ------------------------------------------------------------------ network work in the background
+# Streamlit restarts the page when a button is clicked again, and stops the run in progress at its next Streamlit
+# call. A login done inside the page could then finish on the server and in the connection service while the page
+# never recorded it: the next try failed ("Disconnect the active server first") and the code was used up. So Find,
+# Log in and save, and Connect run in the background worker; no click can stop it, a repeated click is ignored while
+# it runs, and the page applies its result afterwards (_collect). The work never touches st.session_state: it returns
+# what the page must apply.
+def _job_key():
+    if JOB not in st.session_state:
+        st.session_state[JOB] = 'servers:' + uuid4().hex
+    return st.session_state[JOB]
+
+
+def _working():
+    return background.running(_job_key())
+
+
+def _run(label, work):
+    """Start network work for this page; a click while earlier work still runs changes nothing."""
+    try:
+        job = background.start(_job_key(), label, work)
+    except ValueError:
+        return  # Already working: this was a repeated click.
+    with st.spinner(label + '…'):
+        job.wait(WAIT_SECONDS)
+    st.rerun()
+
+
+def _fail(message):
+    """What the page applies when the work failed: the reason (Markdown, data parts already escaped), shown once."""
+    return lambda: st.session_state.__setitem__(FAILED, message)
+
+
+def _collect():
+    """Apply the finished work of this page once (it may rerun the page, for example to open the workspace)."""
+    job = background.take_finished(_job_key())
+    if job is None:
+        return
+    if job.error is not None:  # Unexpected: the work catches what it expects. Library text is never shown.
+        st.session_state[FAILED] = f'{md_escape(job.label)} stopped ({type(job.error).__name__}). Nothing was saved.'
+    elif callable(job.result):
+        job.result()
+
+
+@st.fragment(run_every=1)
+def _watch(key):
+    job = background.running(key)
+    if job is None:
+        st.rerun(scope='app')
+    seconds = int((datetime.now(timezone.utc) - job.started_at).total_seconds())
+    st.info(f':material/progress_activity: **{md_escape(job.label)}…** {seconds} s. Clicking again is not needed.')
+
+
+def _request(platform, host, port, hostname, identity, username, *, password=None, key_path=None, sudo=None,
+             fingerprint=None):
+    """On the page: the connection request, with the credentials in the service's one-use vault (cleared whatever
+    happens). Returns (service, request), or None after showing why not."""
     service = connection_service(st.session_state)
     try:
         reference = service.vault.put(Credentials(username.strip(), password or None, key_path or None, sudo or None,
                                                   fingerprint))
-        request = ConnectionRequest(Endpoint(host, port, 'ssh' if platform == 'ubuntu' else 'winrm'), hostname,
-                                    identity, reference)
+        return service, ConnectionRequest(Endpoint(host, port, 'ssh' if platform == 'ubuntu' else 'winrm'), hostname,
+                                          identity, reference)
     except ValueError as exc:
         service.vault.clear()
         st.error('Not connected: ' + md_escape(exc))
         return None
+
+
+def _login(service, request, platform, paired):
+    """In the background: log in and verify. Returns (verified session, None) or (None, why not)."""
     result = service.connect(request, paired=paired)
     if result.state != 'connected':
         hint = result.remedy or HINTS.get(result.diagnostic_code, '')
-        st.error(f'Not connected ({result.diagnostic_code}): {md_escape(result.detail)} {md_escape(hint)}')
-        return None
+        return None, f'Not connected ({result.diagnostic_code}): {md_escape(result.detail)} {md_escape(hint)}'
     session = service.session(result.connection_session_id)
     if session.identity.platform != platform:
         service.disconnect(result.connection_session_id)
-        st.error('Not connected: the server answered as another system than it was paired as. Pair it again.')
-        return None
-    st.session_state[CONNECTION_KEY] = result.connection_session_id
+        return None, 'Not connected: the server answered as another system than it was paired as. Pair it again.'
+    return session, None
+
+
+def _connected(session, platform, remembered):
+    """On the page: hold the verified connection in this session."""
+    st.session_state[CONNECTION_KEY] = session.connection_session_id
     st.session_state[LIVE_TARGET] = session.target if platform == 'windows' else None
     if platform == 'ubuntu':  # For the fresh login that confirms SSH and firewall changes (reconnect.py).
-        remember(st.session_state, host=host, port=port, hostname=session.identity.hostname, identity=identity,
-                 username=username.strip(), password=password or None, key_path=key_path or None, sudo=sudo or None)
-    return session
+        remember(st.session_state, **remembered)
 
 
 # ------------------------------------------------------------------ connecting to a saved server
 def _connect(registry, server, password, sudo):
-    session = _open(server.platform, server.host, server.port, server.hostname, server.machine_identity,
-                    server.username, password=password if server.auth == 'password' else None,
-                    key_path=server.key_path if server.auth == 'key' else None, sudo=sudo)
+    password = password if server.auth == 'password' else None
+    key_path = server.key_path if server.auth == 'key' else None
+    prepared = _request(server.platform, server.host, server.port, server.hostname, server.machine_identity,
+                        server.username, password=password, key_path=key_path, sudo=sudo)
     _clear_secrets()
-    if session is None:
+    if prepared is None:
         return
-    registry.connected(server.platform, server.machine_identity)
-    st.session_state.pop(REPORT, None)
-    st.session_state[NOTICE] = f'Connected to {server.hostname}.'
-    st.rerun()
+    service, request = prepared
+    remembered = dict(host=server.host, port=server.port, hostname=server.hostname, identity=server.machine_identity,
+                      username=server.username.strip(), password=password or None, key_path=key_path or None,
+                      sudo=sudo or None)
+
+    def work():
+        session, failure = _login(service, request, server.platform, False)
+        if session is None:
+            return _fail(failure)
+        registry.connected(server.platform, server.machine_identity)
+
+        def apply():
+            _connected(session, server.platform, dict(remembered, hostname=session.identity.hostname))
+            st.session_state.pop(REPORT, None)
+            st.session_state[NOTICE] = f'Connected to {server.hostname}.'
+            st.rerun()
+        return apply
+    _run(f'Connecting to {server.hostname}', work)
 
 
 def _show_saved(registry, saved, connected, busy=False):
@@ -177,8 +255,11 @@ def _show_saved(registry, saved, connected, busy=False):
                     password = st.text_input(f'Password for {chosen.username}', type='password', key='servers_password')
                 else:
                     st.caption('SSH key file: ' + md_escape(chosen.key_path))
-                connect = st.button('Connect', key='servers_connect', type='primary', icon=':material/lan:')
-            if connect and chosen.auth == 'password' and not password:
+                connect = st.button('Connect', key='servers_connect', type='primary', icon=':material/lan:',
+                                    disabled=_working() is not None)
+            if connect and _working():
+                pass  # A repeated click while connecting.
+            elif connect and chosen.auth == 'password' and not password:
                 st.warning('Type the password first.')
             elif connect:
                 _connect(registry, chosen, password, st.session_state.get('servers_sudo'))
@@ -201,8 +282,11 @@ def _show_saved(registry, saved, connected, busy=False):
                        'is accepted.')
             with st.container(horizontal=True, vertical_alignment='bottom'):
                 code = st.text_input('Pairing code', key='servers_repair_code', placeholder='482-913-075')
-                find = st.button('Find', key='servers_repair', disabled=connected is not None, icon=':material/wifi_find:')
-            if find and not code.strip():
+                find = st.button('Find', key='servers_repair', disabled=connected is not None or _working() is not None,
+                                 icon=':material/wifi_find:')
+            if find and _working():
+                pass
+            elif find and not code.strip():
                 st.warning('Type the pairing code shown on the server.')
             elif find:
                 _find(code, expected=chosen.key, username=chosen.username)
@@ -235,21 +319,24 @@ def _show_saved(registry, saved, connected, busy=False):
 
 # ------------------------------------------------------------------ pairing by code
 def _find(code, *, expected=None, username=None):
-    """Step 1: find the server that shows this code. Nothing is saved yet."""
-    try:
-        found = find_server(normalize_code(code))
-    except (ValueError, PairingError) as exc:
-        st.error(md_escape(exc))
-        return
-    if expected and (found.platform or found.os) + ':' + found.machine_identity != expected:
-        st.error(f'A different machine answered with this code ({md_escape(found.hostname)}, identity '
-                 f'{md_escape(found.machine_identity)}). Nothing was saved. Check which server shows the code.')
-        return
-    st.session_state[PENDING] = dict(found=asdict(found), expected=expected,
-                                     username=username or ('Administrator' if found.platform == 'windows' else ''))
-    st.session_state[FINDS] = st.session_state.get(FINDS, 0) + 1
-    st.session_state[SHOW_FOUND] = st.session_state[FINDS]
-    st.rerun()
+    """Step 1: find the server that shows this code (in the background). Nothing is saved yet."""
+    def work():
+        try:
+            found = find_server(normalize_code(code))
+        except (ValueError, PairingError) as exc:
+            return _fail(md_escape(exc))
+        if expected and (found.platform or found.os) + ':' + found.machine_identity != expected:
+            return _fail(f'A different machine answered with this code ({md_escape(found.hostname)}, identity '
+                         f'{md_escape(found.machine_identity)}). Nothing was saved. Check which server shows the code.')
+
+        def apply():
+            st.session_state[PENDING] = dict(found=asdict(found), expected=expected, username=username or (
+                'Administrator' if found.platform == 'windows' else ''))
+            st.session_state[FINDS] = st.session_state.get(FINDS, 0) + 1
+            st.session_state[SHOW_FOUND] = st.session_state[FINDS]
+            st.rerun()
+        return apply
+    _run('Looking for the server that shows this code', work)
 
 
 def _pairing_confirmed(session, found):
@@ -267,41 +354,53 @@ def _finish_pairing(registry, pending, username, password, key_path, sudo, note)
     if not found.system.supported:  # The button is not offered then; this keeps the rule in one more place.
         st.error('Not paired: ' + md_escape(found.system.note))
         return
-    session = _open(found.platform, found.address, found.port, found.hostname, found.machine_identity, username,
-                    password=password, key_path=key_path, sudo=sudo, fingerprint=found.host_key, paired=True)
+    prepared = _request(found.platform, found.address, found.port, found.hostname, found.machine_identity, username,
+                        password=password, key_path=key_path, sudo=sudo, fingerprint=found.host_key)
     _clear_secrets()
-    if session is None:
+    if prepared is None:
         return
-    report = None
-    try:
-        if found.platform == 'windows':
-            report = _pairing_confirmed(session, found)
-            if report is None:
-                disconnect()
-                st.error('Not paired (pairing_not_confirmed): the server has no record of this pairing for this '
-                         'laptop. Start pairing on the server again and type the new code.')
-                return
-        server, is_new = registry.add(found.platform, found.machine_identity, session.identity.hostname,
-                                      found.system.reported or found.system.label, found.address, found.port,
-                                      username, auth='key' if key_path else 'password', key_path=key_path or '',
-                                      note=note)
-        registry.paired(server.platform, server.machine_identity, found.pairing_id, found.laptop_address)
-        registry.connected(server.platform, server.machine_identity)
-    except ChannelError as exc:
-        disconnect()
-        st.error(f'Not paired ({exc.state}): {md_escape(exc.detail)}')
-        return
-    except (ValueError, KeyError) as exc:
-        disconnect()
-        st.error('Not paired: ' + md_escape(exc))
-        return
-    st.session_state.pop(PENDING, None)
-    if report is not None:
-        st.session_state[REPORT] = dict(key=server.key, report=report)
-    st.session_state[SELECT_NEXT] = server.key
-    st.session_state[NOTICE] = (f'Paired and connected to {server.hostname}.' if is_new else
-                                f'Re-paired {server.hostname}: its address is now {server.host}:{server.port}. Connected.')
-    st.rerun()
+    service, request = prepared
+    remembered = dict(host=found.address, port=found.port, hostname=found.hostname, identity=found.machine_identity,
+                      username=username.strip(), password=password or None, key_path=key_path or None,
+                      sudo=sudo or None)
+
+    def work():
+        session, failure = _login(service, request, found.platform, True)
+        if session is None:
+            return _fail(failure)
+        report = None
+        try:
+            if found.platform == 'windows':
+                report = _pairing_confirmed(session, found)
+                if report is None:
+                    service.disconnect(session.connection_session_id)
+                    return _fail('Not paired (pairing_not_confirmed): the server has no record of this pairing for '
+                                 'this laptop. Start pairing on the server again and type the new code.')
+            server, is_new = registry.add(found.platform, found.machine_identity, session.identity.hostname,
+                                          found.system.reported or found.system.label, found.address, found.port,
+                                          username, auth='key' if key_path else 'password', key_path=key_path or '',
+                                          note=note)
+            registry.paired(server.platform, server.machine_identity, found.pairing_id, found.laptop_address)
+            registry.connected(server.platform, server.machine_identity)
+        except ChannelError as exc:
+            service.disconnect(session.connection_session_id)
+            return _fail(f'Not paired ({exc.state}): {md_escape(exc.detail)}')
+        except (ValueError, KeyError) as exc:
+            service.disconnect(session.connection_session_id)
+            return _fail('Not paired: ' + md_escape(exc))
+
+        def apply():
+            _connected(session, found.platform, dict(remembered, hostname=session.identity.hostname))
+            st.session_state.pop(PENDING, None)
+            if report is not None:
+                st.session_state[REPORT] = dict(key=server.key, report=report)
+            st.session_state[SELECT_NEXT] = server.key
+            st.session_state[NOTICE] = (f'Paired and connected to {server.hostname}.' if is_new else
+                                        f'Re-paired {server.hostname}: its address is now {server.host}:{server.port}. '
+                                        'Connected.')
+            st.rerun()
+        return apply
+    _run(f'Logging in to {found.hostname} and checking it', work)
 
 
 def _show_pending(registry, connected):
@@ -357,11 +456,15 @@ def _show_pending(registry, connected):
             'Note (optional, only on this laptop)', max_chars=MAX_NOTE, key='servers_pair_note',
             placeholder='For example: finance server, room 3')
         with st.container(horizontal=True):
-            finish = st.button('Log in and save', key='servers_pair_finish', type='primary', icon=':material/link:')
-            if st.button('Cancel', key='servers_pair_cancel'):
+            working = _working() is not None
+            finish = st.button('Log in and save', key='servers_pair_finish', type='primary', icon=':material/link:',
+                               disabled=working)
+            if st.button('Cancel', key='servers_pair_cancel', disabled=working):
                 st.session_state.pop(PENDING, None)
                 st.rerun()
-        if finish and not ((password or (key_path or '').strip()) and username.strip()):
+        if finish and _working():
+            pass  # A repeated click while logging in.
+        elif finish and not ((password or (key_path or '').strip()) and username.strip()):
             st.warning('Type the account and its password' + ('' if found.platform == 'windows' else
                                                               ' (or the SSH key file)') + ' first.')
         elif finish:
@@ -375,8 +478,11 @@ def _show_add_by_code(connected):
                'name or identity: the program finds out by itself which server it is and which system it runs.')
     with st.container(horizontal=True, vertical_alignment='bottom'):
         code = st.text_input('Pairing code shown on the server', key='servers_code', placeholder='482-913-075')
-        find = st.button('Find server', key='servers_find', type='primary', icon=':material/wifi_find:')
-    if find and not code.strip():
+        find = st.button('Find server', key='servers_find', type='primary', icon=':material/wifi_find:',
+                         disabled=_working() is not None)
+    if find and _working():
+        pass  # A repeated click while looking.
+    elif find and not code.strip():
         st.warning('Type the pairing code shown on the server.')
     elif find:
         _find(code)
@@ -548,8 +654,13 @@ def _scroll_to_found(count):
 def render_servers(database_path: Path):
     st.title('Servers')
     st.caption(f'This program supports only {SUPPORTED_SYSTEMS}. Servers are added by their pairing code.')
+    _collect()
     if NOTICE in st.session_state:
         st.success(md_escape(st.session_state.pop(NOTICE)))
+    if FAILED in st.session_state:
+        st.error(st.session_state.pop(FAILED))  # Markdown, its data parts escaped where it was written.
+    if _working() is not None:
+        _watch(_job_key())
     connected = connected_session()
     busy = connected is not None and running_job() is not None
     if connected is not None:

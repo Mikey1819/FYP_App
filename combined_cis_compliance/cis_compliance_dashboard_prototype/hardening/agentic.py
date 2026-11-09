@@ -1295,6 +1295,7 @@ class AgenticHardening:
                                              exclude=[r for r in self.scanned_runs if r != framework_run_id])
 
     def _start(self, session_id):
+        self.started_at = _now().isoformat()  # Stored with the phase's row: the page shows how long it took.
         self.session_id, self.round_id = session_id or uuid4().hex, uuid4().hex
         self.children, self.scanned_runs, self.deadline = {}, [], time.monotonic() + self.seconds
 
@@ -1316,6 +1317,7 @@ class AgenticHardening:
         for run_id in self.scanned_runs:
             self.history.record_drift(run_id)
         self.store.add_round(self.session_id, 'assessment', tools.framework_run_id, round_id=self.round_id,
+                             started_at=self.started_at,
                              orchestrator_run_id=result['run_id'], children=dict(self.children), outcome=outcome,
                              analysis=tools.analysis, analysis_outcome=tools.analysis_outcome,
                              scanned_runs=list(self.scanned_runs))
@@ -1360,6 +1362,7 @@ class AgenticHardening:
             if scanned:
                 self.history.record_drift(scanned)
         self.store.add_round(session_id, 'verification_scan', verification, round_id=self.round_id,
+                             started_at=self.started_at,
                              remediated_run_id=run_id, verdicts=verdicts, outcome=outcome,
                              orchestrator_run_id=orchestrator_run_id, children=dict(self.children))
         return dict(verdicts=verdicts, verification_run_id=verification, outcome=outcome, round_id=self.round_id)

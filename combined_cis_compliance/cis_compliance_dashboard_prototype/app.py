@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 
 import streamlit as st
 from hardening import background
-from hardening.agentic_view import render_agentic
+from hardening.agentic_view import GO_OVERVIEW, render_agentic
 from hardening.connection_view import LIVE_TARGET, LOCKED, connected_session, job_key
 from system.config import PATHS
 from tools.baseline import verify_import_origin
@@ -125,6 +125,8 @@ def main():
         st.session_state[OPENED] = server[2]
         if NOTICE in st.session_state:
             st.session_state[ARRIVED] = st.session_state.pop(NOTICE)
+        st.switch_page(workspace[0])
+    elif st.session_state.pop(GO_OVERVIEW, False):  # A hardening session was just completed: say so on Overview.
         st.switch_page(workspace[0])
     st.html(CARTOON_CSS)
     if ARRIVED in st.session_state:
