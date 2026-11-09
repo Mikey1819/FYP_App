@@ -354,6 +354,7 @@ class PageAgenticRoundTests(unittest.TestCase):
             self.assertIn(WORKFLOW_KEY, app.session_state)
             self.assertEqual([t.label for t in app.tabs], ['Fixes', 'Risk ranking', 'Controls', 'Results', 'Agent log'])
             log = app.tabs[4].dataframe[0].value
-            self.assertEqual(set(log['Role']), {'orchestrator', 'scanner', 'analysis'})
+            # The Windows Agent log layout (administrator request 2026-11-09): one summary row per agent.
+            self.assertEqual(set(log['Agent']), {'AI Agent Orchestrator', 'Scanner Agent', 'Analysis Agent'})
             for database in path.rglob('*.sqlite3'):
                 self.assertNotIn(b'FIXTURE-SECRET-SENTINEL', database.read_bytes())

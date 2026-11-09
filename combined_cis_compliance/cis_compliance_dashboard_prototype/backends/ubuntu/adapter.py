@@ -628,8 +628,9 @@ class UbuntuBackend(BoundBackend):
         """Durable Coordinator events of the round's agents (and of its remediation phases), as Agent log rows."""
         from hardening.investigation import InvestigationLog
         log, rows = InvestigationLog(store.agent_log()), []
-        runs = [log.get(run_id) for run_id in [details['orchestrator_run_id'], *details['children'].values()]]
-        for run in runs + (self._phase_runs(store, round_id) if round_id else []):
+        runs = [(log.get(run_id), 'Assessment phase')
+                for run_id in [details['orchestrator_run_id'], *details['children'].values()]]
+        for run, phase in runs + [(r, 'Remediation phase') for r in (self._phase_runs(store, round_id) if round_id else [])]:
             run_id = run['run_id']
             for event in run['events']:
                 data, kind = event['data'], event['kind']
@@ -644,9 +645,12 @@ class UbuntuBackend(BoundBackend):
                     summary, code = (str(data.get('status')) + ': ' + str(data.get('summary', ''))[:200]), str(outcome.get('outcome', ''))
                 else:
                     continue
+                finished = kind == 'finished'
                 rows.append(AgentEvent(run_id, str(run.get('agent_role', 'unknown')), kind, str(data.get('name', ''))[:80],
                                        json.dumps(data.get('arguments', {}), sort_keys=True)[:300], summary, code,
-                                       event['created_at'], f"{run['provenance']} ({run['model']})"))
+                                       event['created_at'], f"{run['provenance']} ({run['model']})", phase,
+                                       data.get('tool_calls') if finished else None,
+                                       data.get('duration_seconds') if finished else None))
         return tuple(sorted(rows, key=lambda r: r.timestamp))
 
     # ---- closed commands --------------------------------------------------------------------
@@ -981,14 +985,16 @@ class UbuntuBackend(BoundBackend):
         uncovered = self._unverified(store, binding, latest)
         return RoundHandle(operation_id, binding, round_ref, self._verify(store, binding, latest, uncovered, state))
 
-    def remediation_review(self, connection_session_id, workflow_session_id):
-        """The latest remediation phase's next-step decision for the latest round (code-written), or None. When the
-        agents stopped early and a fix of the round then ran without them, this is the Windows engine's `fallback`
-        outcome instead: executed without AI."""
+    def remediation_review(self, connection_session_id, workflow_session_id, round_ref=None):
+        """The latest remediation phase's next-step decision for the given assessment round (default: the latest),
+        code-written, or None. When the agents stopped early and a fix of the round then ran without them, this is
+        the Windows engine's `fallback` outcome instead: executed without AI."""
         from .remediation_agents import REMEDIATION, REVIEW_ROLE
         binding = self.check(connection_session_id, workflow_session_id)
         store = self._store()
         rounds = [r for r in store.rounds(binding) if r.kind == 'assessment'] if store and binding else []
+        if round_ref is not None:
+            rounds = [r for r in rounds if r.round_id == round_ref.record_id]
         if not rounds:
             return None
         runs = self._phase_runs(store, rounds[-1].round_id)

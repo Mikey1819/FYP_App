@@ -6,7 +6,7 @@ One application (`app.py`, Streamlit), one connection form and one workspace ser
 
 | Layer | Code | Responsibility |
 | --- | --- | --- |
-| Pages | `app.py`, `hardening/*_view.py` (authorized scoped edits) | One form, the same tabs (Fixes, Risk ranking, Controls, Results, Agent log), round picker, round report, Overview and History for both platforms |
+| Pages | `app.py`, `hardening/*_view.py` (authorized scoped edits) | One form, the same tabs (Fixes, Risk ranking, Controls, Results, Agent log, with the Windows layouts on Ubuntu), a step bar ending with the remediation outcome, round picker, round report, Overview and History for both platforms |
 | Shared UI | `system/ui/` | Renders a `WorkspaceSnapshot`; never calls a backend directly. Fixes cards for Ubuntu plans |
 | Connection | `system/connection.py`, `discovery.py`, `identity.py`, `session.py` | Bounded transport discovery, host-key check before login, authenticated OS and machine identity, credentials in memory only, no fallback across protocols |
 | Routing | `system/bootstrap.py`, `backends/base.py` | A verified identity selects exactly one backend; a wrong or unsupported OS reaches none |

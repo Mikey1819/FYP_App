@@ -197,11 +197,12 @@ def render_results_table(snapshot):
 
 
 def render_snapshot_tabs(snapshot, *, tabs=None, fix_actions=None, fix_header=None, control_actions=None,
-                         fixes_panel=None, risk_panel=None, results_panel=None):
+                         fixes_panel=None, risk_panel=None, results_panel=None, log_panel=None):
     """Common panels, also used while a verified backend requires setup. `fix_actions` renders the page's own
     decision/execution controls inside Fixes; with a plan (Ubuntu), `fix_header` renders above the per-control
-    cards and `control_actions(card)` inside each card. `fixes_panel`, `risk_panel` and `results_panel` replace a
-    tab with the page's own layout (Ubuntu: the Windows page's layout). The panels themselves never call a backend."""
+    cards and `control_actions(card)` inside each card. `fixes_panel`, `risk_panel`, `results_panel` and `log_panel`
+    replace a tab with the page's own layout (Ubuntu: the Windows page's layout). The panels themselves never call a
+    backend."""
     fixes, risk, controls, results, log = tabs or st.tabs(TABS)
     with fixes:
         if fixes_panel is not None:  # The page's own Fixes layout (Ubuntu: the same layout as the Windows page).
@@ -243,7 +244,9 @@ def render_snapshot_tabs(snapshot, *, tabs=None, fix_actions=None, fix_header=No
         else:
             render_results_table(snapshot)
     with log:
-        if snapshot.events:
+        if log_panel is not None:
+            log_panel()
+        elif snapshot.events:
             st.dataframe([{'Role': e.role, 'Event': e.event_kind, 'Tool': e.tool_name,
                 'Result': e.result_summary, 'Provenance': e.provenance} for e in snapshot.events], hide_index=True)
         else:

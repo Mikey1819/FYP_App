@@ -1424,12 +1424,16 @@ def render_agentic(database_path: Path):
                 rounds = backend.assessment_rounds(connection, workflow) if workflow else ()
                 chosen = _ubuntu_choose_round(rounds)
                 viewed = snapshot if chosen is None else backend.snapshot(connection, workflow, chosen)
-                _show_progress(dict(zip(STEPS, viewed.step_states)), None)
+                # As on Windows, the step bar ends with the remediation outcome ("→ Next round recommended").
+                outcome = _ubuntu_outcome(backend.remediation_review(connection, workflow, viewed.current_round_reference)
+                                          if workflow and viewed.current_round_reference else None)
+                _show_progress(dict(zip(STEPS, viewed.step_states)),
+                               {'outcome': {'outcome': outcome}} if outcome else None)
                 tabs = dict(fixes_panel=lambda: _ubuntu_show_fixes(backend, connection, viewed, capabilities,
                                                                    editable=chosen is None),
                             risk_panel=lambda: _ubuntu_show_risk(backend, connection, workflow, viewed),
-                            results_panel=lambda: _ubuntu_show_results(backend, connection, workflow, viewed,
-                                                                       chosen is None))
+                            results_panel=lambda: _ubuntu_show_results(backend, connection, workflow, viewed),
+                            log_panel=lambda: _ubuntu_show_agent_log(viewed))
                 if chosen is not None:
                     st.caption('An earlier round, read-only. Decisions and execution happen in the latest round.')
                     render_snapshot_tabs(viewed, **tabs)
@@ -1453,8 +1457,6 @@ def render_agentic(database_path: Path):
                         st.session_state.pop(UBUNTU_CONFIRM, None)
                         st.session_state.pop(UBUNTU_ROUND_VIEW, None)
                         st.rerun()
-                    st.button('Refresh status', key='ubuntu_refresh', icon=':material/refresh:',
-                              help='Reload this page from the stored records; the server connection stays open.')
                     if undecided:
                         st.markdown(f'{len(undecided)} proposed fix(es) need your decision in **Fixes**.')
                     if workflow:
@@ -1636,6 +1638,67 @@ def _ubuntu_verification_box(backend, connection, snapshot):
                     % (len(unverified), '' if len(unverified) == 1 else 's', 's' if len(unverified) == 1 else ''))
         st.button('Run verification scan', key='ubuntu_verify_applied', icon=':material/fact_check:', type='primary',
                   on_click=verify, help='Read-only re-scan for applied changes that have none yet; never re-runs a fix.')
+
+
+def _ubuntu_outcome(review):
+    """The Orchestrator's review as the Windows step bar's outcome key (NEXT_STEP), or None before any review.
+    Stopped early (no decision, or `remediation_incomplete`) is the Windows engine's `incomplete`."""
+    if review is None:
+        return None
+    if review['next_step'] is None or review['reason_code'] == 'remediation_incomplete':
+        return 'incomplete'
+    return review['next_step'] if review['next_step'] in NEXT_STEP else None
+
+
+UBUNTU_AGENT_NAMES = {'orchestrator': ORCHESTRATOR, 'orchestrator (review)': ORCHESTRATOR, 'scanner': SCANNER,
+                      'analysis': ANALYSIS, 'remediation': REMEDIATION}
+UBUNTU_EVENT_NAMES = {'tool': 'Tool call', 'tool_rejected': 'Rejected by code', 'nudge': 'Reminder',
+                      'finished': 'Finished'}
+UBUNTU_PHASES = ('Assessment phase', 'Remediation phase')
+
+
+def _ubuntu_step_rows(events):
+    """One agent run's events as the Windows Agent log's step table."""
+    rows = []
+    for step, e in enumerate(events, 1):
+        call = e.event_kind in ('tool', 'tool_rejected')
+        result = {'tool': _compact(e.result_summary), 'tool_rejected': e.result_summary.removeprefix('Refused: '),
+                  'nudge': 'Asked for exactly one tool call', 'finished': e.result_summary}[e.event_kind]
+        rows.append({'Step': step, 'Event': UBUNTU_EVENT_NAMES[e.event_kind], 'Tool': e.tool_name if call else '',
+                     'Arguments': _compact(e.safe_arguments) if call else '', 'Result or error': result})
+    return rows
+
+
+def _ubuntu_show_agent_log(snapshot):
+    """As the Windows Agent log: per phase, a summary table of its agents, then one expandable card per agent with
+    every step it took."""
+    events = [e for e in snapshot.events if e.event_kind in UBUNTU_EVENT_NAMES]
+    if not events:
+        st.info('Assessment ran without AI. No agent decisions or proposals were created.' if snapshot.events
+                else 'No agent decisions recorded.')
+        return
+    runs = {}
+    for e in events:  # oldest first, so each run keeps its own order
+        runs.setdefault(e.run, []).append(e)
+    for phase in UBUNTU_PHASES:
+        ordered = sorted((r for r in runs.values() if r[0].phase == phase),
+                         key=lambda r: AGENT_ORDER.get(UBUNTU_AGENT_NAMES.get(r[0].role), 9))
+        if not ordered:
+            continue
+        st.markdown('**' + phase + '**')
+        summary = []
+        for run in ordered:
+            finished = next((e for e in reversed(run) if e.event_kind == 'finished'), None)
+            summary.append({'Agent': UBUNTU_AGENT_NAMES.get(run[0].role, run[0].role),
+                            'Status': finished.result_summary.split(':', 1)[0] if finished else 'Interrupted',
+                            'Decision': (finished.reason_code if finished else '') or '—',
+                            'Tool calls': (finished.tool_calls if finished else None) or 0,
+                            'Seconds': finished.duration_seconds if finished else None, 'Engine': run[0].provenance})
+        st.dataframe(summary, hide_index=True)
+        for run, row in zip(ordered, summary):
+            with st.expander(f"{row['Agent']}: {row['Tool calls']} tool calls, {row['Status'].lower()}"):
+                st.dataframe(_ubuntu_step_rows(run), hide_index=True)
+    st.caption('Every tool call was chosen by the agent and checked by code; rejected calls had no effect.')
 
 
 def _ubuntu_review_line(review):
@@ -1825,14 +1888,19 @@ def _ubuntu_show_risk(backend, connection, workflow, snapshot):
                      hide_index=True)
 
 
-def _ubuntu_show_results(backend, connection, workflow, snapshot, editable):
-    """As the Windows Results tab: the Orchestrator's review, the execution results, then the configuration changes
-    the verification scan found."""
+def _ubuntu_show_results(backend, connection, workflow, snapshot):
+    """As the Windows Results tab: the round's Orchestrator review, the execution results (or the Windows message
+    while nothing ran), then the configuration changes the verification scan found."""
     from system.ui.components import render_results_table
-    review = backend.remediation_review(connection, workflow) if editable and workflow else None
+    review = backend.remediation_review(connection, workflow, snapshot.current_round_reference) \
+        if workflow and snapshot.current_round_reference else None
     if review:
         _ubuntu_review_line(review)
-    render_results_table(snapshot)
+    if snapshot.results:
+        render_results_table(snapshot)
+    else:
+        planned = any(p.kind == 'control_remediation' for p in snapshot.proposals)
+        st.info('Nothing has been executed for this round yet.' if planned else 'Nothing to execute in this round.')
     changes = backend.verification_changes(connection, workflow, snapshot.current_round_reference) \
         if workflow and snapshot.current_round_reference else None
     if changes is not None:

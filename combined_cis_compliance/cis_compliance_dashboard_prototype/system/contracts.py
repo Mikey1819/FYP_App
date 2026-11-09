@@ -255,6 +255,9 @@ class AgentEvent:
     reason_code: str
     timestamp: str
     provenance: str
+    phase: str = ''  # 'Assessment phase' or 'Remediation phase', as the Windows Agent log groups its agents
+    tool_calls: int | None = None  # on the run's finished event only
+    duration_seconds: float | None = None  # on the run's finished event only
 
 
 @dataclass(frozen=True)

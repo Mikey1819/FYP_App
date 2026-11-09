@@ -95,8 +95,10 @@ class FixUiTests(StoreFixture):
             self.assertFalse(list(app.error), [e.value for e in app.error])
             approve = self.approve_buttons(app)
             self.assertEqual(len(approve), 1)
-            # Refresh redraws from the stored records and keeps the connection (a browser reload would not).
-            app.button(key='ubuntu_refresh').click().run()
+            # No "Refresh status" button (administrator request 2026-11-09): a rerun redraws from the stored records
+            # and keeps the connection.
+            self.assertEqual([b for b in app.button if b.key == 'ubuntu_refresh'], [])
+            app.run()
             self.assertTrue([b for b in app.button if b.key == 'agentic_disconnect'])  # still connected
             self.assertEqual([b for b in app.button if b.key == 'ubuntu_verify_applied'], [])  # nothing applied yet
             # The Windows layout: one bordered row per proposed fix, numbered, with its decision on the right.
