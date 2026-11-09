@@ -59,7 +59,7 @@ class AgenticPageTests(unittest.TestCase):
             call('delegate_scanner', t),
             call('delegate_analysis', t),
             plan(t, fixes=[('1.2.2', 'REM-1.2.2', 'high_risk'), ('1.1.1', 'REM-1.1.1', 'low_impact')],
-                 skipped=[('2.3.10.3', 'needs_review'), ('1.1.3', 'lower_priority'), ('18.10.57.3.9.4', 'needs_review')])]))
+                 skipped=[('2.3.10.3', 'needs_review'), ('1.1.3', 'needs_review'), ('18.10.57.3.9.4', 'needs_review')])]))
 
     def _page(self, **state):
         app = AppTest.from_function(agentic_page, default_timeout=60)

@@ -4,6 +4,7 @@ The agent invokes collection itself; nobody carries scripts or evidence files.
 Only repository-registered scripts are sent, with typed parameters (never
 string-built commands or model text). Credentials stay in the caller's memory.
 """
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
 import hashlib
 import json
@@ -77,24 +78,58 @@ class WinRmTarget:
 
 
 class PsrpSession:
-    """Runs one fixed script per call in a fresh NTLM-encrypted runspace."""
+    """Runs one fixed script per call in a fresh NTLM-encrypted runspace. Between open() and close() (a batch of
+    fixes) the calls share one connection and runspace instead: opening them cost about 4 s per call on the lab
+    server, twice per fix. Each shared call runs in its own local scope, so no variable or function carries over."""
 
     def __init__(self, target):
         self.target = target
+        self._wsman = self._pool = None
+
+    def _connect(self):
+        from pypsrp.wsman import WSMan
+        return WSMan(self.target.host, port=self.target.port, username=self.target.username,
+                     password=self.target.password, ssl=False, auth='ntlm', encryption='always',
+                     connection_timeout=15, operation_timeout=20, read_timeout=30)
+
+    @staticmethod
+    def _invoke(pool, script, parameters, local_scope):
+        from pypsrp.powershell import PowerShell
+        shell = PowerShell(pool)
+        shell.add_script(script, use_local_scope=local_scope)
+        for name, value in (parameters or {}).items():
+            shell.add_parameter(name, value)
+        output = shell.invoke()
+        return [str(item) for item in output], shell.had_errors, [str(e) for e in shell.streams.error]
+
+    def open(self):
+        from pypsrp.powershell import RunspacePool
+        wsman = self._connect()
+        wsman.__enter__()
+        try:
+            pool = RunspacePool(wsman)
+            pool.__enter__()
+        except BaseException:
+            wsman.__exit__(None, None, None)
+            raise
+        self._wsman, self._pool = wsman, pool
+
+    def close(self):
+        pool, wsman, self._pool, self._wsman = self._pool, self._wsman, None, None
+        for item in (pool, wsman):
+            if item is not None:
+                try:
+                    item.__exit__(None, None, None)
+                except Exception:  # Best effort: the server drops an idle shell by itself.
+                    pass
 
     def run(self, script, parameters=None):
-        from pypsrp.powershell import PowerShell, RunspacePool
-        from pypsrp.wsman import WSMan
-        wsman = WSMan(self.target.host, port=self.target.port, username=self.target.username,
-                      password=self.target.password, ssl=False, auth='ntlm', encryption='always',
-                      connection_timeout=15, operation_timeout=20, read_timeout=30)
+        if self._pool is not None:
+            return self._invoke(self._pool, script, parameters, True)
+        from pypsrp.powershell import RunspacePool
+        wsman = self._connect()
         with wsman, RunspacePool(wsman) as pool:
-            shell = PowerShell(pool)
-            shell.add_script(script)
-            for name, value in (parameters or {}).items():
-                shell.add_parameter(name, value)
-            output = shell.invoke()
-            return [str(item) for item in output], shell.had_errors, [str(e) for e in shell.streams.error]
+            return self._invoke(pool, script, parameters, None)
 
 
 def _classify(exc):
@@ -116,6 +151,12 @@ def _run_script(login, session_factory, script, parameters=None):
         raise
     except Exception as exc:  # Network/auth libraries raise many unrelated types.
         raise _classify(exc) from None
+
+
+def channel_batch(scanner):
+    """One connection for a run of calls when the scanner supports it (stand-in scanners need not)."""
+    batch = getattr(scanner, 'batch', None)
+    return batch() if batch is not None else nullcontext()
 
 
 def _identity(output, had_errors):
@@ -166,9 +207,41 @@ class LiveScanner:
     def __init__(self, runtime, target, *, session_factory=None):
         self.runtime, self.target = runtime, target
         self.session_factory = session_factory
+        self._batches, self._shared = 0, None
+
+    @contextmanager
+    def batch(self):
+        """Calls inside share one connection (see PsrpSession). Nothing else changes: every call still makes its
+        own checks. A call that fails drops the connection, so the next call opens a fresh one, as without a batch."""
+        self._batches += 1
+        try:
+            yield self
+        finally:
+            self._batches -= 1
+            if not self._batches:
+                self._drop()
+
+    def _drop(self):
+        shared, self._shared = self._shared, None
+        if shared is not None and hasattr(shared, 'close'):
+            shared.close()
 
     def _run(self, script, parameters=None):
-        return _run_script(self.target, self.session_factory, script, parameters)
+        if not self._batches:
+            return _run_script(self.target, self.session_factory, script, parameters)
+        try:
+            if self._shared is None:
+                session = (self.session_factory or PsrpSession)(self.target)
+                if hasattr(session, 'open'):
+                    session.open()
+                self._shared = session
+            return self._shared.run(script, parameters)
+        except ChannelError:
+            self._drop()
+            raise
+        except Exception as exc:  # Network/auth libraries raise many unrelated types.
+            self._drop()
+            raise _classify(exc) from None
 
     def _same_target(self, hostname, machine_uuid):
         if (hostname.casefold() != self.target.hostname.casefold()
@@ -198,9 +271,10 @@ class LiveScanner:
         return COLLECTOR.read_text(encoding='utf-8-sig')
 
     def _collect(self):
-        self.identity()
-        output, had_errors, errors = self._run(self.collector_text(), {'ExpectedComputerName': self.target.hostname,
-                                                                       'EmitJson': True})
+        with self.batch():  # Identity check and collection over one connection.
+            self.identity()
+            output, had_errors, errors = self._run(self.collector_text(), {'ExpectedComputerName': self.target.hostname,
+                                                                           'EmitJson': True})
         if had_errors or len(output) != 1:
             detail = (errors[0] if errors else 'Collector returned no evidence.')[:300]
             raise ChannelError('collection_failed', detail)

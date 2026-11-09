@@ -25,7 +25,7 @@ from .investigation import Coordinator, InvestigationLog, Limits
 from .ollama_client import OllamaClient
 from .remediation import ApprovedActionExecutor, _now, _same_value
 from .risk import BASELINE_VERSION, analyse
-from .winrm_channel import ChannelError
+from .winrm_channel import ChannelError, channel_batch
 
 ORCHESTRATOR, SCANNER = 'AI Agent Orchestrator', 'Scanner Agent'
 ANALYSIS, REMEDIATION = 'Analysis Agent', 'Remediation Agent'
@@ -42,8 +42,9 @@ PROMPTS = {
         'decisions: exactly one entry per must_decide finding (never gaps). To fix it now: {control_id, decision: '
         '"fix", action_id from that finding\'s actions, reason_code from its fix_codes}. To defer it: {control_id, '
         'decision: "defer", reason_code from its defer_codes}. A finding with blocked_until_compliant cannot be '
-        'fixed yet: fix its prerequisite and defer it. Choose which to fix yourself, weighing the facts of each '
-        'finding; code ranks the fixes by risk score. A plan is not approval: the administrator decides.',
+        'fixed yet: fix its prerequisite and defer it. Fix every finding that can be fixed now, in this round; '
+        'defer one only when one of its defer_codes fits it. Code ranks the fixes by risk score. A plan is not '
+        'approval: the administrator decides.',
     SCANNER: COMMON + 'You are the Scanner Agent. Call scan_target first to collect evidence from the VM over WinRM. '
         'Then call read_coverage. If any control is in Error state you may call rescan once: Error can be transient, '
         'while Unknown means no value is recorded (e.g. not applicable) and a rescan will not change it. You may inspect '
@@ -89,8 +90,15 @@ SKIP_REASONS = {'waits_for_prerequisite': 'Waits until {prerequisites} is compli
                 'keeps_reverting': 'Reverted {reverted} times after earlier fixes; find what changes it back before '
                                    'fixing it again',
                 'not_decided': 'Not decided by the Orchestrator this round; deferred by code'}
-# Written by code only, never offered to the model: a deferral without a fitting code, or a finding left out.
+# Written by code only, never offered to the model: a finding left out that cannot be fixed yet.
 CODE_ONLY_DEFERS = ('not_decided',)
+# No longer offered: every fixable finding is proposed in one round, so a fix never waits a whole extra round
+# only for being less urgent. Kept so earlier rounds still read correctly.
+RETIRED_DEFERS = ('lower_priority',)
+NOT_OFFERED_DEFERS = CODE_ONLY_DEFERS + RETIRED_DEFERS
+# Written by code only, as on Ubuntu: a fixable finding the Orchestrator left out, or deferred with a reason that
+# does not fit, is proposed with this code. The administrator still approves or rejects it.
+DEFAULT_FIX_REASONS = {'not_deferred': 'Fixable now; the Orchestrator gave no reason that fits to defer it'}
 # What each plan code means, shown to the Orchestrator with the codes, so that low_impact is read as a reason
 # to fix (the change is safe), not as "the finding matters little".
 PLAN_CODE_MEANINGS = {
@@ -106,7 +114,7 @@ PLAN_CODE_MEANINGS = {
 ATTENTION = {'keeps_reverting': 'reverted {reverted} times after being fixed; find what changes it back',
              'regression': 'regressed since the previous assessment', 'unblocks_other': 'fixing it unblocks {waiting}',
              'manual_fix_needed': 'no library action: needs a manual fix', 'high_risk': 'high-priority finding'}
-KNOWN_CODES = set(FIX_REASONS) | set(SKIP_REASONS) | set(ATTENTION)  # Echoed in summaries; anything else is not.
+KNOWN_CODES = set(FIX_REASONS) | set(DEFAULT_FIX_REASONS) | set(SKIP_REASONS) | set(ATTENTION)  # Echoed in summaries.
 TRIAGE = {'rescan': 'collection error; Scanner asked to collect again',
           'resolves_with_prerequisite': 'expected to resolve once {prerequisite} is fixed',
           'manual_review': 'review manually'}
@@ -709,10 +717,11 @@ class RemediationTools(_RoleTools):
                                  f"({', '.join(c for c, v in facts.items() if v)}); use skip_fix")
             request_ids.append(request_id)
         results = []
-        for request_id in request_ids:
-            if self.stopped or (results and results[-1]['result'] == 'failed'):
-                break  # Uncertain: the rest stay open, not attempted. Failed: the agent decides how to go on.
-            results.append(self._execute(request_id))
+        with channel_batch(self.rounds.scanner):  # One connection for the list; each fix keeps every check.
+            for request_id in request_ids:
+                if self.stopped or (results and results[-1]['result'] == 'failed'):
+                    break  # Uncertain: the rest stay open, not attempted. Failed: the agent decides how to go on.
+                results.append(self._execute(request_id))
         output = dict(results=results, must_stop=self.stopped is not None)
         if self.stopped:  # Code has recorded the results; the model need not copy them into report_results.
             output['next'] = 'report_results with target_id only; these results are already recorded'
@@ -822,7 +831,7 @@ class OrchestratorTools(_RoleTools):
                                 + '. Start by delegating the Scanner Agent.')
         self.scanner_outcome, self.analysis, self.analysis_outcome, self.record = None, None, None, None
         self.proposals, self.scans, self.ignored_skips, self.previous = [], 0, [], []
-        self.undecided, self.replaced_codes = [], []
+        self.undecided, self.replaced_codes, self.proposed_by_code = [], [], []
 
     def _rescan_allowed(self):
         if self.scans != 1:
@@ -845,7 +854,7 @@ class OrchestratorTools(_RoleTools):
         controls = list(decisions)
         actions = sorted({a for c in controls for a in decisions[c]['usable']})
         fix_codes = sorted(FIX_REASONS)
-        skip_codes = sorted(c for c in SKIP_REASONS if c not in CODE_ONLY_DEFERS)
+        skip_codes = sorted(c for c in SKIP_REASONS if c not in NOT_OFFERED_DEFERS)
         return [tool('delegate_scanner', 'Delegate collection and coverage review to the Scanner Agent.', t),
                 tool('delegate_analysis', 'Delegate risk analysis of the Scanner handoff to the Analysis Agent.', t),
                 tool('submit_plan', 'Submit the whole decision once: exactly one entry per must_decide finding, '
@@ -879,7 +888,7 @@ class OrchestratorTools(_RoleTools):
     def _codes(self, control, decisions):
         _, facts = self._facts(control, decisions)
         fix = [c for c in FIX_REASONS if facts.get(c, True)] if decisions[control]['usable'] else []
-        skip = [c for c in SKIP_REASONS if facts.get(c, True) and c not in CODE_ONLY_DEFERS]
+        skip = [c for c in SKIP_REASONS if facts.get(c, True) and c not in NOT_OFFERED_DEFERS]
         return fix, skip
 
     def _reason(self, entry, decisions):
@@ -892,13 +901,13 @@ class OrchestratorTools(_RoleTools):
                              f"({decision['finding']['level']} {decision['finding']['score']}"
                              + (f", waits for {', '.join(decision['waits_for'])}" if decision['waits_for'] else '')
                              + (f", unblocks {', '.join(waiting)}" if waiting else '') + ')')
-        template = (FIX_REASONS if 'action_id' in entry else SKIP_REASONS)[code]
+        template = ({**FIX_REASONS, **DEFAULT_FIX_REASONS} if 'action_id' in entry else SKIP_REASONS)[code]
         return template.format(waiting=', '.join(waiting), prerequisites=', '.join(decision['waits_for']),
                                reverted=reversions(control, self.record, self.previous))
 
     def _validate_plan(self, entries):
         decisions = self._decisions() if self.analysis else {}
-        codes = {'fix': list(FIX_REASONS), 'defer': [c for c in SKIP_REASONS if c not in CODE_ONLY_DEFERS]}
+        codes = {'fix': list(FIX_REASONS), 'defer': [c for c in SKIP_REASONS if c not in NOT_OFFERED_DEFERS]}
         entries = check_decisions(entries)
         # Deferring a control that has nothing to decide (a gap, or a finding without a library action) is a no-op:
         # it is ignored and recorded rather than failing the plan, whatever its code. A fix for one is refused.
@@ -919,9 +928,10 @@ class OrchestratorTools(_RoleTools):
                                  + ', '.join(sorted(codes['fix'])))
         fixes = [dict(control_id=e['control_id'], action_id=e['action_id'], reason_code=e['reason_code'])
                  for e in entries if e['decision'] == 'fix']
-        # Strict on what can lead to a write, lenient on what cannot: a deferral proposes nothing, so it never fails
-        # the plan. A deferral whose code is not a true defer code, and a finding left out, are deferred as
-        # not_decided and named in the summary.
+        # Strict on what can lead to a write, lenient on what cannot: a deferral never fails the plan. A deferral
+        # whose code is not a true defer code, and a finding left out, are not deferred: every finding that can be
+        # fixed now is proposed this round (code adds it with not_deferred, as on Ubuntu), so nothing waits a whole
+        # extra round for no reason. Both are named in the summary; the administrator still decides each fix.
         skipped, self.replaced_codes = [], []
         for entry in entries:
             if entry['decision'] != 'defer':
@@ -929,8 +939,8 @@ class OrchestratorTools(_RoleTools):
             control, code = entry['control_id'], entry['reason_code']
             if code not in codes['defer'] or not self._facts(control, decisions)[1].get(code, True):
                 self.replaced_codes.append((control, code))
-                code = 'not_decided'
-            skipped.append(dict(control_id=control, reason_code=code))
+            else:
+                skipped.append(dict(control_id=control, reason_code=code))
         for entry in fixes:
             decision = decisions[entry['control_id']]
             if entry['action_id'] not in decision['usable']:
@@ -938,7 +948,15 @@ class OrchestratorTools(_RoleTools):
                         else f"use one of {', '.join(decision['usable'])}")
                 raise ValueError(f"{entry['action_id'][:30]} cannot fix {entry['control_id']} now; {hint}")
         self.undecided = [c for c in decisions if c not in seen]
-        skipped += [dict(control_id=c, reason_code='not_decided') for c in self.undecided]
+        self.proposed_by_code = []
+        for control in self.undecided + [c for c, _ in self.replaced_codes]:
+            decision = decisions[control]
+            if decision['usable']:
+                fixes.append(dict(control_id=control, action_id=decision['usable'][0], reason_code='not_deferred'))
+                self.proposed_by_code.append(control)
+            else:  # Cannot be fixed yet: it waits for its prerequisite whatever the plan said.
+                skipped.append(dict(control_id=control, reason_code='waits_for_prerequisite'
+                                    if decision['waits_for'] else 'not_decided'))
         # New dicts: the logged model arguments stay exactly as the model sent them.
         return ([dict(e, reason=self._reason(e, decisions)) for e in fixes],
                 [dict(e, reason=self._reason(e, decisions)) for e in skipped], decisions)
@@ -957,14 +975,21 @@ class OrchestratorTools(_RoleTools):
             controls = [self.store.get(p)['proposal']['control_id'] for p in self.proposals]
             parts.append('Proposed for your approval, in order: ' + ', '.join(
                 f"{c} ({scores[c]['level']} {scores[c]['score']})" for c in controls) + '.')
-        chosen = [s['control_id'] for s in skipped if s['reason_code'] != 'not_decided']
+        replaced = {c for c, _ in self.replaced_codes}
+        chosen = [s['control_id'] for s in skipped
+                  if s['control_id'] not in replaced and s['control_id'] not in self.undecided]
         if chosen:
             parts.append('Deferred by the Orchestrator: ' + ', '.join(chosen) + '.')
-        if self.undecided:
-            parts.append('Left out of the plan, so deferred by code: ' + ', '.join(self.undecided) + '.')
-        if self.replaced_codes:
-            parts.append('Deferred with a reason that did not fit, so recorded as not decided: ' + ', '.join(
-                f'{c} ({code if code in KNOWN_CODES else "unknown code"})' for c, code in self.replaced_codes) + '.')
+        left_out = [c for c in self.undecided if c in self.proposed_by_code]
+        if left_out:
+            parts.append('Left out of the plan, so proposed by code: ' + ', '.join(left_out) + '.')
+        if any(c in self.proposed_by_code for c in replaced):
+            parts.append('Deferred with a reason that did not fit, so proposed by code: ' + ', '.join(
+                f'{c} ({code if code in KNOWN_CODES else "unknown code"})' for c, code in self.replaced_codes
+                if c in self.proposed_by_code) + '.')
+        waiting = [s['control_id'] for s in skipped if s['control_id'] not in chosen]
+        if waiting:
+            parts.append('Not fixable until a prerequisite is compliant, so deferred by code: ' + ', '.join(waiting) + '.')
         no_action = [f['control_id'] for f in self.analysis['findings'] if not f['candidate_actions']]
         no_action += self.analysis['unscored_non_compliant']
         if no_action:
@@ -1318,6 +1343,10 @@ class AgenticHardening:
             return [dict(proposal_id=None, control_id=None, action_id=None,
                          verdict='Refused before execution: the server could not be prechecked (' + exc.state + ')')]
         by_id = {r.control.control_id: r for r in observed}
+        with channel_batch(self.scanner):  # One connection for the run of fixes; each keeps every check.
+            return self._execute_ready(run_id, executor, observed, by_id, verdicts)
+
+    def _execute_ready(self, run_id, executor, observed, by_id, verdicts):
         for record in self.store.for_run(run_id):
             if record['decision'] == 'approved' and record['verdict'] is None:
                 proposal = record['proposal']

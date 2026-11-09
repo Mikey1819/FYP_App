@@ -132,5 +132,146 @@ class LiveScannerTests(unittest.TestCase):
             target(password='')
 
 
+class CountingSession(FakeSession):
+    """FakeSession that also counts connections: every factory call is one, open() and close() mark a shared one."""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.connections = self.opened = self.closed = 0
+
+    def __call__(self, target):
+        self.connections += 1
+        return super().__call__(target)
+
+    def open(self):
+        self.opened += 1
+
+    def close(self):
+        self.closed += 1
+
+
+class BatchTests(unittest.TestCase):
+    """A batch of fixes shares one connection; every call keeps its own checks; a failure drops the connection."""
+
+    def setUp(self):
+        folder = tempfile.TemporaryDirectory(); self.addCleanup(folder.cleanup)
+        self.runtime = AssessmentRuns(ImportedEvidenceStore(Path(folder.name) / 'imports.sqlite3'))
+
+    def test_without_a_batch_every_call_opens_its_own_connection(self):
+        session = CountingSession()
+        scanner = LiveScanner(self.runtime, target(), session_factory=session)
+        scanner.identity(); scanner.identity()
+        self.assertEqual((session.connections, session.opened), (2, 0))
+
+    def test_a_batch_shares_one_connection_and_closes_it_once_even_when_nested(self):
+        session = CountingSession()
+        scanner = LiveScanner(self.runtime, target(), session_factory=session)
+        with scanner.batch():
+            scanner.identity()
+            with scanner.batch():
+                scanner.observe()  # Its own identity check and collection, on the same connection.
+            scanner.identity()
+            self.assertEqual(session.closed, 0)
+        self.assertEqual((session.connections, session.opened, session.closed), (1, 1, 1))
+        self.assertEqual([s for s, _ in session.calls].count(IDENTITY_SCRIPT), 3)  # No check is skipped.
+        scanner.identity()
+        self.assertEqual(session.connections, 2)  # After the batch, back to one connection per call.
+
+    def test_a_scan_checks_identity_and_collects_over_one_connection(self):
+        session = CountingSession()
+        LiveScanner(self.runtime, target(), session_factory=session).request('FIXTURE-SERVER', MACHINE_UUID)
+        self.assertEqual((session.connections, len(session.calls)), (1, 2))
+
+    def test_a_failed_call_drops_the_connection_and_the_next_call_opens_a_fresh_one(self):
+        broken = CountingSession(fail=ConnectionError('reset'))
+        healthy = CountingSession()
+        sessions = iter([broken, healthy])
+        scanner = LiveScanner(self.runtime, target(), session_factory=lambda t: next(sessions)(t))
+        with scanner.batch():
+            with self.assertRaises(ChannelError) as raised:
+                scanner.identity()
+            self.assertEqual(raised.exception.state, 'unreachable')
+            self.assertEqual(broken.closed, 1)
+            self.assertEqual(scanner.identity()['hostname'], 'FIXTURE-SERVER')
+        self.assertEqual((healthy.opened, healthy.closed), (1, 1))
+
+
+class FakePsrp:
+    """Stands in for pypsrp's WSMan, RunspacePool and PowerShell, counting connections and scopes."""
+
+    def __init__(self):
+        self.connections, self.pools, self.exits, self.scopes = 0, 0, [], []
+        fake = self
+
+        class WSMan:
+            def __init__(self, *args, **kwargs):
+                fake.connections += 1
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                fake.exits.append('wsman')
+
+        class RunspacePool:
+            def __init__(self, wsman):
+                fake.pools += 1
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                fake.exits.append('pool')
+
+        class PowerShell:
+            had_errors = False
+
+            def __init__(self, pool):
+                self.streams = type('Streams', (), {'error': []})()
+
+            def add_script(self, script, use_local_scope=None):
+                fake.scopes.append(use_local_scope)
+
+            def add_parameter(self, name, value):
+                pass
+
+            def invoke(self):
+                return ['done']
+
+        self.modules = {'pypsrp.wsman': type('M', (), {'WSMan': WSMan}),
+                        'pypsrp.powershell': type('M', (), {'RunspacePool': RunspacePool, 'PowerShell': PowerShell})}
+
+
+class PsrpSessionTests(unittest.TestCase):
+    def fake(self):
+        from unittest.mock import patch
+        fake = FakePsrp()
+        patcher = patch.dict('sys.modules', fake.modules)
+        patcher.start(); self.addCleanup(patcher.stop)
+        return fake
+
+    def test_each_call_opens_and_closes_its_own_runspace_without_open(self):
+        from hardening.winrm_channel import PsrpSession
+        fake = self.fake()
+        session = PsrpSession(target())
+        self.assertEqual(session.run('1'), (['done'], False, []))
+        session.run('2')
+        self.assertEqual((fake.connections, fake.pools, fake.exits.count('pool')), (2, 2, 2))
+
+    def test_an_open_session_shares_one_runspace_and_runs_each_script_in_its_own_scope(self):
+        from hardening.winrm_channel import PsrpSession
+        fake = self.fake()
+        session = PsrpSession(target())
+        session.open()
+        for script in ('1', '2', '3'):
+            session.run(script)
+        self.assertEqual((fake.connections, fake.pools, fake.exits), (1, 1, []))
+        self.assertEqual(fake.scopes, [True, True, True])  # No variable or function carries over between scripts.
+        session.close(); session.close()  # Closing twice is harmless.
+        self.assertEqual(fake.exits, ['pool', 'wsman'])
+        session.run('4')  # Closed: back to one runspace per call.
+        self.assertEqual(fake.connections, 2)
+
+
 if __name__ == '__main__':
     unittest.main()

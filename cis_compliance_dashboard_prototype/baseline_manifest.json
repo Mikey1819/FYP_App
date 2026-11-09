@@ -18,7 +18,7 @@
       "category": "metadata"
     },
     "PROGRESS.md": {
-      "sha256": "8ed72f34bdb021af04a8586289e65b355bb1ddc2071a9fbb9549d45ed4b7fae0",
+      "sha256": "c943d2943762ae398fd5f656a35fde49b30e35d1610bc9c1b66e02478692aa28",
       "category": "metadata"
     },
     "README.md": {
@@ -34,7 +34,7 @@
       "category": "metadata"
     },
     "cis_compliance_dashboard_prototype/app.py": {
-      "sha256": "22808172dd1acf85190ca63ca266645e489c9b7780758bf52453e2ae7baf343b",
+      "sha256": "75202de8f89969e555d602838a6f3db47ba3a12ce039b6c9eab3b0af7fe00452",
       "category": "authorized_ui"
     },
     "cis_compliance_dashboard_prototype/hardening/__init__.py": {
@@ -46,15 +46,15 @@
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/agentic.py": {
-      "sha256": "d34ac9b951eeac039ecdddf7a4dcbf23bbbb58c4e3e36709800f17c82c8d04cb",
+      "sha256": "0286ee11c56d2bccf0503ae97c4945e23d19e9a4452d59f6ca0daf2dbf235941",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/agentic_view.py": {
-      "sha256": "d822e1b8b40d04d0c5260b5a3f4855c4049fbffc552f5dec43463b539ca93e2d",
+      "sha256": "603559ed7d2399ce424d70ed40e79f74f50ce34658e872ef51f428802e485b26",
       "category": "authorized_ui"
     },
     "cis_compliance_dashboard_prototype/hardening/connection_view.py": {
-      "sha256": "dfad327aa2f1c1c2628ba97487ab730dd2633f58ea0706fb15e4b2527080d488",
+      "sha256": "c878e90931411207661402a581f7a89ef10f1de97489b87970930701ba6a01be",
       "category": "authorized_ui"
     },
     "cis_compliance_dashboard_prototype/hardening/databases.py": {
@@ -146,7 +146,7 @@
       "category": "authorized_ui"
     },
     "cis_compliance_dashboard_prototype/hardening/winrm_channel.py": {
-      "sha256": "a0be869235f28814ae27a27c713d9466f0012b47d8c4dab81bc975acdb941d2c",
+      "sha256": "ee8ce3708e591dc261db89727e14a7444309946ccfac6755c9f48da5532a966f",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/launch.py": {
@@ -170,11 +170,11 @@
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/tests/test_agentic.py": {
-      "sha256": "ea186353a218654631fe95ecddb9a08f6a2f1d582a3c509f0a952ccf3ed503be",
+      "sha256": "17f688dfe879b0e13c350cc3a59c16a3a3224adc394324e538a966f329132e5b",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/tests/test_agentic_view.py": {
-      "sha256": "40e469f9b6315c8123f5d036cd40717ae69b60cb4be987dd1fac738a9820e9de",
+      "sha256": "e05297af730f33a012589755f5bee429ab1d141619829061b5cd0524ea62c36a",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/tests/test_app_navigation.py": {
@@ -250,7 +250,7 @@
       "sha256": "5ff3b8148610ac0c8609344e29b643350f6dd5a7e03a90c3f80789091cf9393d"
     },
     "cis_compliance_dashboard_prototype/tests/test_winrm_channel.py": {
-      "sha256": "898b5fbc9b1d4cd1c916917514bfc55adcd513e39d0d126bb93b1ee8e5eede64",
+      "sha256": "9307a36f397ff757b853108c311c07b08f3920770e3b9ecd859611279434d107",
       "category": "protected"
     },
     "docs/archive/ADMIN_GOALS_DESIGN.md": {
@@ -306,7 +306,7 @@
       "category": "metadata"
     },
     "docs/design/ARCHITECTURE.md": {
-      "sha256": "84f5c8c054dab4ae81855c727174628972c2c2ab1f5bc73b16a900124a6aa00f",
+      "sha256": "584916688b2c7bbe752cb2c845b7fd5c344caf7181e913f400f107b3cb176840",
       "category": "metadata"
     },
     "docs/design/BENCHMARK_MAPPING.md": {

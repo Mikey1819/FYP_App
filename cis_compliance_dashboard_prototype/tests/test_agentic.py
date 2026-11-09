@@ -223,7 +223,7 @@ class AgenticTestCase(unittest.TestCase):
         t = 'windows:' + target().machine_uuid
         return self.hardening(vm, [call('delegate_scanner', t), call('delegate_analysis', t), plan(t,
             fixes=[('1.2.2', 'REM-1.2.2', 'high_risk'), ('1.1.1', 'REM-1.1.1', 'low_impact')],
-            skipped=[('2.3.10.3', 'needs_review'), ('1.1.3', 'lower_priority'), ('18.10.57.3.9.4', 'needs_review')])],
+            skipped=[('2.3.10.3', 'needs_review'), ('1.1.3', 'needs_review'), ('18.10.57.3.9.4', 'needs_review')])],
             **agents)
 
     def approve_all(self, framework_run_id):
@@ -246,7 +246,7 @@ def plan(t, fixes=(), skipped=()):
 
 
 # The lab VM's fixable findings; NLA policy is Not configured there (Non-Compliant under decision D5).
-DEFER_ALL = [(c, 'lower_priority') for c in ('1.2.2', '2.3.10.3', '1.1.1', '1.1.3', '18.10.57.3.9.4')]
+DEFER_ALL = [(c, 'needs_review') for c in ('1.2.2', '2.3.10.3', '1.1.1', '1.1.3', '18.10.57.3.9.4')]
 
 
 class AgenticRoundTests(AgenticTestCase):
@@ -316,11 +316,11 @@ class AgenticRoundTests(AgenticTestCase):
     def test_blocked_prerequisite_and_duplicate_decisions_are_refused(self):
         state = dict(LAB_STATE, **{'1.2.1': 5})  # Duration non-compliant while threshold is still 0.
         t = 'windows:' + target().machine_uuid
-        others = [('2.3.10.3', 'lower_priority'), ('1.1.1', 'lower_priority'), ('1.1.3', 'lower_priority'),
+        others = [('2.3.10.3', 'needs_review'), ('1.1.1', 'needs_review'), ('1.1.3', 'needs_review'),
                   ('18.10.57.3.9.4', 'needs_review')]
         hardening = self.hardening(FakeVm(state), [call('delegate_scanner', t), call('delegate_analysis', t),
             plan(t, fixes=[('1.2.1', 'REM-1.2.1', 'high_risk'), ('1.2.2', 'REM-1.2.2', 'unblocks_other')], skipped=others),
-            plan(t, fixes=[('1.2.2', 'REM-1.2.2', 'unblocks_other')], skipped=[('1.2.2', 'lower_priority')] + others)])
+            plan(t, fixes=[('1.2.2', 'REM-1.2.2', 'unblocks_other')], skipped=[('1.2.2', 'needs_review')] + others)])
         result = hardening.run_round()
         errors = self.rejected(hardening, result['round_id'])
         self.assertEqual(errors[0], 'REM-1.2.1 cannot fix 1.2.1 now; it waits for 1.2.2 to be compliant')
@@ -332,8 +332,8 @@ class AgenticRoundTests(AgenticTestCase):
         t = 'windows:' + target().machine_uuid
         result = self.hardening(FakeVm(state), [call('delegate_scanner', t), call('delegate_analysis', t),
             plan(t, fixes=[('1.2.2', 'REM-1.2.2', 'unblocks_other')],
-                 skipped=[('1.2.1', 'waits_for_prerequisite'), ('2.3.10.3', 'lower_priority'),
-                          ('1.1.1', 'lower_priority'), ('1.1.3', 'lower_priority'),
+                 skipped=[('1.2.1', 'waits_for_prerequisite'), ('2.3.10.3', 'needs_review'),
+                          ('1.1.1', 'needs_review'), ('1.1.3', 'needs_review'),
                           ('18.10.57.3.9.4', 'needs_review')])]).run_round()
         self.assertEqual(result['outcome']['outcome'], 'awaiting_approval')
         proposals = self.store.for_run(result['framework_run_id'])
@@ -434,7 +434,7 @@ class AgenticRoundTests(AgenticTestCase):
         self.assertEqual(set(analysis), {'agent', 'status', 'must_decide', 'no_action', 'gaps', 'attention',
                                          'rescan_requested'})
         self.assertEqual(analysis['must_decide'][0], dict(control_id='1.2.2', level='High', score=69, actions=['REM-1.2.2'],
-            fix_codes=['high_risk', 'unblocks_other', 'low_impact'], defer_codes=['needs_review', 'lower_priority']))
+            fix_codes=['high_risk', 'unblocks_other', 'low_impact'], defer_codes=['needs_review']))
         moderate = next(d for d in analysis['must_decide'] if d['control_id'] == '1.1.3')
         self.assertEqual(moderate['fix_codes'], ['low_impact'])  # Only codes that are true for this finding.
 
@@ -493,25 +493,29 @@ class OrchestratorAccountabilityTests(AgenticTestCase):
             'because_i_said_so is not a fix reason_code; use one of high_risk, improves_detection, low_impact, unblocks_other'])
         self.assertEqual(result['outcome']['outcome'], 'awaiting_approval')
 
-    def test_a_fix_with_a_false_reason_is_refused_but_a_left_out_finding_is_deferred_by_code(self):
+    def proposed(self, result):
+        return [p['proposal']['control_id'] for p in self.store.for_run(result['framework_run_id'])]
+
+    def test_a_fix_with_a_false_reason_is_refused_but_a_left_out_finding_is_proposed_by_code(self):
         t = 'windows:' + target().machine_uuid
         hardening = self.hardening(FakeVm(), [call('delegate_scanner', t), call('delegate_analysis', t),
             plan(t, fixes=[('1.1.3', 'REM-1.1.3', 'high_risk')], skipped=DEFER_ALL[:3] + DEFER_ALL[4:]),
-            plan(t, fixes=[('1.2.2', 'REM-1.2.2', 'high_risk')], skipped=[('1.1.1', 'lower_priority')])])
+            plan(t, fixes=[('1.2.2', 'REM-1.2.2', 'high_risk')], skipped=[('1.1.1', 'needs_review')])])
         result = hardening.run_round()
         self.assertEqual(self.rejected(hardening, result['round_id']),
                          ['reason_code high_risk does not fit 1.1.3 (Moderate 57)'])  # A fix stays strict.
         self.assertEqual(result['outcome']['outcome'], 'awaiting_approval')
-        self.assertEqual([p['proposal']['control_id'] for p in self.store.for_run(result['framework_run_id'])], ['1.2.2'])
-        codes = {s['control_id']: s['reason_code'] for s in result['outcome']['skipped']}
-        self.assertEqual(codes, {'1.1.1': 'lower_priority', '2.3.10.3': 'not_decided', '18.10.57.3.9.4': 'not_decided',
-                                 '1.1.3': 'not_decided'})
-        self.assertIn('Deferred by the Orchestrator: 1.1.1. Left out of the plan, so deferred by code: 2.3.10.3, '
+        # Every fixable finding is proposed this round, in rank order; only the one deferred with a fitting reason waits.
+        self.assertEqual(self.proposed(result), ['1.2.2', '2.3.10.3', '18.10.57.3.9.4', '1.1.3'])
+        self.assertEqual({s['control_id']: s['reason_code'] for s in result['outcome']['skipped']}, {'1.1.1': 'needs_review'})
+        self.assertIn('Deferred by the Orchestrator: 1.1.1. Left out of the plan, so proposed by code: 2.3.10.3, '
                       '18.10.57.3.9.4, 1.1.3.', result['outcome']['reason'])
-        undecided = next(s for s in result['outcome']['skipped'] if s['control_id'] == '1.1.3')
-        self.assertEqual(undecided['reason'], 'Not decided by the Orchestrator this round; deferred by code')
+        by_code = next(p for p in self.store.for_run(result['framework_run_id']) if p['proposal']['control_id'] == '1.1.3')
+        self.assertEqual(by_code['proposal']['reason'],
+                         'Fixable now; the Orchestrator gave no reason that fits to defer it (not_deferred)')
+        self.assertIsNone(by_code['decision'])  # Proposed, never approved by code: the administrator decides.
 
-    def test_a_deferral_with_a_code_that_does_not_fit_is_recorded_as_not_decided(self):
+    def test_a_deferral_with_a_code_that_does_not_fit_is_proposed_by_code(self):
         # low_impact is a fix code; given as a defer code it must not fail the whole plan.
         t = 'windows:' + target().machine_uuid
         result = self.hardening(FakeVm(), [call('delegate_scanner', t), call('delegate_analysis', t),
@@ -520,18 +524,40 @@ class OrchestratorAccountabilityTests(AgenticTestCase):
                           ('18.10.57.3.9.4', 'needs_review')])]).run_round()
         self.assertEqual(result['outcome']['outcome'], 'awaiting_approval')
         codes = {s['control_id']: s['reason_code'] for s in result['outcome']['skipped']}
-        self.assertEqual(codes, {'1.1.3': 'not_decided', '1.1.1': 'not_decided', '2.3.10.3': 'not_decided',
-                                 '18.10.57.3.9.4': 'needs_review'})
-        self.assertIn('Deferred with a reason that did not fit, so recorded as not decided: 1.1.3 (low_impact), '
+        self.assertEqual(codes, {'18.10.57.3.9.4': 'needs_review'})
+        self.assertEqual(sorted(self.proposed(result)), ['1.1.1', '1.1.3', '1.2.2', '2.3.10.3'])
+        self.assertIn('Deferred with a reason that did not fit, so proposed by code: 1.1.3 (low_impact), '
                       '1.1.1 (keeps_reverting), 2.3.10.3 (unknown code).', result['outcome']['reason'])
 
-    def test_not_decided_is_never_offered_to_the_model(self):
+    def test_lower_priority_is_no_longer_a_reason_to_wait_a_round(self):
+        # A live plan deferred seven Moderate fixes as lower_priority, which cost a whole second round.
+        t = 'windows:' + target().machine_uuid
+        result = self.hardening(FakeVm(), [call('delegate_scanner', t), call('delegate_analysis', t),
+            plan(t, fixes=[('1.2.2', 'REM-1.2.2', 'high_risk')],
+                 skipped=[(c, 'lower_priority') for c in ('2.3.10.3', '1.1.1', '1.1.3', '18.10.57.3.9.4')])]).run_round()
+        self.assertEqual(result['outcome']['skipped'], [])
+        self.assertEqual(sorted(self.proposed(result)), ['1.1.1', '1.1.3', '1.2.2', '18.10.57.3.9.4', '2.3.10.3'])
+        self.assertIn('Deferred with a reason that did not fit, so proposed by code: 2.3.10.3 (lower_priority)',
+                      result['outcome']['reason'])
+
+    def test_not_decided_and_lower_priority_are_never_offered_to_the_model(self):
         hardening = self.standard_round(FakeVm())
         result = hardening.run_round()
         trace = self.trace(hardening, result['round_id'], ORCHESTRATOR)[0]
         handoff = next(e['data']['result'] for e in trace['events']
                        if e['kind'] == 'tool' and e['data']['name'] == 'delegate_analysis')
-        self.assertFalse(any('not_decided' in d['defer_codes'] for d in handoff['must_decide']))
+        for code in ('not_decided', 'lower_priority', 'not_deferred'):
+            self.assertFalse(any(code in d['defer_codes'] + d['fix_codes'] for d in handoff['must_decide']), code)
+
+    def test_a_left_out_finding_that_waits_for_its_prerequisite_is_deferred_not_proposed(self):
+        t = 'windows:' + target().machine_uuid
+        vm = FakeVm(dict(LAB_STATE, **{'1.2.1': 5}))  # 1.2.1 non-compliant, but the lockout threshold 1.2.2 is 0.
+        result = self.hardening(vm, [call('delegate_scanner', t), call('delegate_analysis', t),
+                                     plan(t, fixes=[('1.2.2', 'REM-1.2.2', 'unblocks_other')])]).run_round()
+        self.assertNotIn('1.2.1', self.proposed(result))
+        self.assertIn('1.2.2', self.proposed(result))
+        waits = {s['control_id']: s['reason_code'] for s in result['outcome']['skipped']}
+        self.assertEqual(waits.get('1.2.1'), 'waits_for_prerequisite')
 
     def test_argument_errors_name_what_was_wrong(self):
         t = 'windows:' + target().machine_uuid
@@ -572,7 +598,7 @@ class ExpandedControlRoundTests(AgenticTestCase):
         t = 'windows:' + target().machine_uuid
         hardening = self.hardening(FakeVm(state), [call('delegate_scanner', t), call('delegate_analysis', t),
             plan(t, fixes=[('17.5.1', 'REM-17.5.1', 'improves_detection')],
-                 skipped=[(c, 'lower_priority') for c in ('1.2.2', '2.3.10.3', '1.1.1', '1.1.3', '17.1.1', '18.10.57.3.9.4',
+                 skipped=[(c, 'needs_review') for c in ('1.2.2', '2.3.10.3', '1.1.1', '1.1.3', '17.1.1', '18.10.57.3.9.4',
                                                        '18.10.57.3.9.3')])])
         result = hardening.run_round()
         self.assertEqual(result['outcome']['outcome'], 'awaiting_approval')
@@ -594,7 +620,7 @@ class ExpandedControlRoundTests(AgenticTestCase):
         vm = FakeVm(state)
         hardening = self.hardening(vm, [call('delegate_scanner', t), call('delegate_analysis', t),
             plan(t, fixes=[('9.3.6', 'REM-9.3.6', 'improves_detection')],
-                 skipped=[(c, 'lower_priority') for c in ('1.2.2', '2.3.10.3', '1.1.1', '1.1.3', '18.10.57.3.9.4')])])
+                 skipped=[(c, 'needs_review') for c in ('1.2.2', '2.3.10.3', '1.1.1', '1.1.3', '18.10.57.3.9.4')])])
         result = hardening.run_round()
         self.assertEqual(result['outcome']['outcome'], 'awaiting_approval')
         trace = self.trace(hardening, result['round_id'], ORCHESTRATOR)[0]
@@ -622,7 +648,7 @@ class NotConfiguredPolicyTests(AgenticTestCase):
         vm = FakeVm()
         hardening = self.hardening(vm, [call('delegate_scanner', t), call('delegate_analysis', t),
             plan(t, fixes=[('18.10.57.3.9.4', 'REM-18.10.57.3.9.4', 'low_impact')],
-                 skipped=[(c, 'lower_priority') for c in ('1.2.2', '2.3.10.3', '1.1.1', '1.1.3')])])
+                 skipped=[(c, 'needs_review') for c in ('1.2.2', '2.3.10.3', '1.1.1', '1.1.3')])])
         result = hardening.run_round()
         proposal = self.store.for_run(result['framework_run_id'])[0]['proposal']
         self.assertIsNone(proposal['expected_before'])  # Approved precondition: still Not configured.
@@ -658,11 +684,11 @@ class PlanDecisionTests(AgenticTestCase):
     def test_decision_entries_are_checked(self):
         from hardening.agentic import check_decisions
         for entry, message in ((dict(control_id='1.2.2', decision='fix', reason_code='high_risk'), 'a fix needs action_id'),
-                               (dict(control_id='1.2.2', decision='skip', reason_code='lower_priority'), 'decision must be fix or defer'),
-                               (dict(control_id='1.2.2', reason_code='lower_priority'), 'needs control_id, decision and reason_code')):
+                               (dict(control_id='1.2.2', decision='skip', reason_code='needs_review'), 'decision must be fix or defer'),
+                               (dict(control_id='1.2.2', reason_code='needs_review'), 'needs control_id, decision and reason_code')):
             with self.assertRaisesRegex(ValueError, message):
                 check_decisions([entry])
-        defer = dict(control_id='1.2.2', decision='defer', reason_code='lower_priority', action_id='REM-1.2.2')
+        defer = dict(control_id='1.2.2', decision='defer', reason_code='needs_review', action_id='REM-1.2.2')
         self.assertEqual(check_decisions([defer]), [defer])  # An action on a deferral is harmless and ignored.
 
 
@@ -837,6 +863,39 @@ class AnalysisAgentTests(AgenticTestCase):
 class RemediationPhaseTests(AgenticTestCase):
     """Remediation Agent decisions and the Orchestrator's next-step decision after verification."""
 
+    def test_a_list_of_fixes_shares_one_connection_and_keeps_every_check(self):
+        # Live 8 Nov: about 10 of each fix's 13 s went on opening two connections. A list now opens one.
+        class CountingVm(FakeVm):
+            connections = 0
+
+            def __call__(self, target):
+                CountingVm.connections += 1
+                return self
+        vm = CountingVm()
+        t = 'windows:' + target().machine_uuid
+        hardening = self.hardening(vm, [call('delegate_scanner', t), call('delegate_analysis', t), plan(t, fixes=[
+            ('1.2.2', 'REM-1.2.2', 'high_risk'), ('1.1.1', 'REM-1.1.1', 'low_impact'), ('1.1.3', 'REM-1.1.3', 'low_impact'),
+            ('2.3.10.3', 'REM-2.3.10.3', 'low_impact'), ('18.10.57.3.9.4', 'REM-18.10.57.3.9.4', 'low_impact')])])
+        result = hardening.run_round()
+        self.approve_all(result['framework_run_id'])
+        before, sent = CountingVm.connections, len(vm.scripts)
+        executed = hardening.execute_approved(result['session_id'])
+        self.assertEqual(sorted(vm.writes), ['1.1.1', '1.1.3', '1.2.2', '18.10.57.3.9.4', '2.3.10.3'])
+        self.assertEqual({v['verdict'] for v in executed['verdicts']}, {'Verified compliant'})
+        # Precheck, the list of five fixes and the verification scan: one connection each (was 2 + 2 x 5 + 2).
+        self.assertEqual(CountingVm.connections - before, 3)
+        self.assertEqual(vm.scripts[sent:].count(IDENTITY_SCRIPT), 7)  # Every fix still checks the server first.
+        fallback_vm = CountingVm()
+        hardening = self.hardening(fallback_vm, [call('delegate_scanner', t), call('delegate_analysis', t), plan(t, fixes=[
+            ('1.2.2', 'REM-1.2.2', 'high_risk'), ('1.1.1', 'REM-1.1.1', 'low_impact')],
+            skipped=[('2.3.10.3', 'needs_review'), ('1.1.3', 'needs_review'), ('18.10.57.3.9.4', 'needs_review')])])
+        result = hardening.run_round()
+        self.approve_all(result['framework_run_id'])
+        before = CountingVm.connections
+        hardening.execute_approved(result['session_id'], deterministic=True)
+        self.assertEqual(sorted(fallback_vm.writes), ['1.1.1', '1.2.2'])
+        self.assertEqual(CountingVm.connections - before, 3)  # Without AI too: precheck, fixes, verification.
+
     def test_agent_skips_a_changed_request_and_executes_the_ready_one(self):
         vm = FakeVm()
         hardening = self.standard_round(vm)
@@ -879,7 +938,8 @@ class RemediationPhaseTests(AgenticTestCase):
         vm = FakeVm(dict(LAB_STATE, **{'1.2.2': 3, '1.2.1': 5}))  # Threshold compliant, so 1.2.1 is fixable.
         t = 'windows:' + target().machine_uuid
         hardening = self.hardening(vm, [call('delegate_scanner', t), call('delegate_analysis', t), plan(t, fixes=[
-            ('1.2.1', 'REM-1.2.1', 'low_impact'), ('1.1.1', 'REM-1.1.1', 'low_impact'), ('1.1.3', 'REM-1.1.3', 'low_impact')])])
+            ('1.2.1', 'REM-1.2.1', 'low_impact'), ('1.1.1', 'REM-1.1.1', 'low_impact'), ('1.1.3', 'REM-1.1.3', 'low_impact')],
+            skipped=[('2.3.10.3', 'needs_review'), ('18.10.57.3.9.4', 'needs_review')])])
         result = hardening.run_round()
         self.approve_all(result['framework_run_id'])
         vm.values.update({'1.2.2': 0, '1.1.1': 5})  # The prerequisite reverted and 1.1.1 changed after approval.
@@ -932,8 +992,8 @@ class RemediationPhaseTests(AgenticTestCase):
         t = 'windows:' + target().machine_uuid
         hardening = self.hardening(FakeVm(state), [call('delegate_scanner', t), call('delegate_analysis', t),
             plan(t, fixes=[('1.2.2', 'REM-1.2.2', 'unblocks_other')],
-                 skipped=[('1.2.1', 'waits_for_prerequisite'), ('2.3.10.3', 'lower_priority'),
-                          ('1.1.1', 'lower_priority'), ('1.1.3', 'lower_priority'), ('18.10.57.3.9.4', 'needs_review')])],
+                 skipped=[('1.2.1', 'waits_for_prerequisite'), ('2.3.10.3', 'needs_review'),
+                          ('1.1.1', 'needs_review'), ('1.1.3', 'needs_review'), ('18.10.57.3.9.4', 'needs_review')])],
             review=[call('delegate_remediation', t), call('delegate_verification', t),
                     call('submit_review', t, next_step='finish', reason_code='nothing_fixable'),
                     call('submit_review', t, next_step='next_round', reason_code='unblocked_findings')])
@@ -1026,9 +1086,10 @@ class JudgementTests(AgenticTestCase):
         stored = self.store.rounds(result['session_id'])[0]['analysis_outcome']
         self.assertEqual(stored['discarded_flags'], [['1.2.2', 'keeps_reverting']])  # Unchecked, and only 1 reversion.
         self.assertEqual(self.rejected(hardening, result['round_id']), [])  # A deferral never fails the plan.
-        self.assertEqual(result['outcome']['skipped'][0], dict(control_id='1.2.2', reason_code='not_decided',
-            reason='Not decided by the Orchestrator this round; deferred by code'))
-        self.assertIn('1.2.2 (keeps_reverting)', result['outcome']['reason'])
+        # The unchecked deferral does not fit, so 1.2.2 is proposed by code; the administrator still decides it.
+        self.assertNotIn('1.2.2', [s['control_id'] for s in result['outcome']['skipped']])
+        self.assertIn('1.2.2', [p['proposal']['control_id'] for p in self.store.for_run(result['framework_run_id'])])
+        self.assertIn('so proposed by code: 1.2.2 (keeps_reverting)', result['outcome']['reason'])
         handoff = next(e['data']['result'] for e in self.trace(hardening, result['round_id'], ORCHESTRATOR)[0]['events']
                        if e['kind'] == 'tool' and e['data']['name'] == 'delegate_analysis')
         entry = next(d for d in handoff['must_decide'] if d['control_id'] == '1.2.2')
@@ -1058,7 +1119,7 @@ class JudgementTests(AgenticTestCase):
         result = hardening.run_round()
         self.assertEqual(len(self.rejected(hardening, result['round_id'])), 2)
         self.assertEqual(result['outcome']['outcome'], 'awaiting_approval')
-        wrong_code = plan(t, fixes=[('1.2.2', 'REM-1.2.2', 'lower_priority')], skipped=DEFER_ALL[1:])
+        wrong_code = plan(t, fixes=[('1.2.2', 'REM-1.2.2', 'needs_review')], skipped=DEFER_ALL[1:])
         hardening = self.hardening(FakeVm(), [call('delegate_scanner', t), call('delegate_analysis', t), both, missing,
                                               wrong_code, good])
         result = hardening.run_round()

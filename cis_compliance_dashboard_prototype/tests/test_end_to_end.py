@@ -63,7 +63,7 @@ class EndToEndTests(unittest.TestCase):
         ScriptedModel.team = TeamDouble(clients(t, [
             call('delegate_scanner', t), call('delegate_analysis', t),
             plan(t, fixes=[('1.2.2', 'REM-1.2.2', 'high_risk'), ('1.1.1', 'REM-1.1.1', 'low_impact')],
-                 skipped=[('2.3.10.3', 'needs_review'), ('1.1.3', 'lower_priority'), ('18.10.57.3.9.4', 'needs_review')])]))
+                 skipped=[('2.3.10.3', 'needs_review'), ('1.1.3', 'needs_review'), ('18.10.57.3.9.4', 'needs_review')])]))
         for patcher in (patch('system.config.PATHS', self.paths),
                         patch.object(winrm_channel, 'PsrpSession', self.server),
                         patch.object(servers_view, 'find_server', lambda code: FOUND),
