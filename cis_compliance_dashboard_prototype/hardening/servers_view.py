@@ -66,6 +66,8 @@ HINTS = {
     'unreachable': 'Check the server is on. Its address may have changed (pair again and use Re-pair below); on Windows, '
                    'access may have been reverted in the helper; on Ubuntu, check that the SSH service runs '
                    '(systemctl status ssh).',
+    'slow_reply': 'The server is reachable but slow. Give it a minute (a VM may still be starting or short of memory), '
+                  'then connect again.',
 }
 
 

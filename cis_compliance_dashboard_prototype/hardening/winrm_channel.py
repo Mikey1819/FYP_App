@@ -20,6 +20,8 @@ COLLECTOR = Path(__file__).resolve().parents[2] / 'scripts' / 'vm' / 'Collect-Se
 
 # WinRM over HTTP. Servers are found by pairing (pairing_client.py), which also gives their address and port.
 DEFAULT_PORT = 5985
+CONNECT_TIMEOUT = 15  # Seconds to open the connection.
+READ_TIMEOUT = 30     # Seconds to wait for each reply once connected.
 IDENTITY_SCRIPT = r'''
 $os = Get-CimInstance Win32_OperatingSystem -OperationTimeoutSec 15
 $cs = Get-CimInstance Win32_ComputerSystem -OperationTimeoutSec 15
@@ -123,7 +125,7 @@ class PsrpSession:
         from pypsrp.wsman import WSMan
         return WSMan(self.target.host, port=self.target.port, username=self.target.username,
                      password=self.target.password, ssl=False, auth='ntlm', encryption='always',
-                     connection_timeout=15, operation_timeout=20, read_timeout=30)
+                     connection_timeout=CONNECT_TIMEOUT, operation_timeout=20, read_timeout=READ_TIMEOUT)
 
     @staticmethod
     def _invoke(pool, script, parameters, local_scope):
@@ -165,15 +167,49 @@ class PsrpSession:
             return self._invoke(pool, script, parameters, None)
 
 
+REPAIR = ('The server access helper lets in only the laptop address saved at pairing, so if this laptop\'s address '
+          'changed, pair again with a new code.')
+NETWORK_FAILURES = {  # Which network failure it was, so the administrator knows where to look.
+    'refused': 'Refused: the server\'s address answered, but nothing listens on the WinRM port. Check that the WinRM '
+               'service runs on the server (Get-Service WinRM) and that the port is right.',
+    'no_answer': f'Timed out connecting: nothing answered within {CONNECT_TIMEOUT} s. The server may be off, asleep or on '
+                 'another network, or its firewall drops this laptop. ' + REPAIR,
+    'no_route': 'No route: this laptop cannot reach the server\'s address, so they are not on the same network now. '
+                'Check this laptop\'s network connection. ' + REPAIR,
+    'cut': 'Connection cut part-way: a network drop, or the server or its WinRM service restarting. Check again in a '
+           'moment.',
+    'other': 'No WinRM listener answered. Check the server is on, the address and port are right, and the server '
+             'access helper has allowed this laptop.',
+}
+SLOW_REPLY = (f'Server too slow to reply: it accepted the connection but sent no reply within {READ_TIMEOUT} s, so it '
+              'is reachable but busy (for example a VM short of memory or CPU while the AI model runs on the same '
+              'laptop). Wait a moment, then check again.')
+
+
 def _classify(exc):
+    """A fixed category and message for a failure. The library's own text is only matched, never shown: it can
+    carry the address and remote text."""
     name = type(exc).__name__
-    text = str(exc)
+    names = {c.__name__ for c in type(exc).__mro__}
+    text = str(exc).lower()
     if name == 'AuthenticationError' or '401' in text:
         return ChannelError('auth_failed', 'The server rejected the username or password.')
-    if name in ('ConnectionError', 'ConnectTimeout', 'ReadTimeout', 'Timeout') or 'refused' in text.lower():
-        return ChannelError('unreachable', 'No WinRM listener answered. Check the server is on, the address and '
-                            'port are right, and the server access helper has allowed this laptop.')
-    return ChannelError('channel_error', name + ' while talking to the server.')
+    if 'ReadTimeout' in names or 'read timed out' in text:
+        return ChannelError('slow_reply', SLOW_REPLY)
+    if not names & {'ConnectionError', 'Timeout', 'TimeoutError'} and 'refused' not in text:
+        return ChannelError('channel_error', name + ' while talking to the server.')
+    if 'ConnectTimeout' in names or 'timed out' in text or '10060' in text:
+        kind = 'no_answer'
+    elif 'refused' in text or '10061' in text:
+        kind = 'refused'
+    elif 'unreachable' in text or '10065' in text or '10051' in text or 'no route' in text:
+        kind = 'no_route'
+    elif names & {'ConnectionResetError', 'ConnectionAbortedError', 'RemoteDisconnected'} or any(
+            word in text for word in ('reset', 'aborted', 'forcibly closed', '10054', '10053')):
+        kind = 'cut'
+    else:
+        kind = 'other'
+    return ChannelError('unreachable', NETWORK_FAILURES[kind])
 
 
 def _run_script(login, session_factory, script, parameters=None):

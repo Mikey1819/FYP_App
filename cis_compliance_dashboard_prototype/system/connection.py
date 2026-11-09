@@ -155,9 +155,8 @@ class ConnectionService:
                               'account. Credentials were cleared.')
             elif state == 'auth_failed':
                 code, detail = 'auth_failed', 'The server rejected the username or password. Credentials were cleared.'
-            elif state == 'unreachable':
-                code, detail = 'unreachable', ('No WinRM listener answered at the paired address. Credentials were '
-                                               'cleared.')
+            elif state in ('unreachable', 'slow_reply'):  # Which network failure, in the channel's fixed words.
+                code, detail = state, exc.detail + ' Credentials were cleared.'
             # SSH (paramiko) failures, recognised by class name so this layer does not import the SSH library.
             elif 'AuthenticationException' in {c.__name__ for c in type(exc).__mro__}:
                 code, detail = 'auth_failed', 'The server rejected the username or password. Credentials were cleared.'

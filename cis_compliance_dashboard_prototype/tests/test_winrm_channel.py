@@ -153,6 +153,28 @@ class LiveScannerTests(unittest.TestCase):
             self.assertNotIn('secret', json.dumps(status))
         self.assertNotIn('secret', repr(target()))
 
+    def test_each_network_failure_says_which_it_was_without_the_library_text(self):
+        import requests
+        pool = "HTTPConnectionPool(host='192.0.2.7', port=5985): "  # Real texts, captured from requests on Windows.
+        cases = (
+            (requests.ConnectionError(pool + 'Max retries exceeded (Caused by NewConnectionError("Failed to establish a '
+                                      'new connection: [WinError 10061] No connection could be made because the target '
+                                      'machine actively refused it"))'), 'unreachable', 'Refused'),
+            (requests.ConnectTimeout(pool + "Max retries exceeded (Caused by ConnectTimeoutError('Connection to "
+                                     "192.0.2.7 timed out. (connect timeout=15)'))"), 'unreachable', 'Timed out connecting'),
+            (requests.ConnectionError(pool + 'Max retries exceeded (Caused by NewConnectionError("[WinError 10065] A '
+                                      'socket operation was attempted to an unreachable host"))'), 'unreachable', 'No route'),
+            (requests.ConnectionError(('Connection aborted.', ConnectionResetError(10054, 'An existing connection was '
+                                       'forcibly closed by the remote host'))), 'unreachable', 'Connection cut'),
+            (requests.ReadTimeout(pool + 'Read timed out. (read timeout=30)'), 'slow_reply', 'too slow to reply'),
+            (TimeoutError('timed out'), 'unreachable', 'Timed out connecting'),
+        )
+        for error, state, words in cases:
+            status = self.scanner(FakeSession(fail=error)).worker_status('FIXTURE-SERVER', MACHINE_UUID)
+            self.assertEqual(status['state'], state, error)
+            self.assertIn(words, status['detail'])
+            self.assertNotIn('192.0.2.7', status['detail'])  # Library text (address, remote words) is never shown.
+
     def test_target_requires_credentials(self):
         with self.assertRaises(ValueError):
             target(password='')

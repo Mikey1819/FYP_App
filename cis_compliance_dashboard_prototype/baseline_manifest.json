@@ -135,7 +135,7 @@
     },
     "cis_compliance_dashboard_prototype/hardening/servers_view.py": {
       "category": "protected",
-      "sha256": "2660a09d8bb3b8db2e860a7c50f225fd37e1319925c0591c7e5565165d95f207"
+      "sha256": "57654821541d565e9b0f94128e1466d453f040d8408bad7c0bb2fbbfce5aab5b"
     },
     "cis_compliance_dashboard_prototype/hardening/system_detect.py": {
       "category": "protected",
@@ -146,7 +146,7 @@
       "category": "authorized_ui"
     },
     "cis_compliance_dashboard_prototype/hardening/winrm_channel.py": {
-      "sha256": "d058ecc57fe8dae6510985ea44b8db882a9e27764cd3d645391dd5ba1838d548",
+      "sha256": "f27c68dd5622e08d9e399f38233a2fe1e438b1d15f6a16cfadc514c5d52e746e",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/launch.py": {
@@ -250,7 +250,7 @@
       "sha256": "5ff3b8148610ac0c8609344e29b643350f6dd5a7e03a90c3f80789091cf9393d"
     },
     "cis_compliance_dashboard_prototype/tests/test_winrm_channel.py": {
-      "sha256": "28821c7d079c4b6686c4e7881768a0e525500391905ddc27f3d52b09f40d9bf0",
+      "sha256": "2c66cf1b04291cd2bc70a84d416bcf04f69a198453b4525f9bca13099cd0b5b9",
       "category": "protected"
     },
     "docs/archive/ADMIN_GOALS_DESIGN.md": {
