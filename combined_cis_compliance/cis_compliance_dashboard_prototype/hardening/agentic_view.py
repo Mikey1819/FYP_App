@@ -7,7 +7,7 @@ from uuid import uuid4
 
 import streamlit as st
 
-from . import background
+from . import background, live_progress
 from .action_library import LIBRARY
 from .agentic import ANALYSIS, ORCHESTRATOR, REMEDIATION, SCANNER, AgenticHardening, explain_finding, verdict_kind
 from .connection_view import job_key, render_connection
@@ -34,8 +34,9 @@ TAB = 'agentic_tab'
 ROUND_VIEW = 'agentic_round_view'
 COMMENT = 'agentic_comment'
 JOB_ERROR = 'agentic_job_error'  # Why the last background round or execution stopped, shown once.
-# The page waits this long for background work before showing it as running: quick work looks as before.
-WAIT_SECONDS = 3
+# The page waits this long for background work before showing it as running: quick work shows its result at once.
+# Kept short: while the click waits, the old page is still on screen and clickable.
+WAIT_SECONDS = 1
 ROUND_LABEL = 'Round: Orchestrator → Scanner → Analysis → plan'
 EXECUTE_LABEL = 'Remediation Agent executing the approved fixes, then Scanner verifying'
 FALLBACK_LABEL = 'Executing the approved fixes in rank order without AI, then verifying'
@@ -110,6 +111,14 @@ def _start(label, work, after):
     st.rerun()
 
 
+def _live_store(database_path, target):
+    """Where the Windows agents log what they do (read by the live view), or None (Ubuntu keeps its own log)."""
+    backend = active_backend(st.session_state)
+    if backend:
+        return backend.store if backend.session.identity.platform == 'windows' else None
+    return _services(database_path, target)[1]
+
+
 def _error_text(error):
     if isinstance(error, ChannelError):
         return 'Server channel (' + error.state + '): ' + md_escape(error.detail)
@@ -126,23 +135,32 @@ def _collect_finished(key):
         st.session_state[JOB_ERROR] = _error_text(job.error)
 
 
-def _show_running(job):
+def _show_running(job, store=None):
+    """While a round or an execution runs, this is the whole page: nothing on it can be clicked meanwhile. The
+    sidebar (Overview, History and drift) stays open, and says when the work has finished."""
     with st.container(border=True):
-        _running_clock(job.key)
-        st.caption(f'Started {myt(job.started_at, "%H:%M:%S")}. It keeps running if you open another page; this page '
-                   'shows the result when it has finished. Starting other work and disconnecting wait until then.')
-        st.button('Refresh', key='agentic_job_refresh', icon=':material/refresh:')
+        _working_view(job.key, store)
+        st.caption(f'Started {myt(job.started_at, "%H:%M:%S")}. It keeps running if you open Overview or History and '
+                   'drift in the sidebar, and you are told when it has finished. Nothing else can start on this server '
+                   'until then, and this page shows the result by itself.')
 
 
 @st.fragment(run_every=1)
-def _running_clock(key):
-    """The running work and how long it has taken so far, every second; the page shows the result once it ends."""
+def _working_view(key, store):
+    """The agents at work, every second: who is working, who has finished, the last step, and the time so far."""
     job = background.running(key)
     if job is None:
         st.rerun(scope='app')
+    try:
+        state = live_progress.progress(store, job.started_at) if store is not None else None
+    except sqlite3.Error:  # The log is being written: the next second reads it.
+        state = None
+    st.html(live_progress.stage_html(live_progress.phase_roles(job.label), state))
     seconds = (datetime.now(timezone.utc) - job.started_at).total_seconds()
     st.markdown(f':blue-badge[:material/progress_activity: Running] **{md_escape(job.label)}** · '
                 f'{duration_text(seconds)} so far')
+    if state and state['active']:
+        st.caption(f"**{md_escape(state['active'])}**: {md_escape(state['words'])}")
 
 
 def _after_round(result, error):
@@ -655,6 +673,8 @@ def _click_start(kind, hardening, session_id=None, expected=None):
     """Button callback (Windows). It runs before the page is drawn again, so the page that follows shows the work
     running (or its result), and never the old page under a wait."""
     key = job_key()
+    if background.running(key):
+        return  # A repeated click while work runs (the old page was still on screen): nothing to do.
     if kind == 'round':
         work, session_id = _round_work(hardening, session_id)
         label = ROUND_LABEL
@@ -683,6 +703,8 @@ def _click_start(kind, hardening, session_id=None, expected=None):
 def _click_settle():
     """Button callback (Windows): the read-only rescan that settles an uncertain fix, clock check first."""
     backend, key = active_backend(st.session_state), job_key()
+    if background.running(key):
+        return  # A repeated click while work runs.
     connection, workflow = st.session_state[CONNECTION_KEY], st.session_state.get(WORKFLOW_KEY)
 
     def after(result, error):
@@ -1003,6 +1025,8 @@ def _completion_message(hostname, compliant, total, exceptions):
 
 def _click_complete(hardening, runtime, store, decisions, session_id, target_id, assessed_run, hostname):
     """Button callback: the final scan in the background (clock check first), then completion if nothing is open."""
+    if background.running(job_key()):
+        return  # A repeated click while the final scan runs.
     operator = (st.session_state.get('agentic_complete_operator') or '').strip()
     if not operator:
         st.session_state[COMPLETE_ERROR] = 'Type your name first: it is recorded with the completion.'
@@ -1401,8 +1425,8 @@ def render_agentic(database_path: Path):
         if error:
             st.error(error)
         job = background.running(key)
-        if job is not None:  # Nothing else to choose until it has finished: the page shows it running.
-            _show_running(job)
+        if job is not None:  # Nothing else to choose until it has finished: the page shows the agents at work.
+            _show_running(job, _live_store(database_path, target))
             return
         backend = active_backend(st.session_state)
         if backend:

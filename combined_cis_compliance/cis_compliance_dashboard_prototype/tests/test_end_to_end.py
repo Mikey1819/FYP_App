@@ -59,6 +59,8 @@ class EndToEndTests(unittest.TestCase):
         self.paths = IntegrationPaths(APP.parent, data / 'windows' / 'imports.sqlite3', data / 'ubuntu' / 'imports.sqlite3',
                                       data / 'integration.sqlite3')
         self.server = PairedVm()
+        answering = patch('hardening.reachability.answers', return_value=True)  # The fixture server has no real port.
+        answering.start(); self.addCleanup(answering.stop)
         t = 'windows:' + MACHINE_UUID
         ScriptedModel.team = TeamDouble(clients(t, [
             call('delegate_scanner', t), call('delegate_analysis', t),

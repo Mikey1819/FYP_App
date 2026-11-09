@@ -1,6 +1,7 @@
 """The whole app (app.py): Servers comes first, and the connected server's system decides what the workspace shows.
 No server or model is contacted: a connection is what the Servers page leaves in the session after pairing, through
 the shared connection service with fixture channels. Data goes to a temporary folder, never the app's data folder."""
+from datetime import timedelta
 from pathlib import Path
 import tempfile
 import threading
@@ -47,6 +48,8 @@ class AppNavigationTests(unittest.TestCase):
                                       data / 'integration.sqlite3')
         patcher = patch('system.config.PATHS', self.paths)
         patcher.start(); self.addCleanup(patcher.stop)
+        self.answering = patch('hardening.reachability.answers', return_value=True)  # Fixture servers have no port.
+        self.reach = self.answering.start(); self.addCleanup(self.answering.stop)
 
     def open(self, page=None, app=None, **state):
         app = app or AppTest.from_file(str(APP), default_timeout=30).run()
@@ -88,6 +91,26 @@ class AppNavigationTests(unittest.TestCase):
         self.assertTrue(any('Hardening complete for FIXTURE-SERVER' in s.value for s in app.success))
         self.assertEqual(self.open('overview', app=app).title[0].value, 'Overview')  # Shown once.
         self.assertFalse(any('Hardening complete' in s.value for s in app.success))
+
+    def test_every_page_says_when_the_windows_server_stops_answering_and_when_it_is_back(self):
+        # User report: whether the server was off could only be read from the clock box.
+        from hardening import reachability
+        self.reach.return_value = False
+        app = self.open(**{LIVE_TARGET: target()})
+        for page in ('overview', 'agentic', 'history', 'servers'):
+            with self.subTest(page=page):
+                shown = self.open(page, app=app)
+                self.assertTrue(any('FIXTURE-SERVER is not answering' in e.value.replace('\\', '') for e in shown.error),
+                                [e.value for e in shown.error])
+        self.assertIn('Not answering', text(app) + ' '.join(m.value for m in app.sidebar.markdown))
+        self.assertEqual(self.reach.call_args.args[:2], (target().host, target().port))  # Its WinRM port only.
+        self.reach.return_value = True
+        app.session_state['server_reach'] = dict(app.session_state['server_reach'],
+                                                 checked_at=app.session_state['server_reach']['checked_at']
+                                                 - timedelta(seconds=reachability.CHECK_EVERY_SECONDS))
+        app = self.open('overview', app=app)
+        self.assertFalse(any('is not answering' in e.value for e in app.error))
+        self.assertTrue(any('is answering again' in t.value.replace('\\', '') for t in app.toast))
 
     def test_the_servers_page_stays_reachable_once_connected(self):
         app = self.open(**{LIVE_TARGET: target()})

@@ -174,12 +174,12 @@
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/tests/test_agentic_view.py": {
-      "sha256": "13db13ce04a9cde4df22039b80aa8ef02f29b874ed80b60a3eed47e05b40a43d",
+      "sha256": "9bc1635f7315754f9671de9ff9090e27aff7b192a7919fb38c20cadb2e53e9f1",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/tests/test_app_navigation.py": {
       "category": "protected",
-      "sha256": "366820c7ac9e0958eb830ea236f090b1bb4b86bb43f27fe14174398e269e9a56"
+      "sha256": "91be3864f5eb3058905c16d91c6058b98c0f2682619efc657b138b874d870f1f"
     },
     "cis_compliance_dashboard_prototype/tests/test_catalogue.py": {
       "sha256": "80321763092f23ddd15d9880dde1b1a134cb71c173616569b8baa29d180c7430",

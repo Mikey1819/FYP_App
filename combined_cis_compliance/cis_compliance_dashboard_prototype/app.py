@@ -11,7 +11,7 @@ system it is, from what the server itself reported after login).
 from datetime import datetime, timezone
 
 import streamlit as st
-from hardening import background
+from hardening import background, reachability
 from hardening.agentic_view import GO_OVERVIEW, render_agentic
 from hardening.connection_view import LIVE_TARGET, LOCKED, connected_session, job_key
 from system.config import PATHS
@@ -21,13 +21,16 @@ from hardening.ollama_client import OllamaClient, model_available
 from hardening.overview_view import render_overview
 from hardening.servers_view import NOTICE, forget_connection, render_servers
 from hardening.system_detect import SUPPORTED_SYSTEMS
-from hardening.ui import CARTOON_CSS, md_escape
+from hardening.ui import CARTOON_CSS, md_escape, myt
 
 st.set_page_config(page_title="Server Hardening Workspace", page_icon=":material/shield:", layout="wide")
 
 OPENED = 'workspace_opened_for'  # The connection whose workspace was opened, so connecting moves to Overview only once.
 ARRIVED = 'workspace_arrived'    # The Servers page's "Connected to ..." message, shown after the move.
 SYSTEMS = {'windows': 'Windows Server 2022', 'ubuntu': 'Ubuntu 22.04 LTS'}
+REACH = 'server_reach'       # Whether the connected Windows server still answers (reachability.py).
+REACH_BACK = 'server_back'   # It answers again after not answering: said once.
+NOTIFIED = 'work_notified'   # The finished work already announced (so the notification shows once).
 
 
 @st.cache_data(ttl=30, show_spinner=False)
@@ -68,6 +71,36 @@ def connected():
     return None
 
 
+def _endpoint():
+    """(host, port) of the connected Windows server, or None."""
+    session = connected_session()
+    if session is not None:
+        return (session.host, session.port) if session.identity.platform == 'windows' else None
+    target = st.session_state.get(LIVE_TARGET)
+    return (target.host, target.port) if target is not None else None
+
+
+def _reach(server):
+    """Check (or reuse a recent check of) whether the connected Windows server answers; None when there is none."""
+    endpoint = _endpoint() if server and server[1] == 'windows' else None
+    if endpoint is None:
+        st.session_state.pop(REACH, None)
+        return None
+    state = reachability.check(st.session_state.get(REACH), server[2], *endpoint)
+    st.session_state[REACH] = state
+    if state.get('back') and state['changed']:
+        st.session_state[REACH_BACK] = True
+    return state
+
+
+@st.fragment(run_every=reachability.CHECK_EVERY_SECONDS)
+def _watch_server(server):
+    """Every few seconds, on every page: when the server stops or starts answering, the whole page says so."""
+    state = _reach(server)
+    if state and state['changed']:
+        st.rerun(scope='app')
+
+
 @st.fragment(run_every=3)
 def _work_status(key):
     """A round or an execution running on this server, on every page. Reloads the page once it has finished."""
@@ -86,13 +119,20 @@ def _status_panel(server, servers):
     key = job_key() if server else None
     busy = background.running(key) is not None
     if server:
-        st.markdown(':green-badge[:material/lan: Server connected]  \n' + md_escape(server[0]))
+        state = st.session_state.get(REACH)
+        st.markdown((':red-badge[:material/wifi_off: Not answering]' if state and not state['ok'] else
+                     ':green-badge[:material/lan: Server connected]') + '  \n' + md_escape(server[0]))
+        _watch_server(server)
         st.caption(f'Workspace: {SYSTEMS[server[1]]}')
         if busy:
             _work_status(key)
-        elif background.finished(key):
+        elif (job := background.finished(key)) is not None:  # Finished while another page was open.
             st.markdown(':green-badge[:material/task_alt: Agents finished]')
             st.caption('Open **Agentic hardening** to see the result.')
+            if st.session_state.get(NOTIFIED) != job.finished_at:
+                st.session_state[NOTIFIED] = job.finished_at
+                st.toast(f'**Finished:** {md_escape(job.label)} on {md_escape(server[0])}. Open **Agentic hardening** '
+                         'to see the result.', icon=':material/task_alt:', duration='long')
     else:
         st.markdown(':gray-badge[:material/lan: No server connected]')
         st.caption('Pair or connect a server first. The workspace opens once a server is connected.')
@@ -129,6 +169,14 @@ def main():
     elif st.session_state.pop(GO_OVERVIEW, False):  # A hardening session was just completed: say so on Overview.
         st.switch_page(workspace[0])
     st.html(CARTOON_CSS)
+    state = _reach(server)
+    if state and not state['ok']:
+        st.error(f'**{md_escape(server[0])} is not answering** since {myt(state["since"], "%H:%M:%S")}: it may be '
+                 'powered off, asleep, or on another network. Actions on it will fail until it answers again. This is '
+                 f'checked every {reachability.CHECK_EVERY_SECONDS} s, and this message goes away by itself.',
+                 icon=':material/wifi_off:')
+    if st.session_state.pop(REACH_BACK, False):
+        st.toast(f'{md_escape(server[0])} is answering again.', icon=':material/wifi:')
     if ARRIVED in st.session_state:
         st.toast(md_escape(st.session_state.pop(ARRIVED)), icon=':material/lan:')
     pages.run()

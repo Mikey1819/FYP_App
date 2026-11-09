@@ -251,8 +251,16 @@ class AgenticPageTests(unittest.TestCase):
         with patch.object(agentic_view, 'WAIT_SECONDS', 0.05):
             app = self._start_round()
         self.assertTrue(any('Running' in m.value and 'Orchestrator' in m.value for m in app.markdown))
-        self.assertNotIn('agentic_run', [b.key for b in app.button])
+        # The agents at work: the Orchestrator is asking the model, the Scanner and Analysis wait their turn.
+        stage = [h.value for h in app.get('html') if 'fyp-stage' in h.value]
+        self.assertEqual(len(stage), 1)
+        self.assertIn('fyp-agent fyp-active"><span class="fyp-icon fyp-i-orchestrator"></span>Orchestrator', stage[0])
+        self.assertIn('Scanner<span class="fyp-state">waiting', stage[0])
+        self.assertTrue(any('AI Agent Orchestrator' in c.value and 'first step' in c.value for c in app.caption))
+        # User report: buttons on the page could still be clicked while work ran. Now only Disconnect, and it waits.
+        self.assertEqual([b.key for b in app.button], ['agentic_disconnect'])
         self.assertTrue(app.button(key='agentic_disconnect').disabled)
+        self.assertEqual(app.get('download_button'), [])
         # Another page opens and works while the round goes on.
         overview = AppTest.from_function(overview_page, default_timeout=60).run()
         self.assertEqual(len(overview.exception), 0, [e.value for e in overview.exception])
