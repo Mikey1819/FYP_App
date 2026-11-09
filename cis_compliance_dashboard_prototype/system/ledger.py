@@ -10,7 +10,7 @@ from pathlib import Path
 import sqlite3
 from uuid import uuid4, uuid5, NAMESPACE_URL
 
-from .contracts import WorkflowBinding, OperationState, encode_record, decode_record
+from .contracts import VerificationRefused, WorkflowBinding, OperationState, encode_record, decode_record
 
 
 def now():
@@ -19,6 +19,20 @@ def now():
 
 def canonical(value):
     return json.dumps(value, sort_keys=True, separators=(',', ':'), ensure_ascii=False, allow_nan=False)
+
+
+def _renamed(identity, old):
+    """The same machine ID under another name: a copy of a machine, or one renamed or reinstalled since."""
+    name, before = identity.hostname[:63], old['hostname'][:63]
+    copy = ('give the copy its own hardware UUID (VirtualBox, with the VM off: VBoxManage modifyvm "<VM name>" '
+            '--hardwareuuid <new UUID>)' if identity.platform == 'windows' else 'give the copy its own machine ID')
+    return VerificationRefused(
+        f"This laptop already knows this machine's ID ({identity.machine_identity}) as {before} (last at "
+        f"{old['current_endpoint']}), but the server now calls itself {name}. A copied VM keeps the ID of the "
+        'machine it was copied from, and so does a renamed or reinstalled server, so the program does not accept the '
+        'ID under another name.',
+        f'If this server is a copy of {before}, {copy}, then pair it again. If it is {before} itself, renamed, '
+        f'rename it back to {before}.')
 
 
 class CoordinationLedger:
@@ -101,13 +115,25 @@ class CoordinationLedger:
             current = self._current(db, identity.platform)
             old = next((r for r in current if r['machine_identity'] == identity.machine_identity), None)
             if old:
-                if (old['hostname'].casefold(), old['fingerprint']) != (identity.hostname.casefold(),
-                                                                        identity.host_fingerprint):
-                    raise ValueError('Registration conflict or cloned identity; explicit re-enrolment required')
+                if old['hostname'].casefold() != identity.hostname.casefold():
+                    raise _renamed(identity, old)
+                if old['fingerprint'] != identity.host_fingerprint:
+                    raise VerificationRefused(
+                        f"This laptop recorded another SSH host key for {old['hostname'][:63]} "
+                        f"({old['fingerprint']}). A reinstalled server, or a machine in the middle, shows a new key.",
+                        'Check the host key on the server\'s own console. A changed host key is never accepted '
+                        'from this page.')
                 if old['current_endpoint'] != endpoint_key:
-                    taken = any(r['current_endpoint'] == endpoint_key for r in current if r is not old)
-                    if not readdress or taken:
-                        raise ValueError('Registration conflict or cloned identity; explicit re-enrolment required')
+                    other = next((r for r in current if r is not old and r['current_endpoint'] == endpoint_key), None)
+                    if other is not None:
+                        raise VerificationRefused(
+                            f"This laptop has another machine, {other['hostname'][:63]} (ID {other['machine_identity']}),"
+                            f" recorded at {endpoint_key}, so {identity.hostname[:63]} cannot be recorded there too.",
+                            f"Give {identity.hostname[:63]} another address (for example a fixed one) and pair it again.")
+                    if not readdress:
+                        raise VerificationRefused(
+                            f"{old['hostname'][:63]} is recorded at {old['current_endpoint']}, but answered at "
+                            f"{endpoint_key}.", 'Start pairing on the server and use Re-pair below.')
                     db.execute('INSERT INTO endpoint_moves (target_id, endpoint, moved_at, proof) VALUES (?,?,?,?)',
                                (old['target_id'], endpoint_key, now(), 'pairing_code'))
                 return old['target_id'], old['epoch']

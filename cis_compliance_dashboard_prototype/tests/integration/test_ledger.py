@@ -64,3 +64,37 @@ class CoordinationTests(unittest.TestCase):
             self.assertEqual(ledger.resume('w','windows','windows:fixture','e').backend_session_id,'engine')
             with closing(sqlite3.connect(ledger.path)) as db:
                 with self.assertRaises(sqlite3.IntegrityError):db.execute('DELETE FROM operation_events')
+
+
+class RegistrationRefusalTests(unittest.TestCase):
+    """A refused registration names its check and what to do, from the laptop's own records."""
+
+    def setUp(self):
+        from system.ledger import CoordinationLedger
+        folder = tempfile.TemporaryDirectory(); self.addCleanup(folder.cleanup)
+        self.ledger = CoordinationLedger(Path(folder.name) / 'coord.sqlite3')
+
+    def windows(self, hostname, uuid):
+        from system.identity import VerifiedIdentity
+        return VerifiedIdentity('windows', hostname, uuid, 'Server 2022', 'winrm')
+
+    def test_each_refusal_says_which_check_and_what_to_do(self):
+        from system.contracts import Endpoint, VerificationRefused
+        first, second = '11111111-2222-3333-4444-555555555555', '66666666-7777-8888-9999-aaaaaaaaaaaa'
+        here, there = Endpoint('192.168.56.105', 5985, 'winrm'), Endpoint('192.168.68.59', 5985, 'winrm')
+        self.ledger.register(self.windows('WIN-OLD', first), here)
+        self.ledger.register(self.windows('WIN-OTHER', second), there)
+        with self.assertRaises(VerificationRefused) as renamed:  # Same ID, new name: a copy, or renamed.
+            self.ledger.register(self.windows('WIN-NEW', first), here, readdress=True)
+        self.assertIn(f'ID ({first}) as WIN-OLD', renamed.exception.detail)
+        self.assertIn('--hardwareuuid', renamed.exception.remedy)
+        with self.assertRaises(VerificationRefused) as moved:  # A new address needs the pairing code.
+            self.ledger.register(self.windows('WIN-OLD', first), Endpoint('192.168.56.120', 5985, 'winrm'))
+        self.assertIn('Re-pair', moved.exception.remedy)
+        with self.assertRaises(VerificationRefused) as taken:  # Another machine holds that address.
+            self.ledger.register(self.windows('WIN-OLD', first), there, readdress=True)
+        self.assertIn('WIN-OTHER', taken.exception.detail)
+        # A move proven by a pairing code to a free address is still accepted.
+        target, _ = self.ledger.register(self.windows('WIN-OLD', first), Endpoint('192.168.56.120', 5985, 'winrm'),
+                                         readdress=True)
+        self.assertEqual(self.ledger.registration('windows', first)['endpoint'], '192.168.56.120:5985')

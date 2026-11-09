@@ -373,6 +373,16 @@ class PairingPageTests(unittest.TestCase):
         self.assertEqual(scrolls(app), [])
         self.assertIn('servers_pair_password', [t.key for t in app.text_input])
 
+    def test_log_in_without_a_password_says_what_to_type(self):
+        # The button is never greyed out while the password is typed (that needed two clicks).
+        app = self.page()
+        app.text_input(key='servers_code').input('482-913-075').run()
+        app = self.ok(app.button(key='servers_find').click().run())
+        self.assertFalse(app.button(key='servers_pair_finish').disabled)
+        app = self.ok(app.button(key='servers_pair_finish').click().run())
+        self.assertEqual([w.value for w in app.warning], ['Type the account and its password first.'])
+        self.assertEqual(self.registry().all(), [])
+
     def test_the_detected_system_is_shown_before_login(self):
         app = self.page()
         app.text_input(key='servers_code').input('482-913-075').run()
@@ -407,7 +417,34 @@ class PairingPageTests(unittest.TestCase):
                                  'build_number': '17763'}
         app = self.pair()
         self.assertTrue(any('verification_failed' in e.value for e in app.error))
+        self.assertTrue(any('Windows Server 2019 Standard (build 17763)' in self.text(e) for e in app.error),
+                        [e.value for e in app.error])
         self.assertNotIn(LIVE_TARGET, app.session_state)
+        self.assertEqual(self.registry().all(), [])
+
+    @staticmethod
+    def text(element):
+        return element.value.replace('\\', '')  # The page escapes Markdown characters.
+
+    def test_a_copy_of_a_machine_this_laptop_knows_is_refused_with_the_reason(self):
+        # This laptop once paired the machine with this ID under another name: a copied VM keeps the ID.
+        self.ledger.register(VerifiedIdentity('windows', 'OLD-SERVER', MACHINE_UUID.lower(), 'Server 2022', 'winrm'),
+                             Endpoint('192.168.56.105', 5985, 'winrm'))
+        app = self.pair()
+        errors = [self.text(e) for e in app.error]
+        self.assertTrue(any('(verification_failed)' in e and f'ID ({MACHINE_UUID.lower()}) as OLD-SERVER' in e
+                            and 'now calls itself FIXTURE-SERVER' in e and '--hardwareuuid' in e
+                            and 'rename it back to OLD-SERVER' in e for e in errors), errors)
+        self.assertFalse(any('Re-pair below' in e for e in errors), 'Re-pair cannot accept another name')
+        self.assertFalse(any('secret' in e for e in errors))
+        self.assertIsNone(self.connected(app))
+        self.assertEqual(self.registry().all(), [])
+
+    def test_a_domain_member_is_refused_with_the_reason(self):
+        self.session.identity = {**self.session.identity, 'part_of_domain': True, 'domain_role': 3}
+        app = self.pair()
+        self.assertTrue(any('joined to a domain' in self.text(e) and 'stand-alone Windows Server 2022' in self.text(e)
+                            for e in app.error), [e.value for e in app.error])
         self.assertEqual(self.registry().all(), [])
 
     def test_a_wrong_password_is_explained(self):

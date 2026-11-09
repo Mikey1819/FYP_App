@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 import re
 from uuid import uuid4
 
-from .contracts import Capabilities, ConnectionResult
+from .contracts import Capabilities, ConnectionResult, VerificationRefused
 from .discovery import discover_transport
 from .identity import VerifiedIdentity
 from .session import CredentialVault
@@ -30,11 +30,27 @@ class VerifiedSession:
     connected_at: str = ''
 
 
+# Win32_ComputerSystem.DomainRole, in words.
+DOMAIN_ROLES = {0: 'a stand-alone workstation', 1: 'a member workstation', 2: 'a stand-alone server',
+                3: 'a member server of a domain', 4: 'a backup domain controller', 5: 'a primary domain controller'}
+STAND_ALONE_ONLY = 'Pair a stand-alone Windows Server 2022 (not joined to a domain) instead.'
+
+
 def verify_windows_facts(found):
-    if (found.get('build_number') != '20348' or 'Windows Server 2022' not in found.get('os_caption', '')
-            or found.get('part_of_domain') is not False or type(found.get('domain_role')) is not int
-            or found['domain_role'] != 2 or found.get('is_admin') is not True):
-        raise ValueError('Supported standalone Windows Server 2022 administrator identity required')
+    if found.get('build_number') != '20348' or 'Windows Server 2022' not in found.get('os_caption', ''):
+        raise VerificationRefused(f"The server reports {str(found.get('os_caption'))[:120]} (build "
+                                  f"{str(found.get('build_number'))[:12]}); this program assesses Windows Server 2022 "
+                                  '(build 20348) only.', STAND_ALONE_ONLY)
+    if found.get('part_of_domain') is not False:
+        raise VerificationRefused('The server is joined to a domain; this program assesses stand-alone servers only '
+                                  '(the CIS Stand-alone benchmark).', STAND_ALONE_ONLY)
+    if type(found.get('domain_role')) is not int or found['domain_role'] != 2:
+        role = DOMAIN_ROLES.get(found.get('domain_role'), 'not reported')
+        raise VerificationRefused(f'The server\'s role is {role}; this program assesses a stand-alone server only.',
+                                  STAND_ALONE_ONLY)
+    if found.get('is_admin') is not True:
+        raise VerificationRefused('The account has no administrator token on the server.',
+                                  'Use the built-in Administrator account.')
     return VerifiedIdentity('windows', found['hostname'], found['machine_uuid'].lower(), 'Server 2022', 'winrm')
 
 
@@ -72,7 +88,8 @@ class ConnectionService:
         credentials = self.vault.take(request.credential_ref)
         try:
             if self._sessions:
-                raise ValueError('Disconnect the active server before connecting another one')
+                raise VerificationRefused('Another server is connected in this session.',
+                                          'Disconnect it first, then connect this one.')
             started = datetime.now(timezone.utc).isoformat()
             discovery = self._discover(request.endpoint)
             if discovery.transport is None:
@@ -82,13 +99,17 @@ class ConnectionService:
                 channel = self._ssh_factory(request, credentials, self.ledger.known_fingerprint(request.endpoint))
                 identity = channel.verify_identity(request)
                 if identity.platform != 'ubuntu' or identity.os_version != '22.04' or identity.transport != 'ssh':
-                    raise ValueError('Unsupported authenticated platform/transport')
+                    raise VerificationRefused(f'After login the server reports {identity.platform[:20]} '
+                                              f'{identity.os_version[:20]}; this program supports Ubuntu 22.04 over SSH '
+                                              'and Windows Server 2022 over WinRM only.')
             else:
                 from hardening.winrm_channel import LiveScanner, WinRmTarget
                 if credentials.key_path:
-                    raise ValueError('Selected SSH key cannot be used with WinRM')
+                    raise VerificationRefused('An SSH key file cannot log in to Windows (WinRM).',
+                                              'Log in with the account and its password.')
                 if not re.fullmatch(r'[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}', request.expected_machine_identity):
-                    raise ValueError('Windows machine identity must be a UUID')
+                    raise VerificationRefused('The saved machine ID of this Windows server is not a UUID.',
+                                              'Start pairing on the server and pair it again.')
                 target = WinRmTarget(request.expected_hostname, request.expected_machine_identity,
                                      credentials.username, credentials.password, request.endpoint.host, request.endpoint.port)
                 scanner = (self._windows_scanner_factory or LiveScanner)(None, target)
@@ -96,7 +117,10 @@ class ConnectionService:
                 identity = verify_windows_facts(scanner.identity())
             if (identity.hostname.casefold() != request.expected_hostname.casefold()
                     or identity.machine_identity.lower() != request.expected_machine_identity.lower()):
-                raise ValueError('Authenticated target mismatch')
+                raise VerificationRefused(
+                    f'The machine that accepted the login is {identity.hostname[:63]} (ID {identity.machine_identity}),'
+                    f' not {request.expected_hostname[:63]} (ID {request.expected_machine_identity[:64]}), the one '
+                    'that answered the pairing code or was saved.')
             target_id, epoch = self.ledger.register(identity, request.endpoint, readdress=paired)
             if self.ledger.owned_elsewhere(target_id, epoch):
                 raise PendingChangeElsewhere('pending change elsewhere')
@@ -118,9 +142,14 @@ class ConnectionService:
                       'system. Pair it again with a new code. Credentials were cleared.'
                       if code == 'verification_failed' else
                       'Connection failed; check endpoint, trust and selected authentication. Credentials were cleared.')
+            remedy = ''
+            if isinstance(exc, VerificationRefused):  # One named check refused it: say which, in its own words.
+                detail, remedy = exc.detail + ' Nothing was saved. Credentials were cleared.', exc.remedy
             state = getattr(exc, 'state', None)  # hardening.winrm_channel.ChannelError: a fixed failure category.
             if state in ('wrong_target', 'unsupported_target', 'not_admin'):
                 code = 'verification_failed'
+                if state in ('wrong_target', 'unsupported_target'):  # Written by the channel from checked facts.
+                    detail = exc.detail + ' Nothing was saved. Credentials were cleared.'
                 if state == 'not_admin':
                     detail = ('The account has no administrator token on the server; use the built-in Administrator '
                               'account. Credentials were cleared.')
@@ -139,7 +168,7 @@ class ConnectionService:
                 code = 'pending_change_elsewhere'
                 detail = ('Another server has a running or unresolved change. Connect to that server and settle it '
                           '(check its status or confirm it) first. Credentials were cleared.')
-            return ConnectionResult('disconnected', diagnostic_code=code, detail=detail)
+            return ConnectionResult('disconnected', diagnostic_code=code, detail=detail, remedy=remedy)
         finally:
             credentials = None
 

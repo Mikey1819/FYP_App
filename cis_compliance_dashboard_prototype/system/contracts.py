@@ -9,6 +9,15 @@ import types
 from typing import Protocol, Union, get_args, get_origin, get_type_hints, runtime_checkable
 
 
+class VerificationRefused(ValueError):
+    """A login was refused by one named check. `detail` and `remedy` are written by this program from checked facts
+    (names, IDs, addresses), so they may be shown; other errors are never echoed, as they may carry credentials."""
+
+    def __init__(self, detail, remedy=''):
+        super().__init__(detail)
+        self.detail, self.remedy = detail, remedy
+
+
 class AssessmentMode(StrEnum):
     AGENTIC = 'agentic'
     DETERMINISTIC = 'deterministic'
@@ -84,6 +93,7 @@ class ConnectionResult:
     capabilities: Capabilities = Capabilities()
     diagnostic_code: str = ''
     detail: str = ''
+    remedy: str = ''  # What to do about this refusal, when the check that refused it knows (else the page's hint).
 
 
 @dataclass(frozen=True)

@@ -59,8 +59,7 @@ HINTS = {
     'disconnected': '',
     'connection_failed': 'Check the server is on and on the same network. If its address changed, start pairing on '
                          'the server and use Re-pair below.',
-    'verification_failed': 'If the server got a new address, or was reinstalled, start pairing on the server and use '
-                           'Re-pair below.',
+    'verification_failed': 'If the server got a new address, start pairing on the server and use Re-pair below.',
     'pending_change_elsewhere': '',
     'auth_failed': 'Check the account and password. On Ubuntu the account is the Linux user of the server, the name '
                    'before @ in its terminal prompt.',
@@ -113,7 +112,7 @@ def _open(platform, host, port, hostname, identity, username, *, password=None, 
         return None
     result = service.connect(request, paired=paired)
     if result.state != 'connected':
-        hint = HINTS.get(result.diagnostic_code, '')
+        hint = result.remedy or HINTS.get(result.diagnostic_code, '')
         st.error(f'Not connected ({result.diagnostic_code}): {md_escape(result.detail)} {md_escape(hint)}')
         return None
     session = service.session(result.connection_session_id)
