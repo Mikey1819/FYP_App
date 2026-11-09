@@ -11,8 +11,11 @@ from . import background
 from .action_library import LIBRARY
 from .agentic import ANALYSIS, ORCHESTRATOR, REMEDIATION, SCANNER, AgenticHardening, explain_finding, verdict_kind
 from .connection_view import job_key, render_connection
+from .domain import Status
 from .framework import AssessmentRuns
 from .import_storage import ImportedEvidenceStore
+from .manual_controls import (AUTOMATED, CHOICES, MANUAL_FIX, MAX_REASON, NOT_AUTOMATED, PROGRAM_FIX, WHY, WITHDRAWN,
+                              ManualDecisionStore, in_words, setting, steps)
 from .remediation import RemediationStore
 from .round_report import round_analysis, round_report, shown
 from .ui import VERDICT_COLOR, badge, level_badge, md_escape, myt
@@ -39,6 +42,8 @@ UBUNTU_EXECUTE_LABEL = 'Executing the approved fixes, then verifying'
 CLOCK = 'agentic_clock'                # Windows: the last check of the server clock (plain session key).
 CLOCK_NOTICE = 'agentic_clock_notice'  # What the last clock sync did, shown once.
 CLOCK_RECHECK = timedelta(minutes=2)   # The box checks again after this; Start and Execute always check afresh.
+MANUAL_ASK = 'agentic_manual_exception'  # The not-automated control whose exception reason is being typed.
+MANUAL_ERROR = 'agentic_manual_error'
 
 TABS = ('Fixes', 'Risk ranking', 'Controls', 'Results', 'Agent log')
 STEPS = ('Scan', 'Analyse', 'Plan', 'Approve', 'Execute', 'Verify')
@@ -647,7 +652,7 @@ def _choose_round(assessments):
     return next(r for r in assessments if r['round_id'] == chosen)
 
 
-def _action_bar(hardening, session_id, latest, state, rounds, target):
+def _action_bar(hardening, session_id, latest, state, rounds, target, manual_open=(), manual=None):
     verification = state['verification']
     stopped = verification and ((verification.get('outcome') or {}).get('outcome') == 'incomplete' or
                                 (verification.get('outcome') or {}).get('reason_code') == 'remediation_incomplete')
@@ -674,7 +679,10 @@ def _action_bar(hardening, session_id, latest, state, rounds, target):
                        _after_execute)
         if state['undecided']:
             st.markdown(f"{len(state['undecided'])} proposed fix(es) need your decision in **Fixes**.")
-        st.download_button('Round report', round_report(hardening, rounds, latest), icon=':material/download:',
+        if manual_open:
+            st.markdown(f"{len(manual_open)} control(s) this program does not fix need your choice in **Fixes**.")
+        st.download_button('Round report', round_report(hardening, rounds, latest, manual=manual),
+                           icon=':material/download:',
                            file_name='cis-round-' + target.hostname + '-' + myt(latest['created_at'], '%Y-%m-%dT%H%M')
                            + '.html', mime='text/html', key='agentic_report',
                            help='Self-contained HTML record of this round. Open it in a browser to print to PDF.')
@@ -757,7 +765,8 @@ def _show_fixes(store, assessment_round, state, analysis, *, editable):
     if not state['records']:
         st.info('The Orchestrator proposed no fixes in this round.')
     operator = comment = ''
-    if editable and state['undecided']:
+    asked = editable and bool(state['undecided'])
+    if asked:
         with st.container(horizontal=True, vertical_alignment='bottom'):
             operator = st.text_input('Your name (recorded with each decision)', key='agentic_operator',
                                      persist_state='session', width=320)
@@ -790,6 +799,107 @@ def _show_fixes(store, assessment_round, state, analysis, *, editable):
         st.markdown('**Not proposed this round**')
         st.dataframe([{'Control': s['control_id'], 'Reason': s['reason']} for s in outcome['skipped']],
                      hide_index=True)
+    return operator if asked else None
+
+
+# ------------------------------------------------------------------ Windows: controls this program does not fix
+def _manual_store(database_path):
+    return ManualDecisionStore(Path(database_path).with_name('manual_decisions.sqlite3'))
+
+
+def _manual_results(runtime, assessment_round):
+    """(server, {control_id: result}) for the not-automated controls this round scanned; (None, {}) without a scan."""
+    target_id = _round_target(runtime, assessment_round)
+    if target_id is None:
+        return None, {}
+    record = runtime.imports.get(runtime.get(assessment_round['framework_run_id']).evidence_sha256)
+    return target_id, {r.control.control_id: r for r in record.assessment.results
+                       if r.control.control_id in NOT_AUTOMATED}
+
+
+def _manual_open(runtime, decisions, assessment_round):
+    """Not-automated controls that are not compliant and have no choice recorded yet."""
+    target_id, results = _manual_results(runtime, assessment_round)
+    chosen = decisions.latest(target_id) if target_id else {}
+    return [c for c, r in results.items() if r.status != Status.COMPLIANT and c not in chosen]
+
+
+def _manual_cell(decisions, target_id, control, decision, operator, round_id):
+    def record(choice, reason=''):
+        try:
+            decisions.record(target_id, control, choice, operator=operator, reason=reason, round_id=round_id)
+        except ValueError as exc:
+            st.session_state[MANUAL_ERROR] = str(exc)
+        st.session_state.pop(MANUAL_ASK, None)
+        st.rerun()
+
+    if decision is not None:
+        if st.button('Change choice', key=f'agentic_manual_withdraw_{control}', disabled=not operator, width='stretch',
+                     help='Withdraws this choice (recorded too); the control waits for a new one.'):
+            record(WITHDRAWN)
+        return
+    if st.session_state.get(MANUAL_ASK) == control:
+        reason = st.text_input('Why accept it?', key=f'agentic_manual_reason_{control}', max_chars=MAX_REASON,
+                               placeholder='e.g. Firewall is managed by the network team')
+        with st.container(horizontal=True):
+            if st.button('Accept', key=f'agentic_manual_accept_{control}', type='primary',
+                         disabled=not (operator and reason.strip())):
+                record('exception', reason)
+            if st.button('Cancel', key=f'agentic_manual_cancel_{control}'):
+                st.session_state.pop(MANUAL_ASK, None)
+                st.rerun()
+        return
+    if st.button('I will fix it by hand', key=f'agentic_manual_fix_{control}', type='primary', disabled=not operator,
+                 width='stretch', help='Records your choice. The steps are under "How to fix it on the server".'):
+        record('manual_fix')
+    if st.button('Accept as exception', key=f'agentic_manual_exception_{control}', disabled=not operator,
+                 width='stretch', help='Records that it stays as it is, with your reason.'):
+        st.session_state[MANUAL_ASK] = control
+        st.rerun()
+    if not operator:
+        st.caption('Type your name first.')
+
+
+def _show_not_automated(runtime, decisions, assessment_round, analysis, operator, *, editable):
+    """The controls this program assesses but never changes: why, how to fix each by hand, and the administrator's
+    choice for each (fix it by hand, or accept it as an exception)."""
+    target_id, results = _manual_results(runtime, assessment_round)
+    if not results:
+        return
+    chosen = decisions.latest(target_id)
+    scores = {f['control_id']: f for f in (analysis or {}).get('ranked', [])}
+    st.markdown('**Not fixed by this program**')
+    st.caption(md_escape(WHY))
+    error = st.session_state.pop(MANUAL_ERROR, None)
+    if error:
+        st.error(md_escape(error))
+    pending = editable and any(r.status != Status.COMPLIANT for r in results.values())
+    if pending and operator is None:  # The proposals above did not ask for the name.
+        operator = st.text_input('Your name (recorded with each decision)', key='agentic_operator',
+                                 persist_state='session', width=320)
+    operator = (operator or '').strip()
+    for control, result in results.items():
+        decision, finding = chosen.get(control), scores.get(control)
+        compliant = result.status == Status.COMPLIANT
+        with st.container(border=True):
+            left, right = st.columns([3, 1.2], vertical_alignment='center')
+            badge = (':green-badge[Compliant now]' if compliant else
+                     level_badge(finding['level']) + f" risk {finding['score']}" if finding else
+                     f':orange-badge[{result.status.value}]')
+            left.markdown(f'**{control} · {md_escape(result.control.title)}** {badge}')
+            now = in_words(control, result.evidence.value) or shown(result.evidence.value, result.status.value)
+            left.caption(f'Now {md_escape(now)} · needs ' + md_escape(setting(control)))
+            if decision:
+                left.caption(f"{CHOICES[decision['choice']]} · {md_escape(decision['operator'])}, "
+                             f"{myt(decision['decided_at'])}" + (f": {md_escape(decision['reason'])}"
+                                                                  if decision['reason'] else ''))
+            elif not compliant:
+                left.caption(':orange[Needs your choice: fix it by hand, or accept it as an exception.]')
+            with left.expander('How to fix it on the server'):
+                st.markdown('\n'.join(f'{n}. {md_escape(text)}' for n, text in enumerate(steps(control), 1)))
+            with right:
+                if editable and not compliant:
+                    _manual_cell(decisions, target_id, control, decision, operator, assessment_round['round_id'])
 
 
 def _finding_detail(finding, round_id):
@@ -852,7 +962,8 @@ def _show_risk(analysis, round_id, outcome):
 def _show_assessment(runtime, run_id):
     record = runtime.imports.get(runtime.get(run_id).evidence_sha256)
     rows = [{'Control': r.control.control_id, 'Title': r.control.title, 'Area': r.control.area,
-             'Status': r.status.value, 'Observed': shown(r.evidence.value, r.status.value)}
+             'Status': r.status.value, 'Observed': shown(r.evidence.value, r.status.value),
+             'Fix': PROGRAM_FIX if r.control.control_id in AUTOMATED else MANUAL_FIX}
             for r in record.assessment.results]
     counts = {s: sum(r['Status'] == s for r in rows) for s in ('Compliant', 'Non-Compliant', 'Unknown', 'Error')}
     for col, (label, value) in zip(st.columns(4), counts.items()):
@@ -1002,6 +1113,7 @@ def render_agentic(database_path: Path):
                                                                                      capabilities))
                 return
         runtime, store, hardening = _services(database_path, target)
+        decisions = _manual_store(database_path)
         session_id = st.session_state.get(SESSION)
         rounds = store.rounds(session_id) if session_id else []
         assessments = [r for r in rounds if r['kind'] == 'assessment']
@@ -1023,7 +1135,10 @@ def render_agentic(database_path: Path):
         if viewing['outcome']['outcome'] not in PLANNED:
             st.warning(md_escape(viewing['outcome']['reason']))
         if is_latest:
-            clock_ok = _action_bar(hardening, session_id, latest, state, rounds, target)
+            manual_target = _round_target(runtime, latest)
+            clock_ok = _action_bar(hardening, session_id, latest, state, rounds, target,
+                                   _manual_open(runtime, decisions, latest),
+                                   decisions.latest(manual_target) if manual_target else {})
             if state['pending'] and st.session_state.get(CONFIRM) == latest['round_id']:
                 _confirm_execution(hardening, session_id, state, target, clock_ok)
         else:
@@ -1032,7 +1147,8 @@ def render_agentic(database_path: Path):
             st.session_state[TAB] = _default_tab(state)
         fixes, risk, controls, results, log = st.tabs(TABS, key=TAB, on_change='rerun')
         with fixes:
-            _show_fixes(store, viewing, state, analysis, editable=is_latest)
+            operator = _show_fixes(store, viewing, state, analysis, editable=is_latest)
+            _show_not_automated(runtime, decisions, viewing, analysis, operator, editable=is_latest)
         with risk:
             _show_risk(analysis, viewing['round_id'], viewing.get('analysis_outcome'))
         with controls:

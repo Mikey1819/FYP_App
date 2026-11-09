@@ -10,6 +10,7 @@ from hardening.agentic import AgenticHardening, risk_analysis, verdict_kind
 from hardening.domain import summarise
 from hardening.framework import AssessmentRuns
 from hardening.import_storage import ImportedEvidenceStore
+from hardening.manual_controls import AUTOMATED, MANUAL_FIX, PROGRAM_FIX
 from hardening.remediation import RemediationStore
 from hardening.risk import analyse, BASELINE_VERSION, rule_text
 from hardening.winrm_channel import ChannelError, LiveScanner
@@ -160,7 +161,8 @@ class WindowsBackend(BoundBackend):
             results[0].evidence.collected_at.isoformat())
         controls = tuple(ControlRow(r.control.control_id, r.control.title, r.control.area, r.control.profile,
             r.control.source_reference, ComplianceStatus(r.status.value), 'applicable', repr(r.evidence.value),
-            rule_text(r.control.rule), evidence_references=(self._ref(run_id),)) for r in results)
+            rule_text(r.control.rule), evidence_references=(self._ref(run_id),),
+            fix=PROGRAM_FIX if r.control.control_id in AUTOMATED else MANUAL_FIX) for r in results)
         ranked = analyse(record, self.engine.history.previous_records(run_id))
         findings = tuple(FindingRow(f.control_id, **f.factors, score=f.score, level=f.level,
             derivation_reasons=tuple(f.factor_reasons.values()) + (f.exposure_reason, f.drift_reason),

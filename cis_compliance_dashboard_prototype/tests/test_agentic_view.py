@@ -113,7 +113,7 @@ class AgenticPageTests(unittest.TestCase):
                                       'Advanced Audit Policy', 'Remote Desktop Services'})
         top = overview.dataframe[1].value.to_dict('records')
         self.assertEqual(top[0]['Control'], '9.3.1')
-        self.assertEqual(top[0]['Fix'], 'Manual review (no library action)')
+        self.assertEqual(top[0]['Fix'], 'Manual: not automated')
         activity = overview.dataframe[2].value.to_dict('records')
         self.assertEqual([(a['Activity'], a['Result'], a['Status']) for a in activity],
                          [('Remediation and verification', '1 verified', 'Next round recommended'),
@@ -219,6 +219,41 @@ class AgenticPageTests(unittest.TestCase):
         self.assertIn('9 min 0 s behind this laptop', ' '.join(m.value for m in app.markdown))
         self.assertNotIn(agentic_view.SESSION, app.session_state)
         self.assertTrue(app.button(key='agentic_run').disabled)
+
+    def test_controls_this_program_does_not_fix_are_listed_with_steps_and_a_choice(self):
+        app = self._start_round()
+        text = ' '.join(m.value for m in app.markdown)
+        self.assertIn('**Not fixed by this program**', text)
+        self.assertIn('1 control(s) this program does not fix need your choice in **Fixes**.', text)
+        for control in ('9.2.1', '9.2.2', '9.3.1', '9.3.2'):
+            self.assertIn(f'**{control} ·', text)
+        self.assertEqual(text.count('Compliant now'), 3)  # Listed, never hidden or shown as Not applicable.
+        self.assertEqual([b.key for b in app.button if b.key.startswith('agentic_manual_')],
+                         ['agentic_manual_fix_9.3.1', 'agentic_manual_exception_9.3.1'])
+        self.assertTrue(app.button(key='agentic_manual_fix_9.3.1').disabled)  # The name comes first.
+        steps = ' '.join(m.value.replace('\\', '') for e in app.expander if e.label == 'How to fix it on the server'
+                         for m in e.markdown)
+        self.assertIn('Press Win+R, type gpedit.msc and press Enter.', steps)
+
+        app.text_input(key='agentic_operator').input('admin01').run()
+        app.button(key='agentic_manual_exception_9.3.1').click().run()
+        self.assertTrue(app.button(key='agentic_manual_accept_9.3.1').disabled)  # An exception needs a reason.
+        app.text_input(key='agentic_manual_reason_9.3.1').input('Firewall run by the network team').run()
+        app.button(key='agentic_manual_accept_9.3.1').click().run()
+        self.assertEqual(len(app.exception), 0, [e.value for e in app.exception])
+        captions = ' '.join(c.value for c in app.caption)
+        self.assertIn('Accepted as an exception · admin01', captions)
+        self.assertIn('Firewall run by the network team', captions)
+        self.assertNotIn('need your choice in **Fixes**', ' '.join(m.value for m in app.markdown))
+
+        app.button(key='agentic_manual_withdraw_9.3.1').click().run()
+        self.assertIn('1 control(s) this program does not fix need your choice', ' '.join(m.value for m in app.markdown))
+        app.button(key='agentic_manual_fix_9.3.1').click().run()
+        self.assertIn('Will fix it by hand on the server · admin01', ' '.join(c.value for c in app.caption))
+        self.assertEqual(self.vm.writes, [])  # A choice never changes the server.
+        rows = {r['Control']: r for frame in app.dataframe for r in frame.value.to_dict('records')
+                if 'Fix' in r and 'Area' in r}
+        self.assertEqual((rows['9.3.1']['Fix'], rows['1.1.1']['Fix']), ('Manual: not automated', 'Program fix'))
 
     def test_page_without_connection_asks_to_connect(self):
         app = AppTest.from_function(agentic_page, default_timeout=30).run()

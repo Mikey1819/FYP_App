@@ -73,9 +73,11 @@ def render_controls(snapshot):
                + '. Unknown and Error are never counted as passes. Evidence: '
                + md_escape(snapshot.target.evidence_mode) + '.')
     if snapshot.controls:
+        with_fix = any(row.fix for row in snapshot.controls)
         st.dataframe([{'Control': row.control_id, 'Title': row.title, 'Area': row.area,
             'Profile': row.profile, 'Status': row.status.value, 'Applicability': row.applicability,
-            'Observed': row.observed, 'Required': row.expected, 'Source': row.source} for row in snapshot.controls], hide_index=True)
+            'Observed': row.observed, 'Required': row.expected, **({'Fix': row.fix} if with_fix else {}),
+            'Source': row.source} for row in snapshot.controls], hide_index=True)
 
 
 APPLIED = ('applied', 'reconciled_applied')

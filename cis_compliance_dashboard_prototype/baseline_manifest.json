@@ -18,7 +18,7 @@
       "category": "metadata"
     },
     "PROGRESS.md": {
-      "sha256": "03344de16f3dc30df86707115c00c5ddc9cfd5f33e9210e7299c89e1a22ea251",
+      "sha256": "f56f2cbcdca266a51df1331995bdbfd99fbb651edf15929eb25129053c7c9151",
       "category": "metadata"
     },
     "README.md": {
@@ -46,11 +46,11 @@
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/agentic.py": {
-      "sha256": "484f985f4b406e8b785fdd3f66b308ab37a7cfe86b57346c01971400b6848d7c",
+      "sha256": "97781baa932cbecae33b09bef5c53a6880f516ca108cc1b2853c9bb403edc8bb",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/agentic_view.py": {
-      "sha256": "5cd8f2b4b56e69446fc2e96b8387cffea944b5e3dbc93d347972c60646657b23",
+      "sha256": "15b2692e6e254bc8aa9492e680ffa7674f785b23669cc16f76550f9d8c80942e",
       "category": "authorized_ui"
     },
     "cis_compliance_dashboard_prototype/hardening/connection_view.py": {
@@ -94,7 +94,7 @@
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/overview_view.py": {
-      "sha256": "1b370705f605bafd3d7cec770e26786b971eaab69a43bbf5f1af6a1c5636ca84",
+      "sha256": "fc7ed406d23599cd5d2e01430ccff83b81f046307126a808759141efa2c9006e",
       "category": "authorized_ui"
     },
     "cis_compliance_dashboard_prototype/hardening/pairing.py": {
@@ -114,7 +114,7 @@
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/round_report.py": {
-      "sha256": "711f04dc38c6440424182981aae5149e7fb4fecf0bfcdc77281422c3403d0b34",
+      "sha256": "4d29058c322fd0970a2ddc4bf90276678d4de2efaf06711910f95b1b6428daba",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/server2022_catalogue.py": {
@@ -170,11 +170,11 @@
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/tests/test_agentic.py": {
-      "sha256": "88dac63a51559cb407131b23d90a2ddb46914f3f123af26f4d541767b5cbdc3f",
+      "sha256": "1df17505b67e98ddf940fd2121f19fb0b156f345be78f42b1d489c82204ba539",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/tests/test_agentic_view.py": {
-      "sha256": "a1d4a41a7a5003b5ec32cb0c84f392ce40d088bc3979bad8e03ad799df08f6fc",
+      "sha256": "8e64fba86d508b80c956b319f1d060177936c1c3012004a3f77055488c4f51e5",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/tests/test_app_navigation.py": {
@@ -306,7 +306,7 @@
       "category": "metadata"
     },
     "docs/design/ARCHITECTURE.md": {
-      "sha256": "fcc9139c0b4909f6aca1057cdb1825b246e6d621d84f9cff3d8bbc673415e02c",
+      "sha256": "cc5ab499ecd81a631e510cbea86c5f6c6d7961adb32edbe7951271d3b7d0ab44",
       "category": "metadata"
     },
     "docs/design/BENCHMARK_MAPPING.md": {

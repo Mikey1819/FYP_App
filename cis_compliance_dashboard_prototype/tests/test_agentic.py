@@ -501,7 +501,8 @@ class OrchestratorAccountabilityTests(AgenticTestCase):
         self.assertNotIn('model_commentary', outcome)
         self.assertEqual(outcome['reason'], 'Proposed for your approval, in order: 1.2.2 (High 69), 1.1.1 (High 63). '
                          'Deferred by the Orchestrator: 2.3.10.3, 1.1.3, 18.10.57.3.9.4. '
-                         'No library action (manual review): 9.3.1. 2 Unknown/Error gap(s) not scored. '
+                         'Not fixed by this program (fix by hand or accept as an exception, in Fixes): 9.3.1. '
+                         '2 Unknown/Error gap(s) not scored. '
                          'Nothing has been approved or executed.')
         self.assertEqual([s['control_id'] for s in outcome['skipped']], ['2.3.10.3', '1.1.3', '18.10.57.3.9.4'])
         reasons = [p['proposal']['reason'] for p in self.store.for_run(result['framework_run_id'])]
@@ -705,7 +706,8 @@ class NotConfiguredPolicyTests(AgenticTestCase):
     def test_firewall_policy_findings_are_scored_but_never_fixable(self):
         hardening = self.standard_round(FakeVm())
         result = hardening.run_round()
-        self.assertIn('No library action (manual review): 9.3.1.', result['outcome']['reason'])
+        self.assertIn('Not fixed by this program (fix by hand or accept as an exception, in Fixes): 9.3.1.',
+                      result['outcome']['reason'])
         trace = next(x for x in hardening.traces(result['round_id']) if x['agent_role'] == ORCHESTRATOR)
         analysis = next(e['data']['result'] for e in trace['events'] if e['data'].get('name') == 'delegate_analysis')
         self.assertNotIn('9.3.1', [d['control_id'] for d in analysis['must_decide']])

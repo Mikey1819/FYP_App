@@ -28,6 +28,9 @@ class WindowsAdapterTests(unittest.TestCase):
             handle=backend.start_round('connection',None,None,AssessmentMode.DETERMINISTIC,'scan-intent')
             snapshot=backend.snapshot('connection',handle.binding.workflow_session_id)
             self.assertEqual(snapshot.summary.selected,32)
+            fix={c.control_id:c.fix for c in snapshot.controls}
+            self.assertEqual({c for c,f in fix.items() if f=='Manual: not automated'},{'9.2.1','9.2.2','9.3.1','9.3.2'})
+            self.assertEqual(sum(f=='Program fix' for f in fix.values()),28)
             self.assertEqual(snapshot.proposals,())
             self.assertEqual(snapshot.events,())
             self.assertEqual(vm.writes,[])
