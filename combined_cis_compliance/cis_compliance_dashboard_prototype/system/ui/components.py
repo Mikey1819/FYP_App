@@ -184,26 +184,22 @@ def _render_cards(snapshot, control_actions):
                 control_actions(card)
 
 
-def render_explain(control_id, explain, round_id):
-    """FR17 inside a control's fix card: `explain(control_id)` asks the local model about that one finding. The
-    text is shown as unverified and changes nothing (administrator request 2026-11-09: in Fixes, per control)."""
-    key = 'ubuntu_explain_' + str(round_id) + '_' + control_id
-    if st.button('Explain with local AI', key='ubuntu_explain_' + control_id, icon=':material/chat:', type='tertiary'):
-        with st.spinner('Asking qwen3:8b…'):
-            try:
-                st.session_state[key] = explain(control_id) or 'The model returned no explanation.'
-            except Exception as exc:  # Optional: the deterministic ranking and plan stay valid without it.
-                st.session_state[key] = 'Explanation unavailable (' + type(exc).__name__ + ').'
-    if key in st.session_state:
-        st.caption(EXPLANATION_LABEL)
-        st.text(st.session_state[key])
+def render_results_table(snapshot):
+    """One row per execution result of the round (also used by the Ubuntu page's Results layout)."""
+    if snapshot.results:
+        st.dataframe([{'Proposal': r.proposal_reference.record_id, 'Execution': r.execution_state,
+            'Verification': r.verification_status.value if r.verification_status else 'Not verified',
+            'Recovery': r.recovery_state, 'Detail': r.detail} for r in snapshot.results], hide_index=True)
+    else:
+        st.info('No execution results for this target.')
 
 
 def render_snapshot_tabs(snapshot, *, tabs=None, fix_actions=None, fix_header=None, control_actions=None,
-                         fixes_panel=None):
+                         fixes_panel=None, risk_panel=None, results_panel=None):
     """Common panels, also used while a verified backend requires setup. `fix_actions` renders the page's own
     decision/execution controls inside Fixes; with a plan (Ubuntu), `fix_header` renders above the per-control
-    cards and `control_actions(card)` inside each card. The panels themselves never call a backend."""
+    cards and `control_actions(card)` inside each card. `fixes_panel`, `risk_panel` and `results_panel` replace a
+    tab with the page's own layout (Ubuntu: the Windows page's layout). The panels themselves never call a backend."""
     fixes, risk, controls, results, log = tabs or st.tabs(TABS)
     with fixes:
         if fixes_panel is not None:  # The page's own Fixes layout (Ubuntu: the same layout as the Windows page).
@@ -229,7 +225,9 @@ def render_snapshot_tabs(snapshot, *, tabs=None, fix_actions=None, fix_header=No
         if fix_actions is not None and fixes_panel is None:
             fix_actions()
     with risk:
-        if snapshot.findings:
+        if risk_panel is not None:
+            risk_panel()
+        elif snapshot.findings:
             st.dataframe([{'Rank': f.rank, 'Control': f.control_id, 'Risk': f.score, 'Level': f.level,
                            'I': f.I, 'E': f.E, 'P': f.P, 'L': f.L, 'D': f.D,
                            'Derivation': '\n'.join(f.derivation_reasons)} for f in snapshot.findings], hide_index=True)
@@ -238,12 +236,10 @@ def render_snapshot_tabs(snapshot, *, tabs=None, fix_actions=None, fix_header=No
     with controls:
         render_controls(snapshot)
     with results:
-        if snapshot.results:
-            st.dataframe([{'Proposal': r.proposal_reference.record_id, 'Execution': r.execution_state,
-                'Verification': r.verification_status.value if r.verification_status else 'Not verified',
-                'Recovery': r.recovery_state, 'Detail': r.detail} for r in snapshot.results], hide_index=True)
+        if results_panel is not None:
+            results_panel()
         else:
-            st.info('No execution results for this target.')
+            render_results_table(snapshot)
     with log:
         if snapshot.events:
             st.dataframe([{'Role': e.role, 'Event': e.event_kind, 'Tool': e.tool_name,

@@ -974,29 +974,83 @@ class UbuntuBackend(BoundBackend):
         return RoundHandle(operation_id, binding, round_ref, self._verify(store, binding, latest, uncovered, state))
 
     def remediation_review(self, connection_session_id, workflow_session_id):
-        """The latest remediation phase's next-step decision for the latest round (code-written), or None."""
-        from .remediation_agents import REVIEW_ROLE
+        """The latest remediation phase's next-step decision for the latest round (code-written), or None. When the
+        agents stopped early and a fix of the round then ran without them, this is the Windows engine's `fallback`
+        outcome instead: executed without AI."""
+        from .remediation_agents import REMEDIATION, REVIEW_ROLE
         binding = self.check(connection_session_id, workflow_session_id)
         store = self._store()
         rounds = [r for r in store.rounds(binding) if r.kind == 'assessment'] if store and binding else []
         if not rounds:
             return None
-        for run in reversed(self._phase_runs(store, rounds[-1].round_id)):
+        runs = self._phase_runs(store, rounds[-1].round_id)
+        for run in reversed(runs):
             if run.get('agent_role') == REVIEW_ROLE and run['events']:
                 finished = run['events'][-1]['data']
                 outcome = finished.get('outcome')
-                if outcome:
-                    return {'next_step': outcome['outcome'], 'reason_code': outcome['reason_code'],
-                            'reason': outcome['reason']}
-                return {'next_step': None, 'reason_code': None, 'reason': 'The Orchestrator stopped without deciding '
-                        'the next step (' + str(finished.get('status')) + ').'}
+                review = ({'next_step': outcome['outcome'], 'reason_code': outcome['reason_code'],
+                           'reason': outcome['reason']} if outcome else
+                          {'next_step': None, 'reason_code': None, 'reason': 'The Orchestrator stopped without deciding '
+                           'the next step (' + str(finished.get('status')) + ').'})
+                if review['next_step'] is None or review['reason_code'] == 'remediation_incomplete':
+                    # Executed by the Remediation Agent: its own recorded execute_fixes results, never model text.
+                    by_agents = {entry.get('control_id') for r in runs if r.get('agent_role') == REMEDIATION
+                                 for e in r['events'] if e['kind'] == 'tool' and e['data'].get('name') == 'execute_fixes'
+                                 for entry in (e['data'].get('result') or {}).get('results', ())}
+                    if any(p.receipts and p.payload['fields']['control_id'] not in by_agents
+                           and not p.payload['action']['action_id'].startswith(AUXILIARY_PREFIXES)
+                           for p in store.proposals(binding, rounds[-1].round_id)):
+                        return {'next_step': 'fallback', 'reason_code': None,
+                                'reason': 'Executed without AI after the agents stopped early: the remaining approved '
+                                          'fixes ran in plan order with the same approvals and server checks, and a '
+                                          'fresh verification scan checked the result.'}
+                return review
         return None
 
-    def explain_finding(self, connection_session_id, workflow_session_id, control_id, *, timeout=60):
-        """FR17: the local model's plain-language explanation of one finding of the latest round, from code-written
-        facts only. Unverified text that changes nothing; the page labels it so."""
+    def assessment_rounds(self, connection_session_id, workflow_session_id):
+        """The workflow's assessment rounds, oldest first, as (round reference, started at), for the page's round
+        picker as on Windows. Read-only."""
+        binding = self.check(connection_session_id, workflow_session_id)
+        store = self._store() if binding else None
+        return tuple((self._ref(r.round_id), r.created_at)
+                     for r in (store.rounds(binding) if store else ()) if r.kind == 'assessment')
+
+    def verification_changes(self, connection_session_id, workflow_session_id, round_ref):
+        """What the latest verification scan of a round found changed against the round's own scan, as the Windows
+        Results tab shows: one row per control whose status or any sub-check state changed. None while the round has
+        no verification scan. Sub-check states only; raw observed values are never shown."""
+        binding = self.check(connection_session_id, workflow_session_id, round_ref)
+        store = self._store() if binding else None
+        rounds = store.rounds(binding) if store else ()
+        row = next((r for r in rounds if r.kind == 'assessment' and r.round_id == round_ref.record_id), None)
+        if row is None:
+            raise ValueError('Round is outside this workflow')
+        checks = [r for r in rounds if r.kind == 'verification' and (r.details or {}).get('verifies_round') == row.round_id]
+        if not checks:
+            return None
+        before, after = (self._evidence(store, r.evidence_sha256) for r in (row, checks[-1]))
+        old = {a.control_id: a for a in before.assessments}
+        titles = {cid: c.title for cid, c in _controls().items()}
+        rows = []
+        for a in after.assessments:
+            b = old.get(a.control_id)
+            if b is None:
+                continue
+            states = {c.name: c.state for c in b.checks}
+            moved = [f'{c.name}: {states[c.name]} → {c.state}' for c in a.checks
+                     if c.name in states and states[c.name] != c.state]
+            if a.status is b.status and not moved:
+                continue
+            rows.append({'control_id': a.control_id, 'title': titles.get(a.control_id, ''), 'before': b.status.value,
+                         'after': a.status.value, 'change': self._change(b.status.value, a.status.value),
+                         'subchecks': '; '.join(moved) or 'No sub-check changed'})
+        return tuple(rows)
+
+    def explain_finding(self, connection_session_id, workflow_session_id, control_id, *, timeout=60, round_ref=None):
+        """FR17: the local model's plain-language explanation of one finding of a round (the latest by default),
+        from code-written facts only. Unverified text that changes nothing; the page labels it so."""
         from .agents import explain_finding
-        snapshot = self.snapshot(connection_session_id, workflow_session_id)
+        snapshot = self.snapshot(connection_session_id, workflow_session_id, round_ref)
         finding = next((f for f in snapshot.findings if f.control_id == control_id), None)
         control = next((c for c in snapshot.controls if c.control_id == control_id), None)
         if control is None:

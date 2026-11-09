@@ -41,8 +41,6 @@ class RemediationUiTests(base.FixUiTests):
                 if isinstance(client, Scripted):
                     for item in client.script:
                         item['tool_calls'][0]['function']['arguments']['target_id'] = session.target_id
-            clients['explanation'] = Scripted([{'role': 'assistant',
-                                                'content': 'ASLR makes memory addresses hard to guess.'}])
             RankingAware.target = session.target_id
             return UbuntuBackend(self.root / 'ubuntu' / 'imports.sqlite3', session=session, ledger=ledger,
                                  families={spec.action_id: spec}, model_client_factory=clients.__getitem__,
@@ -57,21 +55,14 @@ class RemediationUiTests(base.FixUiTests):
             self.assertEqual(paired_connect(app, platform='ubuntu', hostname=LIVE[1], identity=LIVE[0]).state, 'connected')
             app.button(key='agentic_run').click().run()
             self.assertFalse(list(app.error), [e.value for e in app.error])
-            # FR17 sits in each fix card under Fixes (administrator request 2026-11-09), not under Risk ranking.
-            self.assertEqual([b for b in app.button if b.key and b.key.startswith('risk_explain')], [])
-            self.assertEqual([s for s in app.selectbox if s.key and s.key.startswith('risk_explain')], [])
-            app.button(key='ubuntu_explain_1.5.1').click().run()
-            self.assertFalse(list(app.error), [e.value for e in app.error])
-            self.assertIn('Model-written explanation (unverified; does not affect the score):', self.text(app))
-            self.assertIn('ASLR makes memory addresses hard to guess.', ' '.join(t.value for t in app.text))
             app.text_input(key='agentic_operator').input('fixture-operator').run()
             self.approve_buttons(app)[0].click().run()
             with mock.patch('backends.ubuntu.adapter.execution_gate', return_value=()):
                 app.run()
                 app.button(key='ubuntu_execute_review').click().run()
-                # One way to execute (administrator request 2026-11-09): no separate "Execute without AI" button.
+                # As on Windows: the path without AI is offered only once the agents stopped early
+                # (test_ubuntu_round_views), never beside Confirm.
                 self.assertEqual([b.label for b in app.button if b.key == 'ubuntu_execute_fallback'], [])
-                self.assertEqual([b for b in app.button if b.label == 'Execute without AI'], [])
                 self.assertIn('The Remediation Agent re-checks each fix', self.text(app))
                 app.button(key='ubuntu_execute').click().run()
                 self.assertFalse(list(app.error), [e.value for e in app.error])
@@ -84,7 +75,6 @@ class RemediationUiTests(base.FixUiTests):
         executes = [c for c in channel.runner_calls if c.startswith(b'{"op":"execute"}')]
         self.assertEqual(len(executes), 1)
         self.assertEqual(clients[REMEDIATION].script, [])  # the Remediation Agent made every scripted call
-        self.assertEqual(clients['explanation'].tools_seen, [[]])  # the explanation had no tools: it changes nothing
 
 
 for _name in [n for n in dir(base.FixUiTests) if n.startswith('test')]:
