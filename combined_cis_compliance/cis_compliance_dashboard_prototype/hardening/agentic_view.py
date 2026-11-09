@@ -1,5 +1,5 @@
 """Agentic hardening page: one live VM, AI-coordinated rounds, human approval, verified fixes."""
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import json
 import sqlite3
@@ -7,15 +7,16 @@ from uuid import uuid4
 
 import streamlit as st
 
+from . import background
 from .action_library import LIBRARY
 from .agentic import ANALYSIS, ORCHESTRATOR, REMEDIATION, SCANNER, AgenticHardening, explain_finding, verdict_kind
-from .connection_view import render_connection
+from .connection_view import job_key, render_connection
 from .framework import AssessmentRuns
 from .import_storage import ImportedEvidenceStore
 from .remediation import RemediationStore
 from .round_report import round_analysis, round_report, shown
 from .ui import VERDICT_COLOR, badge, level_badge, md_escape, myt
-from .winrm_channel import ChannelError, LiveScanner
+from .winrm_channel import MAX_CLOCK_OFFSET_SECONDS, ChannelError, LiveScanner
 from system.bootstrap import active_backend, CONNECTION_KEY, SERVICE_KEY, WORKFLOW_KEY
 from system.contracts import AssessmentMode, RecordRef
 from system.ui.components import render_controls, render_snapshot_tabs
@@ -28,6 +29,16 @@ CONFIRM = 'agentic_confirm'
 TAB = 'agentic_tab'
 ROUND_VIEW = 'agentic_round_view'
 COMMENT = 'agentic_comment'
+JOB_ERROR = 'agentic_job_error'  # Why the last background round or execution stopped, shown once.
+# The page waits this long for background work before showing it as running: quick work looks as before.
+WAIT_SECONDS = 3
+ROUND_LABEL = 'Round: Orchestrator → Scanner → Analysis → plan'
+EXECUTE_LABEL = 'Remediation Agent executing the approved fixes, then Scanner verifying'
+FALLBACK_LABEL = 'Executing the approved fixes in rank order without AI, then verifying'
+UBUNTU_EXECUTE_LABEL = 'Executing the approved fixes, then verifying'
+CLOCK = 'agentic_clock'                # Windows: the last check of the server clock (plain session key).
+CLOCK_NOTICE = 'agentic_clock_notice'  # What the last clock sync did, shown once.
+CLOCK_RECHECK = timedelta(minutes=2)   # The box checks again after this; Start and Execute always check afresh.
 
 TABS = ('Fixes', 'Risk ranking', 'Controls', 'Results', 'Agent log')
 STEPS = ('Scan', 'Analyse', 'Plan', 'Approve', 'Execute', 'Verify')
@@ -59,6 +70,7 @@ def _decide(store, request_id, *, approve, operator, comment):
 
 
 def _execute(hardening, session_id, *, deterministic=False, expected=None):
+    """Read on the page what the execution needs, and return the work itself for the background worker."""
     backend = active_backend(st.session_state)
     if backend:
         workflow = st.session_state[WORKFLOW_KEY]
@@ -66,9 +78,61 @@ def _execute(hardening, session_id, *, deterministic=False, expected=None):
         snapshot = backend.snapshot(connection, workflow)
         if expected is None:
             raise ValueError('An exact displayed approval set must be confirmed before dispatch')
-        return backend.execute_approved(connection, workflow, snapshot.current_round_reference,
-                                        expected, deterministic, uuid4().hex)
-    return hardening.execute_approved(session_id, deterministic=deterministic)
+        round_ref, operation = snapshot.current_round_reference, uuid4().hex
+        return lambda: backend.execute_approved(connection, workflow, round_ref, expected, deterministic, operation)
+    return lambda: hardening.execute_approved(session_id, deterministic=deterministic)
+
+
+# ------------------------------------------------------------------ background work (background.py)
+def _start(label, work, after):
+    """Run a round or an execution in the background worker, so opening another page cannot stop it half-way."""
+    job = background.start(job_key(), label, work, after=after)
+    with st.spinner(label + '…'):
+        job.wait(WAIT_SECONDS)
+    st.rerun()
+
+
+def _error_text(error):
+    if isinstance(error, ChannelError):
+        return 'Server channel (' + error.state + '): ' + md_escape(error.detail)
+    return 'Agentic workflow: ' + md_escape(error)
+
+
+def _collect_finished(key):
+    """Apply a finished round or execution of this server once: what the page remembers, and why it stopped."""
+    job = background.take_finished(key)
+    if job is None:
+        return
+    handled = job.after(job.result, job.error) if job.after else False
+    if job.error is not None and not handled:
+        st.session_state[JOB_ERROR] = _error_text(job.error)
+
+
+def _show_running(job):
+    with st.container(border=True):
+        st.markdown(f':blue-badge[:material/progress_activity: Running] **{md_escape(job.label)}**')
+        st.caption(f'Started {myt(job.started_at, "%H:%M:%S")}. It keeps running if you open another page; this page '
+                   'shows the result when it has finished. Starting other work and disconnecting wait until then.')
+        st.button('Refresh', key='agentic_job_refresh', icon=':material/refresh:')
+
+
+def _after_round(result, error):
+    binding = getattr(result, 'binding', None)  # Through a backend: the round's workflow, kept for this session.
+    if binding is not None:
+        st.session_state[WORKFLOW_KEY] = binding.workflow_session_id
+        st.session_state[SESSION] = binding.backend_session_id
+    _reset_view()
+
+
+def _after_execute(result, error):
+    _reset_view()
+
+
+def _after_ubuntu_execute(result, error):
+    if isinstance(error, ValueError):  # Shown in Fixes, as before.
+        st.session_state['ubuntu_execute_error'] = str(error)[:300]
+        return True
+    return False
 
 
 def _round_state(store, rounds, assessment_round):
@@ -164,20 +228,18 @@ def _reset_view():
 
 
 def _run_round(hardening, session_id, mode=AssessmentMode.AGENTIC):
+    if hardening is not None and not _clock_still_ok(hardening):  # Windows; Ubuntu scans use this laptop's clock.
+        return
     # The session is kept before the round starts, so its records stay reachable whatever happens to the page.
     session_id = session_id or uuid4().hex
     st.session_state[SESSION] = session_id
-    with st.spinner('Round running: Orchestrator → Scanner → Analysis → plan. This can take up to 10 minutes.'):
-        backend = active_backend(st.session_state)
-        if backend:
-            handle = backend.start_round(st.session_state[CONNECTION_KEY], st.session_state.get(WORKFLOW_KEY),
-                                          None, mode, uuid4().hex)
-            st.session_state[WORKFLOW_KEY] = handle.binding.workflow_session_id
-            st.session_state[SESSION] = handle.binding.backend_session_id
-        else:
-            hardening.run_round(session_id)
-    _reset_view()
-    st.rerun()
+    backend = active_backend(st.session_state)
+    if backend:
+        connection, workflow, operation = st.session_state[CONNECTION_KEY], st.session_state.get(WORKFLOW_KEY), uuid4().hex
+        work = lambda: backend.start_round(connection, workflow, None, mode, operation)
+    else:
+        work = lambda: hardening.run_round(session_id)
+    _start(ROUND_LABEL, work, _after_round)
 
 
 def _ubuntu_states(snapshot):
@@ -452,6 +514,101 @@ def _ubuntu_restore_actions(backend, connection, proposals, capabilities, workfl
                   disabled=not (capabilities.can_remediate and confirmed))
 
 
+# ------------------------------------------------------------------ Windows: the server clock
+def _measure_clock(hardening, key):
+    backend = active_backend(st.session_state)
+    try:
+        reading = (backend.clock_offset(st.session_state[CONNECTION_KEY]) if backend
+                   else hardening.scanner.clock_offset())
+    except ChannelError as exc:
+        reading = dict(error=f'{exc.state}: {exc.detail}')
+    except ValueError as exc:
+        reading = dict(error=str(exc))
+    reading.update(key=key, checked_at=datetime.now(timezone.utc))
+    st.session_state[CLOCK] = reading
+    return reading
+
+
+def _clock(hardening, *, fresh=False):
+    key = job_key()
+    reading = st.session_state.get(CLOCK)
+    if (fresh or reading is None or reading['key'] != key
+            or datetime.now(timezone.utc) - reading['checked_at'] > CLOCK_RECHECK):
+        reading = _measure_clock(hardening, key)
+    return reading
+
+
+def _clock_ok(reading):
+    return 'offset' in reading and abs(reading['offset']) <= MAX_CLOCK_OFFSET_SECONDS
+
+
+def _clock_still_ok(hardening):
+    """Checked again at the moment Start or Execute is clicked; when the clocks differ, the page shows why instead."""
+    if _clock_ok(_clock(hardening, fresh=True)):
+        return True
+    st.rerun()
+
+
+def _apart(seconds):
+    seconds = round(abs(seconds))
+    return f'{seconds // 60} min {seconds % 60} s' if seconds >= 60 else f'{seconds} s'
+
+
+def _sync_clock(hardening):
+    backend = active_backend(st.session_state)
+    try:
+        if backend:
+            result = backend.sync_clock(st.session_state[CONNECTION_KEY], st.session_state.get(WORKFLOW_KEY),
+                                        uuid4().hex)
+        else:
+            result = hardening.scanner.set_clock()
+        st.session_state[CLOCK_NOTICE] = ('success', f"Server clock set from {myt(result['before'], '%H:%M:%S')} to "
+                                                     f"{myt(result['after'], '%H:%M:%S')}, this laptop's time.")
+    except ChannelError as exc:
+        st.session_state[CLOCK_NOTICE] = ('error', f'Clock not set ({exc.state}): {exc.detail}')
+    except ValueError as exc:
+        st.session_state[CLOCK_NOTICE] = ('error', 'Clock not set: ' + str(exc))
+    st.session_state.pop(CLOCK, None)  # Measured again on the next run.
+    st.rerun()
+
+
+def _clock_gate(hardening):
+    """Windows: the reminder to check the server clock, the check itself, and the one-click fix. True when the clocks
+    match, so a round or an execution may start. Scans and fix evidence carry the server's time; evidence more than
+    5 minutes off this laptop's clock is refused, which would stop the round half-way."""
+    reading = _clock(hardening)
+    ok = _clock_ok(reading)
+    notice = st.session_state.pop(CLOCK_NOTICE, None)
+    with st.container(border=True):
+        if notice:
+            (st.success if notice[0] == 'success' else st.error)(md_escape(notice[1]))
+        if 'error' in reading:
+            st.markdown(':orange-badge[:material/schedule: Clock not checked] Could not read the server clock: '
+                        + md_escape(reading['error']))
+        else:
+            times = (f"server {myt(reading['server'], '%H:%M:%S')} · this laptop "
+                     f"{myt(reading['laptop'], '%H:%M:%S')}")
+            if ok:
+                st.markdown(f':green-badge[:material/schedule: Clocks match] {times} '
+                            f"({_apart(reading['offset'])} apart).")
+            else:
+                st.markdown(f":orange-badge[:material/schedule: Clocks differ] {times}: the server is "
+                            f"{_apart(reading['offset'])} {'ahead of' if reading['offset'] > 0 else 'behind'} "
+                            'this laptop. Sync the server clock before you continue.')
+        st.caption(f"Before you continue, check that the clocks match. Scans and fixes carry the server's time, so a "
+                   f'wrong server clock stops the round. Starting and executing wait until the clocks are within '
+                   f"{MAX_CLOCK_OFFSET_SECONDS} s. Checked at {myt(reading['checked_at'], '%H:%M:%S')}.")
+        with st.container(horizontal=True):
+            if 'offset' in reading and not ok and st.button(
+                    'Sync server clock to this laptop', type='primary', key='agentic_clock_sync', icon=':material/sync:',
+                    help="Sets the server's clock to this laptop's time. Changes nothing else; recorded in the ledger."):
+                _sync_clock(hardening)
+            if st.button('Check again', key='agentic_clock_check', icon=':material/refresh:'):
+                _measure_clock(hardening, job_key())
+                st.rerun()
+    return ok
+
+
 def _show_start(hardening, store, runtime, target):
     st.markdown('No round in this session yet. A round scans the server, ranks the findings and proposes fixes. '
                 'Nothing changes on the server until you approve and execute.')
@@ -461,8 +618,9 @@ def _show_start(hardening, store, runtime, target):
         open_items = len(state['undecided']) + len(state['pending'])
         st.caption(f"Earlier session on {md_escape(target.hostname)}: last round {myt(previous['created_at'])}"
                    + (f', {open_items} fix(es) still open.' if open_items else '.'))
+    ok = _clock_gate(hardening)
     with st.container(horizontal=True):
-        if st.button('Start agentic round', type='primary', key='agentic_run'):
+        if st.button('Start agentic round', type='primary', key='agentic_run', disabled=not ok):
             _run_round(hardening, None)
         if previous and st.button('Resume earlier session', key='agentic_resume'):
             backend = active_backend(st.session_state)
@@ -495,26 +653,25 @@ def _action_bar(hardening, session_id, latest, state, rounds, target):
                                 (verification.get('outcome') or {}).get('reason_code') == 'remediation_incomplete')
     # A new round is offered once nothing in the latest one awaits a decision or execution.
     can_run = not state['undecided'] and not state['pending']
+    ok = _clock_gate(hardening) if can_run or state['pending'] else True
     with st.container(horizontal=True, vertical_alignment='center'):
         if can_run:
-            if st.button('Run next round', type='primary', key='agentic_run', icon=':material/refresh:',
+            if st.button('Run next round', type='primary', key='agentic_run', icon=':material/refresh:', disabled=not ok,
                          help='Rescan the server, re-rank the findings and propose again'):
                 _run_round(hardening, session_id)
         if state['pending'] and st.session_state.get(CONFIRM) != latest['round_id']:
-            if st.button(f"Execute {len(state['pending'])} approved fix(es)…", type='primary',
+            if st.button(f"Execute {len(state['pending'])} approved fix(es)…", type='primary', disabled=not ok,
                          key='agentic_execute_review', icon=':material/play_arrow:'):
                 st.session_state[CONFIRM] = latest['round_id']
                 st.session_state['agentic_confirm_requests'] = tuple(r['proposal']['request_id'] for r in state['pending'])
                 st.rerun()
         if state['pending'] and stopped:
-            if st.button('Execute remaining without AI', key='agentic_execute_fallback',
+            if st.button('Execute remaining without AI', key='agentic_execute_fallback', disabled=not ok,
                          help='Same approval, expiry and precondition guards, in rank order; the result is still '
-                              'verified by a rescan.'):
-                with st.spinner('Executing approved fixes in rank order, then verifying…'):
-                    _execute(hardening, session_id, deterministic=True,
-                             expected=tuple(r['proposal']['request_id'] for r in state['pending']))
-                _reset_view()
-                st.rerun()
+                              'verified by a rescan.') and _clock_still_ok(hardening):
+                _start(FALLBACK_LABEL, _execute(hardening, session_id, deterministic=True,
+                                                expected=tuple(r['proposal']['request_id'] for r in state['pending'])),
+                       _after_execute)
         if state['undecided']:
             st.markdown(f"{len(state['undecided'])} proposed fix(es) need your decision in **Fixes**.")
         st.download_button('Round report', round_report(hardening, rounds, latest), icon=':material/download:',
@@ -526,9 +683,10 @@ def _action_bar(hardening, session_id, latest, state, rounds, target):
             st.session_state.pop(WORKFLOW_KEY, None)
             _reset_view()
             st.rerun()
+    return ok
 
 
-def _confirm_execution(hardening, session_id, state, target):
+def _confirm_execution(hardening, session_id, state, target, clock_ok=True):
     now = datetime.now(timezone.utc)
     rows = []
     for record in state['pending']:
@@ -544,12 +702,12 @@ def _confirm_execution(hardening, session_id, state, target):
         st.caption('The Remediation Agent prechecks each value and skips anything that changed since the scan. '
                    'A fresh Scanner rescan verifies the result. Expired approvals are refused.')
         with st.container(horizontal=True):
-            if st.button('Confirm and execute', type='primary', key='agentic_execute'):
+            if st.button('Confirm and execute', type='primary', key='agentic_execute', disabled=not clock_ok) \
+                    and _clock_still_ok(hardening):
                 st.session_state.pop(CONFIRM, None)
-                with st.spinner('Remediation Agent executing, then Scanner verifying. This can take up to 10 minutes.'):
-                    _execute(hardening, session_id, expected=st.session_state.pop('agentic_confirm_requests', None))
-                _reset_view()
-                st.rerun()
+                _start(EXECUTE_LABEL, _execute(hardening, session_id,
+                                               expected=st.session_state.pop('agentic_confirm_requests', None)),
+                       _after_execute)
             if st.button('Cancel', key='agentic_execute_cancel'):
                 st.session_state.pop(CONFIRM, None)
                 st.rerun()
@@ -786,6 +944,15 @@ def render_agentic(database_path: Path):
     if target is None:
         return  # render_connection already points to the Servers page.
     try:
+        key = job_key()
+        _collect_finished(key)
+        error = st.session_state.pop(JOB_ERROR, None)
+        if error:
+            st.error(error)
+        job = background.running(key)
+        if job is not None:  # Nothing else to choose until it has finished: the page shows it running.
+            _show_running(job)
+            return
         backend = active_backend(st.session_state)
         if backend:
             connection = st.session_state[CONNECTION_KEY]
@@ -856,9 +1023,9 @@ def render_agentic(database_path: Path):
         if viewing['outcome']['outcome'] not in PLANNED:
             st.warning(md_escape(viewing['outcome']['reason']))
         if is_latest:
-            _action_bar(hardening, session_id, latest, state, rounds, target)
+            clock_ok = _action_bar(hardening, session_id, latest, state, rounds, target)
             if state['pending'] and st.session_state.get(CONFIRM) == latest['round_id']:
-                _confirm_execution(hardening, session_id, state, target)
+                _confirm_execution(hardening, session_id, state, target, clock_ok)
         else:
             st.caption('An earlier round, read-only. Decisions and execution happen in the latest round.')
         if TAB not in st.session_state:
@@ -1096,13 +1263,11 @@ def _ubuntu_execute_bar(backend, connection, snapshot, capabilities):
             if st.button('Confirm and execute', type='primary', key='ubuntu_execute'):
                 st.session_state.pop(UBUNTU_CONFIRM, None)
                 ids = st.session_state.pop('ubuntu_confirm_requests', ())
-                with st.spinner('Executing the approved fixes, then verifying. This can take a few minutes.'):
-                    try:
-                        backend.execute_approved(connection, st.session_state.get(WORKFLOW_KEY),
-                                                 snapshot.current_round_reference, ids, True, uuid4().hex)
-                    except ValueError as failure:
-                        st.session_state['ubuntu_execute_error'] = str(failure)[:300]
-                st.rerun()
+                workflow, round_ref, operation = (st.session_state.get(WORKFLOW_KEY), snapshot.current_round_reference,
+                                                  uuid4().hex)
+                _start(UBUNTU_EXECUTE_LABEL,
+                       lambda: backend.execute_approved(connection, workflow, round_ref, ids, True, operation),
+                       _after_ubuntu_execute)
             if st.button('Cancel', key='ubuntu_execute_cancel'):
                 st.session_state.pop(UBUNTU_CONFIRM, None)
                 st.rerun()

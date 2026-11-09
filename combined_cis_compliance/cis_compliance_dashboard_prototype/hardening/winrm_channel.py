@@ -4,7 +4,9 @@ The agent invokes collection itself; nobody carries scripts or evidence files.
 Only repository-registered scripts are sent, with typed parameters (never
 string-built commands or model text). Credentials stay in the caller's memory.
 """
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
@@ -30,6 +32,38 @@ $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.
     is_admin = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 } | ConvertTo-Json -Compress
 '''
+
+
+# The server's clock, read and set over the same checked connection. Scans and fix evidence carry the server's time,
+# and evidence more than 5 minutes off this laptop's clock is refused, so the clocks must match before a round starts.
+MAX_CLOCK_OFFSET_SECONDS = 30  # As on Ubuntu (backends/ubuntu/adapter.py).
+CLOCK_FORMAT = "'yyyy-MM-ddTHH:mm:ss.fffZ', [Globalization.CultureInfo]::InvariantCulture"
+CLOCK_SCRIPT = "[DateTime]::UtcNow.ToString(" + CLOCK_FORMAT + ")"
+SET_CLOCK_SCRIPT = r'''
+param([Parameter(Mandatory)][string]$LaptopUtc)
+$styles = [Globalization.DateTimeStyles]::AdjustToUniversal -bor [Globalization.DateTimeStyles]::AssumeUniversal
+$wanted = [DateTime]::Parse($LaptopUtc, [Globalization.CultureInfo]::InvariantCulture, $styles)
+$before = [DateTime]::UtcNow
+Set-Date -Date $wanted.ToLocalTime() | Out-Null
+[ordered]@{
+    before = $before.ToString(''' + CLOCK_FORMAT + r''')
+    after = [DateTime]::UtcNow.ToString(''' + CLOCK_FORMAT + r''')
+} | ConvertTo-Json -Compress
+'''
+
+
+def _utc_text(value):
+    return value.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.') + f'{value.microsecond // 1000:03d}Z'
+
+
+def _server_time(text):
+    """A time the server reported, checked for its exact shape before it is read."""
+    if type(text) is not str or len(text) != 24 or not text.endswith('Z'):
+        raise ChannelError('channel_error', 'The server returned its clock in an unexpected form.')
+    try:
+        return datetime.fromisoformat(text[:-1]).replace(tzinfo=timezone.utc)
+    except ValueError:
+        raise ChannelError('channel_error', 'The server returned an unreadable clock.') from None
 
 
 class ChannelError(Exception):
@@ -77,24 +111,58 @@ class WinRmTarget:
 
 
 class PsrpSession:
-    """Runs one fixed script per call in a fresh NTLM-encrypted runspace."""
+    """Runs one fixed script per call in a fresh NTLM-encrypted runspace. Between open() and close() (a batch of
+    fixes) the calls share one connection and runspace instead: opening them cost about 4 s per call on the lab
+    server, twice per fix. Each shared call runs in its own local scope, so no variable or function carries over."""
 
     def __init__(self, target):
         self.target = target
+        self._wsman = self._pool = None
+
+    def _connect(self):
+        from pypsrp.wsman import WSMan
+        return WSMan(self.target.host, port=self.target.port, username=self.target.username,
+                     password=self.target.password, ssl=False, auth='ntlm', encryption='always',
+                     connection_timeout=15, operation_timeout=20, read_timeout=30)
+
+    @staticmethod
+    def _invoke(pool, script, parameters, local_scope):
+        from pypsrp.powershell import PowerShell
+        shell = PowerShell(pool)
+        shell.add_script(script, use_local_scope=local_scope)
+        for name, value in (parameters or {}).items():
+            shell.add_parameter(name, value)
+        output = shell.invoke()
+        return [str(item) for item in output], shell.had_errors, [str(e) for e in shell.streams.error]
+
+    def open(self):
+        from pypsrp.powershell import RunspacePool
+        wsman = self._connect()
+        wsman.__enter__()
+        try:
+            pool = RunspacePool(wsman)
+            pool.__enter__()
+        except BaseException:
+            wsman.__exit__(None, None, None)
+            raise
+        self._wsman, self._pool = wsman, pool
+
+    def close(self):
+        pool, wsman, self._pool, self._wsman = self._pool, self._wsman, None, None
+        for item in (pool, wsman):
+            if item is not None:
+                try:
+                    item.__exit__(None, None, None)
+                except Exception:  # Best effort: the server drops an idle shell by itself.
+                    pass
 
     def run(self, script, parameters=None):
-        from pypsrp.powershell import PowerShell, RunspacePool
-        from pypsrp.wsman import WSMan
-        wsman = WSMan(self.target.host, port=self.target.port, username=self.target.username,
-                      password=self.target.password, ssl=False, auth='ntlm', encryption='always',
-                      connection_timeout=15, operation_timeout=20, read_timeout=30)
+        if self._pool is not None:
+            return self._invoke(self._pool, script, parameters, True)
+        from pypsrp.powershell import RunspacePool
+        wsman = self._connect()
         with wsman, RunspacePool(wsman) as pool:
-            shell = PowerShell(pool)
-            shell.add_script(script)
-            for name, value in (parameters or {}).items():
-                shell.add_parameter(name, value)
-            output = shell.invoke()
-            return [str(item) for item in output], shell.had_errors, [str(e) for e in shell.streams.error]
+            return self._invoke(pool, script, parameters, None)
 
 
 def _classify(exc):
@@ -116,6 +184,12 @@ def _run_script(login, session_factory, script, parameters=None):
         raise
     except Exception as exc:  # Network/auth libraries raise many unrelated types.
         raise _classify(exc) from None
+
+
+def channel_batch(scanner):
+    """One connection for a run of calls when the scanner supports it (stand-in scanners need not)."""
+    batch = getattr(scanner, 'batch', None)
+    return batch() if batch is not None else nullcontext()
 
 
 def _identity(output, had_errors):
@@ -166,9 +240,41 @@ class LiveScanner:
     def __init__(self, runtime, target, *, session_factory=None):
         self.runtime, self.target = runtime, target
         self.session_factory = session_factory
+        self._batches, self._shared = 0, None
+
+    @contextmanager
+    def batch(self):
+        """Calls inside share one connection (see PsrpSession). Nothing else changes: every call still makes its
+        own checks. A call that fails drops the connection, so the next call opens a fresh one, as without a batch."""
+        self._batches += 1
+        try:
+            yield self
+        finally:
+            self._batches -= 1
+            if not self._batches:
+                self._drop()
+
+    def _drop(self):
+        shared, self._shared = self._shared, None
+        if shared is not None and hasattr(shared, 'close'):
+            shared.close()
 
     def _run(self, script, parameters=None):
-        return _run_script(self.target, self.session_factory, script, parameters)
+        if not self._batches:
+            return _run_script(self.target, self.session_factory, script, parameters)
+        try:
+            if self._shared is None:
+                session = (self.session_factory or PsrpSession)(self.target)
+                if hasattr(session, 'open'):
+                    session.open()
+                self._shared = session
+            return self._shared.run(script, parameters)
+        except ChannelError:
+            self._drop()
+            raise
+        except Exception as exc:  # Network/auth libraries raise many unrelated types.
+            self._drop()
+            raise _classify(exc) from None
 
     def _same_target(self, hostname, machine_uuid):
         if (hostname.casefold() != self.target.hostname.casefold()
@@ -182,6 +288,38 @@ class LiveScanner:
             raise ChannelError('wrong_target', 'A different machine answered at ' + self.target.host + ':'
                                + str(self.target.port) + ' (' + found['hostname'] + '), not the saved server.')
         return found
+
+    def clock_offset(self):
+        """How far the server's clock is from this laptop's, in seconds (positive: the server is ahead). Read-only,
+        after the identity check; measured against the middle of the call, so the network delay does not count."""
+        with self.batch():
+            self.identity()
+            sent = datetime.now(timezone.utc)
+            output, had_errors, _ = self._run(CLOCK_SCRIPT)
+            received = datetime.now(timezone.utc)
+        if had_errors or len(output) != 1:
+            raise ChannelError('channel_error', 'The server did not report its clock.')
+        server = _server_time(output[0])
+        laptop = sent + (received - sent) / 2
+        return dict(server=server, laptop=laptop, offset=(server - laptop).total_seconds())
+
+    def set_clock(self):
+        """Set the server's clock to this laptop's time (UTC), after the identity check. Changes only the clock.
+        Returns the server's time before and after, as it reported them."""
+        with self.batch():
+            self.identity()
+            output, had_errors, errors = self._run(SET_CLOCK_SCRIPT,
+                                                   {'LaptopUtc': _utc_text(datetime.now(timezone.utc))})
+        if had_errors or len(output) != 1:
+            raise ChannelError('clock_not_set', ((errors[0] if errors else '') or
+                                                 'The server did not confirm the new time.')[:300])
+        try:
+            reported = json.loads(output[0])
+        except json.JSONDecodeError:
+            raise ChannelError('channel_error', 'The server confirmed the new time in an unexpected form.') from None
+        if type(reported) is not dict or set(reported) != {'before', 'after'}:
+            raise ChannelError('channel_error', 'The server confirmed the new time in an unexpected form.')
+        return dict(before=_server_time(reported['before']), after=_server_time(reported['after']))
 
     def worker_status(self, hostname, machine_uuid):
         """Read-only readiness check; never evidence of any setting."""
@@ -198,9 +336,10 @@ class LiveScanner:
         return COLLECTOR.read_text(encoding='utf-8-sig')
 
     def _collect(self):
-        self.identity()
-        output, had_errors, errors = self._run(self.collector_text(), {'ExpectedComputerName': self.target.hostname,
-                                                                       'EmitJson': True})
+        with self.batch():  # Identity check and collection over one connection.
+            self.identity()
+            output, had_errors, errors = self._run(self.collector_text(), {'ExpectedComputerName': self.target.hostname,
+                                                                           'EmitJson': True})
         if had_errors or len(output) != 1:
             detail = (errors[0] if errors else 'Collector returned no evidence.')[:300]
             raise ChannelError('collection_failed', detail)
@@ -220,9 +359,16 @@ class LiveScanner:
         collector_sha256 = hashlib.sha256(COLLECTOR.read_bytes()).hexdigest()
         output = [self._collect()]
         request_id = uuid4().hex
-        run = self.runtime.start(output[0].encode('utf-8'), expected_hostname=self.target.hostname,
-                                 expected_machine_uuid=self.target.machine_uuid, collection_request_id=request_id,
-                                 mode=EvidenceMode.LIVE)
+        try:
+            run = self.runtime.start(output[0].encode('utf-8'), expected_hostname=self.target.hostname,
+                                     expected_machine_uuid=self.target.machine_uuid, collection_request_id=request_id,
+                                     mode=EvidenceMode.LIVE)
+        except ValueError as exc:  # A scan the checks refused is a failed collection, not a mistake by the agent.
+            if 'in the future' in str(exc):
+                raise ChannelError('clock_mismatch', 'The server clock is more than 5 minutes ahead of this laptop, so '
+                                   'its scan was refused. Use Sync server clock on the Agentic hardening page, then '
+                                   'start again.') from None
+            raise ChannelError('evidence_refused', 'The scan failed validation: ' + str(exc)[:200]) from None
         return dict(request_id=request_id, state='assessment_ready', channel=self.channel,
                     framework_run_id=run.run_id, evidence_sha256=run.evidence_sha256,
                     target_id=run.target_id, collector_sha256=collector_sha256, origin_run_id=origin_run_id)

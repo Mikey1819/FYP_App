@@ -1,4 +1,5 @@
 """Adapter around the original sibling Windows services. Their schemas and rules stay unchanged."""
+import json
 from pathlib import Path
 from uuid import uuid4
 from dataclasses import replace
@@ -11,7 +12,7 @@ from hardening.framework import AssessmentRuns
 from hardening.import_storage import ImportedEvidenceStore
 from hardening.remediation import RemediationStore
 from hardening.risk import analyse, BASELINE_VERSION, rule_text
-from hardening.winrm_channel import LiveScanner
+from hardening.winrm_channel import ChannelError, LiveScanner
 from system.contracts import (AssessmentMode, AssessmentSummary, Capabilities, ComparisonResult, ComplianceStatus,
     ControlRow, DecisionResult, FindingRow, HistoryRow, OperationState, ProposalRow, RecordRef, ResultRow,
     RoundHandle, TargetSummary, WorkspaceSnapshot)
@@ -59,8 +60,52 @@ class WindowsBackend(BoundBackend):
             raise ValueError('No assessment round')
         return rows[-1]
 
+    def _settle_unattempted(self, binding):
+        """Settle an execute left unresolved only because some approved fixes were never attempted (for example the
+        channel failed before the next one, or the Remediation Agent stopped early). Evidence is the stored records:
+        every possible write is stored with a receipt or an explicit "Unresolved: outcome uncertain" verdict, so a fix
+        with no verdict was never sent (and the VM runner's one-attempt ledger refuses any replay regardless). If any fix
+        of the round has an uncertain outcome, nothing is settled: that still needs review and a rescan."""
+        if binding is None:
+            return
+        for operation in self.ledger.unsettled(binding.workflow_session_id):
+            if operation['kind'] != 'execute' or operation['state'] != 'unresolved' or operation['result']:
+                continue  # Only the normal-return path (no detail); an interrupted dispatch stays for review.
+            records = self.store.for_run(self._latest(binding)['framework_run_id'])
+            if any(r['verdict'] and verdict_kind(r['verdict']) == 'uncertain' for r in records):
+                continue
+            self.ledger.reconcile(operation['operation_id'], 'completed', detail='Settled from stored receipts: no '
+                                  'uncertain outcome; fixes that were not attempted stay approved.')
+
+    def clock_offset(self, connection_session_id):
+        """The server's clock against this laptop's (read-only); see LiveScanner.clock_offset."""
+        self.check(connection_session_id)
+        return self.engine.scanner.clock_offset()
+
+    def sync_clock(self, connection_session_id, workflow_session_id, operation_id):
+        """Set the server's clock to this laptop's time, on the administrator's click. Recorded in the ledger as its own
+        operation: the account, and the server's time before and after. Like any change on the server, it waits while
+        another change is running there."""
+        binding = self.check(connection_session_id, workflow_session_id) or self.new_binding(connection_session_id)
+        account = self.session.username
+        owner, state = self.ledger.claim(binding, operation_id, 'clock_sync', {'intent': operation_id, 'account': account},
+                                         mutation=True)
+        if not owner:
+            raise ValueError('This clock sync was already sent.')
+        try:
+            result = self.engine.scanner.set_clock()
+        except ChannelError as exc:
+            self.ledger.transition(operation_id, 'refused', detail=f'Clock not confirmed ({exc.state}): {exc.detail} '
+                                   'The clock is measured again before anything else runs.')
+            raise
+        self.ledger.transition(operation_id, 'completed', detail=json.dumps(
+            {'account': account, 'server_before': result['before'].isoformat(),
+             'server_after': result['after'].isoformat()}))
+        return result
+
     def start_round(self, connection_session_id, workflow_session_id, goal, mode, operation_id):
         binding = self.check(connection_session_id, workflow_session_id)
+        self._settle_unattempted(binding)
         if goal:  # removed by the administrator (2026-11-07): results were too inconsistent
             raise ValueError('Round goals were removed. No scan was run.')
         if binding is None:
@@ -144,6 +189,7 @@ class WindowsBackend(BoundBackend):
 
     def decide(self, connection_session_id, workflow_session_id, proposal_ref, approved, operator, comment, operation_id):
         binding = self.check(connection_session_id, workflow_session_id, proposal_ref)
+        self._settle_unattempted(binding)
         if type(approved) is not bool:
             raise ValueError('Decision must be a boolean')
         latest = self._latest(binding)
@@ -171,6 +217,7 @@ class WindowsBackend(BoundBackend):
         latest = self._latest(binding)
         if latest['round_id'] != round_ref.record_id:
             raise ValueError('Only the latest round may execute')
+        self._settle_unattempted(binding)
         def pending():
             return tuple(sorted(r['proposal']['request_id'] for r in self.store.for_run(latest['framework_run_id'])
                                 if r['decision'] == 'approved' and r['verdict'] is None))
@@ -187,7 +234,8 @@ class WindowsBackend(BoundBackend):
         try:
             self.engine.execute_approved(binding.backend_session_id, deterministic=deterministic)
             records = [self.store.get(identifier) for identifier in expected]
-            uncertain = any(not r['verdict'] or verdict_kind(r['verdict']) == 'uncertain' for r in records)
+            # A fix without a verdict was never attempted (see _settle_unattempted): it stays approved, executable later.
+            uncertain = any(r['verdict'] and verdict_kind(r['verdict']) == 'uncertain' for r in records)
             self.ledger.transition(operation_id, 'unresolved' if uncertain else 'completed')
         except Exception:
             self.ledger.transition(operation_id, 'unresolved', detail='Dispatch may have happened; do not retry.')

@@ -7,7 +7,7 @@ from streamlit.testing.v1 import AppTest
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from test_agentic import FakeVm
 from test_winrm_channel import target
-from hardening.winrm_channel import LiveScanner
+from hardening.winrm_channel import CLOCK_SCRIPT, IDENTITY_SCRIPT, LiveScanner
 from system.connection import ConnectionService
 from system.ledger import CoordinationLedger
 from system.identity import VerifiedIdentity
@@ -60,7 +60,8 @@ class SameUiAcceptanceTests(unittest.TestCase):
                 app.session_state[SESSION]=handle.binding.backend_session_id
                 app.run()
             connect('windows')
-            self.assertEqual(len(vm.scripts),1,'Connect may run identity only')
+            # Connecting checks identity; the page then reads the server clock. Nothing is collected or changed.
+            self.assertEqual(set(vm.scripts),{IDENTITY_SCRIPT,CLOCK_SCRIPT},'Connect may run read-only checks only')
             self.assertEqual([b for b in app.button if b.key=='agentic_assess_without_ai'],[])
             scan()
             self.assertEqual(len(app.exception),0,[e.value for e in app.exception])

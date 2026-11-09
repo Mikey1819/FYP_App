@@ -23,7 +23,7 @@ import tempfile
 
 import streamlit as st
 
-from .connection_view import LIVE_TARGET, connected_session, disconnect
+from .connection_view import LIVE_TARGET, LOCKED, connected_session, disconnect, running_job
 from .pairing import PairingError, normalize_code
 from .pairing_client import FoundServer, find_server
 from .reconnect import remember
@@ -47,6 +47,9 @@ REPORT = 'servers_access_report'     # The last paired-laptops list read from th
 CONFIRM_ACCESS = 'servers_confirm_access'
 SETUP_COPIED = 'servers_setup_copied'  # Ubuntu: the folder the setup files were copied to, per server key.
 SETUP_REFRESH = 'servers_setup_refresh'
+SHOW_FOUND = 'servers_show_found'    # Set by Find: on the next run the page scrolls once to the Found panel.
+FINDS = 'servers_finds'              # How many times Find answered in this session.
+FOUND_BOX = 'servers_found'          # The Found panel's container key (Streamlit gives it the class st-key-<key>).
 LOST = ('The connection to the server stopped answering (it may have restarted). Click **Disconnect** above, then '
         '**Connect** again under My servers.')
 SECRETS = ('servers_password', 'servers_pair_password', 'servers_pair_sudo', 'servers_sudo')
@@ -140,7 +143,7 @@ def _connect(registry, server, password, sudo):
     st.rerun()
 
 
-def _show_saved(registry, saved, connected):
+def _show_saved(registry, saved, connected, busy=False):
     rows = [{'Server': s.hostname, 'System': s.system_label, 'Address': f'{s.host}:{s.port}', 'Account': s.username,
              'Note': s.note,
              'Last connected': myt(s.last_connected_at) if s.last_connected_at else 'Never',
@@ -204,7 +207,9 @@ def _show_saved(registry, saved, connected):
             if st.button('Save note', key='servers_note_save', disabled=note.strip() == chosen.note):
                 registry.set_note(chosen.platform, chosen.machine_identity, note)
                 st.rerun()
-            if st.button('Remove from list', key='servers_remove', icon=':material/delete:'):
+            locked = busy and is_connected
+            if st.button('Remove from list', key='servers_remove', icon=':material/delete:', disabled=locked,
+                         help=LOCKED if locked else None):
                 st.session_state[REMOVING] = chosen.key
         if st.session_state.get(REMOVING) == chosen.key:
             st.warning(f'Remove **{md_escape(chosen.hostname)}** from this list? Its assessment history stays, and '
@@ -237,6 +242,8 @@ def _find(code, *, expected=None, username=None):
         return
     st.session_state[PENDING] = dict(found=asdict(found), expected=expected,
                                      username=username or ('Administrator' if found.platform == 'windows' else ''))
+    st.session_state[FINDS] = st.session_state.get(FINDS, 0) + 1
+    st.session_state[SHOW_FOUND] = st.session_state[FINDS]
     st.rerun()
 
 
@@ -296,7 +303,7 @@ def _show_pending(registry, connected):
     pending = st.session_state[PENDING]
     found = FoundServer(**pending['found'])
     system = found.system
-    with st.container(border=True):
+    with st.container(border=True, key=FOUND_BOX):
         st.markdown(f':green-badge[:material/wifi_find: Found] **{md_escape(found.hostname)}** at '
                     f'{md_escape(found.address)}, answering with the right code.')
         # The system the server reported about itself: the administrator never has to say it.
@@ -513,33 +520,58 @@ def _show_helpers():
                    f'`{ubuntu_helper_sha256()}`.')
 
 
+def _scroll_to_found(count):
+    """Bring the Found panel into view once. The code is typed lower on the page (Add a server, or Re-pair), and
+    Streamlit keeps the scroll position, so the panel would otherwise open out of sight above. Only fixed text goes into
+    the script; the count makes each Find a new element, so a second Find scrolls again."""
+    st.html(f'''<script>/* find {int(count)} */
+(function () {{
+  let tries = 0;
+  (function go() {{
+    const box = document.querySelector('.st-key-{FOUND_BOX}');
+    if (box) {{ box.style.scrollMarginTop = '80px'; box.scrollIntoView({{behavior: 'smooth', block: 'start'}}); }}
+    else if (++tries < 30) {{ setTimeout(go, 100); }}
+  }})();
+}})();
+</script>''', unsafe_allow_javascript=True)
+
+
 def render_servers(database_path: Path):
     st.title('Servers')
     st.caption(f'This program supports only {SUPPORTED_SYSTEMS}. Servers are added by their pairing code.')
     if NOTICE in st.session_state:
         st.success(md_escape(st.session_state.pop(NOTICE)))
     connected = connected_session()
+    busy = connected is not None and running_job() is not None
     if connected is not None:
         with st.container(horizontal=True, vertical_alignment='center'):
             st.markdown(f':green-badge[:material/lan: Connected] **{md_escape(connected.identity.hostname)}** · '
                         f'{md_escape(connected.host)}:{connected.port} via {connected.identity.transport.upper()}')
-            if st.button('Disconnect', key='servers_disconnect', type='tertiary',
-                         help='End this session with the server. Nothing changes on the server.'):
+            if st.button('Disconnect', key='servers_disconnect', type='tertiary', disabled=busy,
+                         help=LOCKED if busy else 'End this session with the server. Nothing changes on the server.'):
                 forget_connection(f'Disconnected from {connected.identity.hostname}. Nothing changed on the server.')
+    scroll = st.session_state.pop(SHOW_FOUND, None)
     try:
         registry = ServerRegistry(database_path)
         if PENDING in st.session_state:
             _show_pending(registry, connected)
+            if scroll:
+                _scroll_to_found(scroll)
         saved = registry.all()
         st.subheader('My servers')
+        if busy:
+            st.info(f'The agents are working on {md_escape(connected.identity.hostname)} (see **Agentic hardening**). '
+                    'Disconnecting, access changes and setup wait until they have finished.')
         if saved:
-            _show_saved(registry, saved, connected)
+            _show_saved(registry, saved, connected, busy)
         else:
             st.info('No saved servers yet. Add one below.')
-        if connected is not None and connected.identity.platform == 'windows' and connected.target is not None:
+        # Access and setup change what running work depends on, so they wait until it has finished.
+        if (connected is not None and not busy and connected.identity.platform == 'windows'
+                and connected.target is not None):
             st.subheader(f'Who can reach {md_escape(connected.identity.hostname)}')
             _show_access(registry, connected)
-        if connected is not None and connected.identity.platform == 'ubuntu':
+        if connected is not None and not busy and connected.identity.platform == 'ubuntu':
             st.subheader(f'Set up {md_escape(connected.identity.hostname)}')
             _show_ubuntu_setup(connected)
         st.subheader('Add a server')
