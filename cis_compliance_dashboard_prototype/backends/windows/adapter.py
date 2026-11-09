@@ -11,7 +11,7 @@ from hardening.domain import summarise
 from hardening.framework import AssessmentRuns
 from hardening.import_storage import ImportedEvidenceStore
 from hardening.manual_controls import AUTOMATED, MANUAL_FIX, PROGRAM_FIX
-from hardening.remediation import RemediationStore
+from hardening.remediation import RemediationStore, _same_value
 from hardening.risk import analyse, BASELINE_VERSION, rule_text
 from hardening.winrm_channel import ChannelError, LiveScanner
 from system.contracts import (AssessmentMode, AssessmentSummary, Capabilities, ComparisonResult, ComplianceStatus,
@@ -65,18 +65,47 @@ class WindowsBackend(BoundBackend):
         """Settle an execute left unresolved only because some approved fixes were never attempted (for example the
         channel failed before the next one, or the Remediation Agent stopped early). Evidence is the stored records:
         every possible write is stored with a receipt or an explicit "Unresolved: outcome uncertain" verdict, so a fix
-        with no verdict was never sent (and the VM runner's one-attempt ledger refuses any replay regardless). If any fix
-        of the round has an uncertain outcome, nothing is settled: that still needs review and a rescan."""
+        with no verdict was never sent (and the VM runner's one-attempt ledger refuses any replay regardless).
+
+        A fix with an uncertain outcome is settled from target evidence: the verification rescan that followed that
+        execution (its round lists the fix's verdict, so the scan came after the write). If the rescan read the approved
+        value, the write happened; if it read the value from before, it did not. Any other value, or no rescan, leaves
+        the execute unresolved."""
         if binding is None:
             return
         for operation in self.ledger.unsettled(binding.workflow_session_id):
             if operation['kind'] != 'execute' or operation['state'] != 'unresolved' or operation['result']:
                 continue  # Only the normal-return path (no detail); an interrupted dispatch stays for review.
-            records = self.store.for_run(self._latest(binding)['framework_run_id'])
-            if any(r['verdict'] and verdict_kind(r['verdict']) == 'uncertain' for r in records):
-                continue
-            self.ledger.reconcile(operation['operation_id'], 'completed', detail='Settled from stored receipts: no '
-                                  'uncertain outcome; fixes that were not attempted stay approved.')
+            run_id = self._latest(binding)['framework_run_id']
+            uncertain = [r for r in self.store.for_run(run_id)
+                         if r['verdict'] and verdict_kind(r['verdict']) == 'uncertain']
+            detail = (self._settled_by_rescan(binding, run_id, uncertain) if uncertain else
+                      'Settled from stored receipts: no uncertain outcome; fixes that were not attempted stay approved.')
+            if detail:
+                self.ledger.reconcile(operation['operation_id'], 'completed', detail=detail)
+
+    def _settled_by_rescan(self, binding, run_id, uncertain):
+        """What the verification rescan after these fixes read for each of them, in words; None when it does not say."""
+        wanted = {r['proposal']['request_id'] for r in uncertain}
+        rescan = next((row['framework_run_id'] for row in reversed(self._rounds(binding))
+                       if row['kind'] == 'verification_scan' and row.get('remediated_run_id') == run_id
+                       and row['framework_run_id'] and wanted <= {v.get('proposal_id') for v in row.get('verdicts', [])}),
+                      None)
+        if rescan is None:
+            return None
+        observed = {r.control.control_id: r.evidence.value for r in self.runtime.record(rescan).assessment.results}
+        parts = []
+        for record in uncertain:
+            proposal = record['proposal']
+            value = observed.get(proposal['control_id'])
+            if _same_value(value, proposal['value']):
+                parts.append(f"{proposal['control_id']} applied (the rescan read {value!r})")
+            elif _same_value(value, proposal['expected_before']):
+                parts.append(f"{proposal['control_id']} not applied (the rescan read {value!r}, the value from before)")
+            else:
+                return None
+        return (f'Settled from the verification rescan {rescan}: ' + '; '.join(parts)
+                + '. Fixes that were not attempted stay approved.')
 
     def clock_offset(self, connection_session_id):
         """The server's clock against this laptop's (read-only); see LiveScanner.clock_offset."""
@@ -87,7 +116,9 @@ class WindowsBackend(BoundBackend):
         """Set the server's clock to this laptop's time, on the administrator's click. Recorded in the ledger as its own
         operation: the account, and the server's time before and after. Like any change on the server, it waits while
         another change is running there."""
-        binding = self.check(connection_session_id, workflow_session_id) or self.new_binding(connection_session_id)
+        binding = self.check(connection_session_id, workflow_session_id)
+        self._settle_unattempted(binding)
+        binding = binding or self.new_binding(connection_session_id)
         account = self.session.username
         owner, state = self.ledger.claim(binding, operation_id, 'clock_sync', {'intent': operation_id, 'account': account},
                                          mutation=True)

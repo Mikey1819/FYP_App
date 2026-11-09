@@ -418,7 +418,7 @@
       "category": "protected"
     },
     "scripts/vm/Invoke-RemediationAction.ps1": {
-      "sha256": "5abe897b2adf9907ab4063d5e0dd61f331a3ae659e80d4734c7c4cfad4a30bf5",
+      "sha256": "02d98af17f6f4ec869737c4e4293f0f1c8f55057945d5ce24ccf92b9d9a7fe2a",
       "category": "protected"
     },
     "scripts/vm/test_collector_helpers.ps1": {

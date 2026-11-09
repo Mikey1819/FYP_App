@@ -297,7 +297,12 @@ try {
     $failure = $null
     try { Invoke-LibraryAction $entry } catch { $status = 'execution_failed'; $failure = Get-FailureText $_.Exception.Message }
     $after = $null
-    try { $after = & $collect } catch { if ($status -eq 'applied') { $status = 'verification_unavailable' } }
+    # The read-only after-collection is tried twice: right after a security-policy write it can fail once (live 9 Nov,
+    # 1.1.1: the change was applied, but the receipt said verification_unavailable). It never writes, so a retry is safe.
+    try { $after = & $collect } catch {
+        Start-Sleep -Seconds 3
+        try { $after = & $collect } catch { if ($status -eq 'applied') { $status = 'verification_unavailable' } }
+    }
     $receipt = [ordered]@{
         schema_version = 2; request_id = $request.request_id; request_sha256 = $hash; status = $status
         before_evidence = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($before))
