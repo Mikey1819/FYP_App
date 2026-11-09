@@ -46,7 +46,7 @@
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/agentic.py": {
-      "sha256": "d3582f37f19734350634256b7ccce6d68d75d439fb185313724a6a6dccf27c89",
+      "sha256": "d71301519cb3312393eb5e42cc9d3357b27357b4d7bf56012ff0c418bee0bde0",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/agentic_view.py": {
@@ -86,7 +86,7 @@
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/investigation.py": {
-      "sha256": "db45a42985370ee47fdd59b439734a2d567b58229e8168c831b0d10cb61c96e8",
+      "sha256": "78c3df9d2e45840edf9568cdc3b6cca6eab978fe07190994628226320d13aedb",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/ollama_client.py": {
@@ -170,11 +170,11 @@
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/tests/test_agentic.py": {
-      "sha256": "bf8fea6d8f0fd1b9ea7cc37e885259ee7c77cd337dd75145217f1d2923afa360",
+      "sha256": "0311e03ad3ebcc3b430495070b2506ea53651956dc5aa28e7505ad90c0a4aafd",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/tests/test_agentic_view.py": {
-      "sha256": "e129c6f69373533bebc70647a1f26fd155c71f1749e8305bb0ec4fc838f6c5b7",
+      "sha256": "b0563c30a10ff4501e91bf0208d3c4ef5e77a7349b8720009a1f63c8b73a153f",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/tests/test_app_navigation.py": {

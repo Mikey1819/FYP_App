@@ -70,9 +70,23 @@ class WindowsBackend(BoundBackend):
         A fix with an uncertain outcome is settled from target evidence: the verification rescan that followed that
         execution (its round lists the fix's verdict, so the scan came after the write). If the rescan read the approved
         value, the write happened; if it read the value from before, it did not. Any other value, or no rescan, leaves
-        the execute unresolved."""
-        if binding is None:
-            return
+        the execute unresolved.
+
+        The execute holding this server is settled too, whichever session (workflow) it belongs to: after a dashboard
+        restart the page starts a new session, and the old session's lock must not outlive the evidence."""
+        owner = self._owner_binding()
+        for each in [owner] + ([binding] if binding is not None and binding != owner else []):
+            if each is not None:
+                self._settle_workflow(each)
+
+    def _owner_binding(self):
+        """The workflow of the operation holding this server (running or unresolved), or None."""
+        s = self.session
+        owner = self.ledger.owner(s.target_id, s.registration_epoch)
+        return (self.ledger.resume(owner['workflow_session_id'], s.identity.platform, s.target_id, s.registration_epoch)
+                if owner else None)
+
+    def _settle_workflow(self, binding):
         for operation in self.ledger.unsettled(binding.workflow_session_id):
             if operation['kind'] != 'execute' or operation['state'] != 'unresolved' or operation['result']:
                 continue  # Only the normal-return path (no detail); an interrupted dispatch stays for review.
@@ -85,10 +99,11 @@ class WindowsBackend(BoundBackend):
                 self.ledger.reconcile(operation['operation_id'], 'completed', detail=detail)
 
     def _settled_by_rescan(self, binding, run_id, uncertain):
-        """What the verification rescan after these fixes read for each of them, in words; None when it does not say."""
+        """What the verification rescan after these fixes read for each of them, in words; None when it does not say.
+        A rescan to settle (rescan_to_settle) counts as well: it lists the same fixes, and it came after them."""
         wanted = {r['proposal']['request_id'] for r in uncertain}
         rescan = next((row['framework_run_id'] for row in reversed(self._rounds(binding))
-                       if row['kind'] == 'verification_scan' and row.get('remediated_run_id') == run_id
+                       if row['kind'] in ('verification_scan', 'settle_scan') and row.get('remediated_run_id') == run_id
                        and row['framework_run_id'] and wanted <= {v.get('proposal_id') for v in row.get('verdicts', [])}),
                       None)
         if rescan is None:
@@ -104,8 +119,55 @@ class WindowsBackend(BoundBackend):
                 parts.append(f"{proposal['control_id']} not applied (the rescan read {value!r}, the value from before)")
             else:
                 return None
-        return (f'Settled from the verification rescan {rescan}: ' + '; '.join(parts)
+        return (f'Settled from the rescan {rescan} that followed these fixes: ' + '; '.join(parts)
                 + '. Fixes that were not attempted stay approved.')
+
+    def _unsettled_records(self, binding):
+        """(the workflow holding this server, the uncertain fixes of its unresolved execute) after settling what the
+        records allow; (None, []) when no unresolved execute holds the server."""
+        self._settle_unattempted(binding)
+        owner = self._owner_binding()
+        if owner is None or not any(o['kind'] == 'execute' and o['state'] == 'unresolved'
+                                    for o in self.ledger.unsettled(owner.workflow_session_id)):
+            return None, []
+        run_id = self._latest(owner)['framework_run_id']
+        return owner, [r for r in self.store.for_run(run_id)
+                       if r['verdict'] and verdict_kind(r['verdict']) == 'uncertain']
+
+    def unsettled_fixes(self, connection_session_id, workflow_session_id):
+        """Controls whose fix has an uncertain outcome that keeps this server locked (no change can start until a
+        rescan shows what happened), or an empty list. From any session: the lock belongs to the server."""
+        binding = self.check(connection_session_id, workflow_session_id)
+        return [r['proposal']['control_id'] for r in self._unsettled_records(binding)[1]]
+
+    def rescan_to_settle(self, connection_session_id, workflow_session_id):
+        """Read-only rescan for an execute left unresolved because the connection dropped (so no verification rescan
+        was possible). It runs without a ledger claim, since it writes nothing and the server is held by the unresolved
+        execute; it is recorded as its own round row ('settle_scan') and in the drift history. The execute is then
+        settled from it as from a verification rescan. Returns the settlement sentence, or raises ValueError when the
+        rescan cannot settle it (a value that is neither the approved one nor the one from before)."""
+        binding, uncertain = self._unsettled_records(self.check(connection_session_id, workflow_session_id))
+        if not uncertain:
+            return 'Nothing to settle: no fix has an uncertain outcome.'
+        run_id = self._latest(binding)['framework_run_id']
+        held = next(o['operation_id'] for o in self.ledger.unsettled(binding.workflow_session_id)
+                    if o['kind'] == 'execute' and o['state'] == 'unresolved')
+        identity = self.session.identity
+        scanned = self.engine.scanner.request(identity.hostname, identity.machine_identity, origin_run_id=run_id)
+        self.engine.history.record_drift(scanned['framework_run_id'])
+        controls = ', '.join(r['proposal']['control_id'] for r in uncertain)
+        self.store.add_round(binding.backend_session_id, 'settle_scan', scanned['framework_run_id'],
+                             remediated_run_id=run_id,
+                             verdicts=[dict(proposal_id=r['proposal']['request_id'], control_id=r['proposal']['control_id'],
+                                            action_id=r['proposal']['action_id'], verdict=r['verdict']) for r in uncertain],
+                             outcome=dict(outcome='settle_scan', reason='Rescan to settle the uncertain outcome of '
+                                          + controls + '.'))
+        self._settle_unattempted(binding)
+        state = self.ledger.operation_state(held)
+        if state.state != 'completed':
+            raise ValueError(f'The rescan read a value for {controls} that is neither the approved one nor the one '
+                             'from before, so the outcome stays uncertain. Check the setting on the server.')
+        return state.detail
 
     def clock_offset(self, connection_session_id):
         """The server's clock against this laptop's (read-only); see LiveScanner.clock_offset."""

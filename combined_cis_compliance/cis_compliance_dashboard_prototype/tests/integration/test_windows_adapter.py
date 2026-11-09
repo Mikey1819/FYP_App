@@ -117,10 +117,11 @@ class UnattemptedFixTests(unittest.TestCase):
         self.scanner, self.session_id = self.backend.engine.scanner, handle.binding.backend_session_id
         self.run_id = real.rounds(self.session_id)[-1]['framework_run_id']
         self.backend.store = SimpleNamespace(rounds=real.rounds, for_run=lambda run_id: list(self.records.values()),
-                                             get=lambda identifier: self.records[identifier])
+                                             get=lambda identifier: self.records[identifier], add_round=real.add_round)
         self.outcomes = []
         self.backend.engine = SimpleNamespace(execute_approved=lambda session_id, deterministic=False:
-                                              self.records.update(self.outcomes.pop(0)))
+                                              self.records.update(self.outcomes.pop(0)),
+                                              scanner=self.scanner, history=self.backend.engine.history)
 
     def execute(self, ids, operation):
         return self.backend.execute_approved('connection', self.workflow, self.round, ids, False, operation)
@@ -165,6 +166,59 @@ class UnattemptedFixTests(unittest.TestCase):
         settled = self.ledger.operation_state('exec-1')
         self.assertEqual(settled.state, 'completed')
         self.assertIn(f'{control} applied (the rescan read {read!r})', settled.detail)
+
+    def dropped(self, *, approved_read):
+        """The connection dropped while r0 ran, so no verification rescan exists. Returns (control, value read)."""
+        rescan = self.scanner.request(self.backend.session.identity.hostname,
+                                      self.backend.session.identity.machine_identity)['framework_run_id']
+        result = next(r for r in self.backend.runtime.record(rescan).assessment.results if type(r.evidence.value) is int)
+        read = result.evidence.value
+        proposal = dict(request_id='r0', control_id=result.control.control_id, action_id='REM-x',
+                        value=read if approved_read else read + 100, expected_before=read + 1)
+        self.records['r0'] = dict(self.records['r0'], proposal=proposal)
+        self.outcomes = [{'r0': dict(self.records['r0'],
+                                     verdict='Unresolved: outcome uncertain (channel lost); rescan to observe')}]
+        self.assertEqual(self.execute(tuple(self.records), 'exec-1').state, 'unresolved')
+        return result.control.control_id, read
+
+    def test_a_dropped_connection_locks_until_a_rescan_settles_it(self):
+        control, read = self.dropped(approved_read=True)
+        self.assertEqual(self.backend.unsettled_fixes('connection', self.workflow), [control])
+        with self.assertRaisesRegex(ValueError, 'unresolved operation'):  # Locked: nothing else may start.
+            self.execute(('r1', 'r2', 'r3', 'r4'), 'exec-2')
+        detail = self.backend.rescan_to_settle('connection', self.workflow)
+        self.assertIn(f'{control} applied (the rescan read {read!r})', detail)
+        self.assertEqual(self.ledger.operation_state('exec-1').state, 'completed')
+        self.assertEqual(self.backend.unsettled_fixes('connection', self.workflow), [])
+        kinds = [r['kind'] for r in self.real_store.rounds(self.session_id)]
+        self.assertEqual(kinds.count('settle_scan'), 1)  # Recorded as its own round row, never as a verification.
+        self.outcomes = [{n: dict(self.records[n], verdict='Verified compliant') for n in ('r1', 'r2', 'r3', 'r4')}]
+        self.assertEqual(self.execute(('r1', 'r2', 'r3', 'r4'), 'exec-2').state, 'completed')
+
+    def test_a_new_session_settles_the_old_sessions_lock_before_syncing_the_clock(self):
+        # Live 21:53: after a dashboard restart the page had a new session; Sync clock was refused because the earlier
+        # session's execute (settled by its verification rescan only when that session acted) still held the server.
+        self.uncertain_then_rescan(approved_read=True)
+        self.assertEqual(self.backend.unsettled_fixes('connection', None), [])  # Settled from the new session.
+        self.assertEqual(self.ledger.operation_state('exec-1').state, 'completed')
+        self.assertIsNone(self.ledger.owner(self.backend.session.target_id, 'epoch'))
+        result = self.backend.sync_clock('connection', None, 'sync-new-session')
+        self.assertEqual(self.ledger.operation_state('sync-new-session').state, 'completed', result)
+
+    def test_a_new_session_shows_and_settles_a_dropped_connection_lock(self):
+        control, _ = self.dropped(approved_read=True)
+        self.assertEqual(self.backend.unsettled_fixes('connection', None), [control])  # Seen from any session.
+        with self.assertRaisesRegex(ValueError, 'unresolved operation'):
+            self.backend.sync_clock('connection', None, 'sync-blocked')
+        self.assertIn(f'{control} applied', self.backend.rescan_to_settle('connection', None))
+        self.backend.sync_clock('connection', None, 'sync-after')
+        self.assertEqual(self.ledger.operation_state('sync-after').state, 'completed')
+
+    def test_a_rescan_that_reads_another_value_keeps_the_lock(self):
+        self.dropped(approved_read=False)
+        with self.assertRaisesRegex(ValueError, 'neither the approved one nor the one from before'):
+            self.backend.rescan_to_settle('connection', self.workflow)
+        self.assertEqual(self.ledger.operation_state('exec-1').state, 'unresolved')
 
     def test_an_uncertain_fix_the_rescan_cannot_explain_still_locks(self):
         self.uncertain_then_rescan(approved_read=False)  # Neither the approved value nor the one from before.

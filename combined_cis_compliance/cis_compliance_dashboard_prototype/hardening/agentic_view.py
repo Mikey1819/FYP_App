@@ -46,6 +46,8 @@ CLOCK_RECHECK = timedelta(minutes=2)   # The box checks again after this; Start 
 NAME_NEEDED = 'agentic_name_needed'   # A decision was clicked before a name was typed.
 MANUAL_ASK = 'agentic_manual_exception'  # The not-automated control whose exception reason is being typed.
 MANUAL_ERROR = 'agentic_manual_error'
+SETTLE_LABEL = 'Rescanning the server (read-only) to settle an uncertain fix'
+SETTLE_NOTICE = 'agentic_settle_notice'  # What the rescan to settle found, shown once.
 
 TABS = ('Fixes', 'Risk ranking', 'Controls', 'Results', 'Agent log')
 STEPS = ('Scan', 'Analyse', 'Plan', 'Approve', 'Execute', 'Verify')
@@ -156,7 +158,7 @@ def _round_state(store, rounds, assessment_round):
 def _steps(assessment_round, state, analysis):
     steps = dict.fromkeys(STEPS, 'pending')
     if not assessment_round['framework_run_id']:
-        steps['Scan'] = 'failed'
+        steps['Scan'] = 'pending' if (assessment_round.get('outcome') or {}).get('model_unavailable') else 'failed'
         return steps
     steps['Scan'] = 'done'
     if analysis is None:
@@ -176,8 +178,10 @@ def _steps(assessment_round, state, analysis):
     steps['Approve'] = 'current' if state['undecided'] else 'done'
     verification = state['verification']
     if verification:
-        steps['Execute'] = 'current' if state['pending'] else 'done'  # The agents may stop before every fix ran.
-        steps['Verify'] = 'done' if verification['framework_run_id'] else 'failed'
+        # Skipped or refused fixes wrote nothing, so there was nothing to verify.
+        executed = any(verdict_kind(v['verdict']) != 'refused' for v in verification['verdicts'] if v.get('proposal_id'))
+        steps['Execute'] = 'current' if state['pending'] else 'done' if executed else 'skipped'
+        steps['Verify'] = 'done' if verification['framework_run_id'] else 'failed' if executed else 'skipped'
     elif state['pending'] and not state['undecided']:
         steps['Execute'] = 'current'
     elif not state['undecided'] and not any(r['decision'] == 'approved' for r in state['records']):
@@ -656,6 +660,24 @@ def _click_start(kind, hardening, session_id=None, expected=None):
     job.wait(WAIT_SECONDS)  # Quick work shows its result at once; a round shows as running.
 
 
+def _click_settle():
+    """Button callback (Windows): the read-only rescan that settles an uncertain fix, clock check first."""
+    backend, key = active_backend(st.session_state), job_key()
+    connection, workflow = st.session_state[CONNECTION_KEY], st.session_state.get(WORKFLOW_KEY)
+
+    def after(result, error):
+        if error is None:
+            st.session_state[SETTLE_NOTICE] = result
+        return False
+    try:
+        job = background.start(key, SETTLE_LABEL, lambda: backend.rescan_to_settle(connection, workflow),
+                               after=after)
+    except ValueError as exc:
+        st.session_state[JOB_ERROR] = _error_text(exc)
+        return
+    job.wait(WAIT_SECONDS)
+
+
 def _apart(seconds):
     seconds = round(abs(seconds))
     return f'{seconds // 60} min {seconds % 60} s' if seconds >= 60 else f'{seconds} s'
@@ -725,10 +747,12 @@ def _show_start(hardening, store, runtime, target):
         open_items = len(state['undecided']) + len(state['pending'])
         st.caption(f"Earlier session on {md_escape(target.hostname)}: last round {myt(previous['created_at'])}"
                    + (f', {open_items} fix(es) still open.' if open_items else '.'))
+    locked = _locked()
     ok = _clock_gate(hardening)
+    _lock_box(locked, ok)
     with st.container(horizontal=True):
-        st.button('Start agentic round', type='primary', key='agentic_run', disabled=not ok, on_click=_click_start,
-                  args=('round', hardening))
+        st.button('Start agentic round', type='primary', key='agentic_run', disabled=not ok or bool(locked),
+                  on_click=_click_start, args=('round', hardening))
         if previous and st.button('Resume earlier session', key='agentic_resume'):
             backend = active_backend(st.session_state)
             if backend:
@@ -754,25 +778,56 @@ def _choose_round(assessments):
     return next(r for r in assessments if r['round_id'] == chosen)
 
 
-def _action_bar(hardening, session_id, latest, state, rounds, target, manual_open=(), manual=None):
+def _locked():
+    """Controls whose uncertain fix holds the connected server, from any session (Windows, through the backend)."""
+    backend = active_backend(st.session_state)
+    return (backend.unsettled_fixes(st.session_state[CONNECTION_KEY], st.session_state.get(WORKFLOW_KEY))
+            if backend else [])
+
+
+def _lock_box(locked, ok):
+    if not locked:
+        return
+    with st.container(border=True):
+        st.markdown(':orange-badge[:material/lock: Server locked] The outcome of **' + ', '.join(locked)
+                    + '** is uncertain: the connection dropped while it ran, so no rescan could check it.')
+        st.caption('Nothing else can change on this server until it is settled, the clock sync included. A rescan '
+                   'reads the server and changes nothing: the fix counts as applied if the rescan reads the approved '
+                   'value, and as not applied if it reads the value from before.')
+        # Not held back by the clock box: the clock sync waits for this lock, and the scan's own time check still
+        # refuses evidence from a server clock far ahead.
+        st.button('Rescan to settle', type='primary', key='agentic_settle', icon=':material/radar:',
+                  on_click=_click_settle)
+
+
+def _action_bar(hardening, session_id, latest, state, rounds, target, manual_open=(), manual=None, locked=()):
     verification = state['verification']
     stopped = verification and ((verification.get('outcome') or {}).get('outcome') == 'incomplete' or
                                 (verification.get('outcome') or {}).get('reason_code') == 'remediation_incomplete')
-    # A new round is offered once nothing in the latest one awaits a decision or execution.
-    can_run = not state['undecided'] and not state['pending']
-    ok = _clock_gate(hardening) if can_run or state['pending'] else True
+    now = datetime.now(timezone.utc)
+    live = [r for r in state['pending'] if datetime.fromisoformat(r['decision_record']['expires_at']) > now]
+    expired = len(state['pending']) - len(live)
+    # A new round is offered once nothing in the latest one awaits a decision or execution, so approvals are not left
+    # behind. Expired approvals can no longer run; after a remediation phase, what is left is the administrator's call.
+    can_run = not locked and not state['undecided'] and (not live or verification is not None)
+    ok = _clock_gate(hardening) if can_run or state['pending'] or locked else True
+    _lock_box(locked, ok)
     with st.container(horizontal=True, vertical_alignment='center'):
         if can_run:
             st.button('Run next round', type='primary', key='agentic_run', icon=':material/refresh:', disabled=not ok,
-                      help='Rescan the server, re-rank the findings and propose again', on_click=_click_start,
-                      args=('round', hardening, session_id))
-        if state['pending'] and st.session_state.get(CONFIRM) != latest['round_id']:
-            if st.button(f"Execute {len(state['pending'])} approved fix(es)…", type='primary', disabled=not ok,
+                      help='Rescan the server, re-rank the findings and propose again'
+                           + (f'. The {len(live)} approved fix(es) not executed stay in this round.' if live else ''),
+                      on_click=_click_start, args=('round', hardening, session_id))
+        if live and not locked and st.session_state.get(CONFIRM) != latest['round_id']:
+            if st.button(f"Execute {len(live)} approved fix(es)…", type='primary', disabled=not ok,
                          key='agentic_execute_review', icon=':material/play_arrow:'):
                 st.session_state[CONFIRM] = latest['round_id']
                 st.session_state['agentic_confirm_requests'] = tuple(r['proposal']['request_id'] for r in state['pending'])
                 st.rerun()
-        if state['pending'] and stopped:
+        if expired:
+            st.markdown(f'{expired} approval(s) expired before they ran'
+                        + ('; run the next round to propose them again.' if not live else '.'))
+        if live and stopped and not locked:
             st.button('Execute remaining without AI', key='agentic_execute_fallback', disabled=not ok,
                       help='Same approval, expiry and precondition guards, in rank order; the result is still '
                            'verified by a rescan.', on_click=_click_start,
@@ -1031,7 +1086,8 @@ def _show_risk(analysis, round_id, outcome):
         st.info('No risk analysis for this round.')
         return
     st.caption('R = 6I + 5E + 4P + 3L + 2D, computed by code (baselines ' + analysis['baseline_version'] + '). '
-               'The Analysis Agent can flag findings but cannot change a score.')
+               'Fix is set by code for every finding. The Analysis Agent flags at most 3 findings to look at first; '
+               'it cannot change a score.')
     complete = bool(outcome) and outcome['outcome'] == 'analysis_complete'
     if outcome and not complete:
         st.warning(md_escape(outcome['reason']) + ' The ranking below is unaffected.')
@@ -1043,6 +1099,8 @@ def _show_risk(analysis, round_id, outcome):
         st.dataframe([{'Rank': rank, 'Control': f['control_id'], 'Title': f['title'],
                        'Observed': shown(f['observed'], 'Non-Compliant'), 'Required': f['rule'], 'Risk': f['score'],
                        'Level': f['level'], 'Priority band': f['priority'],
+                       # From the action library, for every row; the agent's flags are only its top three picks.
+                       'Fix': PROGRAM_FIX if f['control_id'] in AUTOMATED else MANUAL_FIX,
                        'Analysis Agent flag': flags.get(f['control_id'], '')} for rank, f in enumerate(ranked, 1)],
                      hide_index=True, column_config={'Rank': st.column_config.NumberColumn(width='small'),
                                                      'Risk': st.column_config.NumberColumn(width='small')})
@@ -1250,12 +1308,16 @@ def render_agentic(database_path: Path):
         _show_progress(_steps(viewing, state, analysis), state['verification'])
         if viewing['outcome']['outcome'] not in PLANNED:
             st.warning(md_escape(viewing['outcome']['reason']))
+        settled = st.session_state.pop(SETTLE_NOTICE, None)
+        if settled:
+            st.success(md_escape(settled))
         if is_latest:
             manual_target = _round_target(runtime, latest)
+            locked = _locked()
             clock_ok = _action_bar(hardening, session_id, latest, state, rounds, target,
                                    _manual_open(runtime, decisions, latest),
-                                   decisions.latest(manual_target) if manual_target else {})
-            if state['pending'] and st.session_state.get(CONFIRM) == latest['round_id']:
+                                   decisions.latest(manual_target) if manual_target else {}, locked)
+            if state['pending'] and not locked and st.session_state.get(CONFIRM) == latest['round_id']:
                 _confirm_execution(hardening, session_id, state, target, clock_ok)
         else:
             st.caption('An earlier round, read-only. Decisions and execution happen in the latest round.')

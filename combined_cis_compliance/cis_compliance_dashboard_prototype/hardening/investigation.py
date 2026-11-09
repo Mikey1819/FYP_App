@@ -104,7 +104,7 @@ class Coordinator:
                 if not isinstance(calls, list) or not isinstance(content, str):
                     raise ValueError("Invalid model message")
             except Exception as error:
-                status, summary = "Unavailable", f"Model investigation unavailable ({type(error).__name__}); deterministic assessment remains usable."
+                status, summary = "Unavailable", f"The local AI model did not answer ({type(error).__name__})."
                 break
             if not calls and getattr(self.tools, 'nudge', False) and self.tools.terminal_outcome is None and not nudged:
                 # An agent that still owes a structured decision gets one reminder (a local model sometimes answers

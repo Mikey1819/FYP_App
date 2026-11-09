@@ -288,6 +288,13 @@ class CoordinationLedger:
             db.execute('DELETE FROM target_owners WHERE operation_id=?', (operation_id,))
         return self.operation_state(operation_id)
 
+    def owner(self, target_id, epoch):
+        """The operation holding this target (running or unresolved) and its workflow, or None (read-only)."""
+        with self._db() as db:
+            row = db.execute('SELECT operation_id, workflow_session_id FROM target_owners WHERE target_id=? AND '
+                             'registration_epoch=?', (target_id, epoch)).fetchone()
+        return None if row is None else dict(operation_id=row[0], workflow_session_id=row[1])
+
     def owned_elsewhere(self, target_id, epoch):
         """Targets (other than this one) that hold a running or unresolved change."""
         with self._db() as db:

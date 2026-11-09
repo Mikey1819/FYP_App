@@ -78,6 +78,45 @@ class AgenticPageTests(unittest.TestCase):
         self.assertEqual(len(app.exception), 0, [e.value for e in app.exception])
         return app
 
+    def _approve_all(self, app):
+        app.text_input(key='agentic_operator').input('admin01').run()
+        app.button(key='agentic_approve_all').click().run()
+        self.assertEqual(len(app.exception), 0, [e.value for e in app.exception])
+        return app
+
+    def test_the_risk_ranking_says_for_every_finding_whether_this_program_fixes_it(self):
+        # Live 9 Nov: only three of 9.2.1, 9.2.2, 9.3.1, 9.3.2 said "needs a manual fix": that column is the Analysis
+        # Agent's flags, at most three. The Fix column is set by code for every row.
+        app = self._start_round()
+        rows = [r for frame in app.dataframe for r in frame.value.to_dict('records') if 'Priority band' in r]
+        self.assertTrue(rows)
+        fixes = {r['Control']: r['Fix'] for r in rows}
+        self.assertEqual(fixes['9.3.1'], 'Manual: not automated')
+        self.assertEqual(fixes['1.2.2'], 'Program fix')
+        self.assertTrue(all(r['Fix'] for r in rows))
+        self.assertTrue(any('flags at most 3 findings' in c.value for c in app.caption))
+
+    def test_expired_approvals_do_not_hold_the_next_round(self):
+        # Live check 9 Nov: expired approvals could only be cleared by "executing" them.
+        from hardening import remediation
+        with patch.object(remediation, 'APPROVAL_LIFETIME', timedelta(seconds=-1)):  # Expired as soon as approved.
+            app = self._approve_all(self._start_round())
+        app.run()
+        keys = [b.key for b in app.button]
+        self.assertNotIn('agentic_execute_review', keys)
+        self.assertIn('agentic_run', keys)
+        self.assertTrue(any('2 approval(s) expired before they ran; run the next round' in m.value for m in app.markdown))
+
+    def test_after_a_failed_fix_the_next_round_is_offered(self):
+        # Live check 9 Nov: the review said "a new proposal and approval are required", yet only Execute was offered.
+        self.vm.fail_action = 'Access is denied.'
+        app = self._approve_all(self._start_round())
+        app.button(key='agentic_execute_review').click().run()
+        app.button(key='agentic_execute').click().run()
+        self.assertEqual(len(app.exception), 0, [e.value for e in app.exception])
+        self.assertIn('agentic_run', [b.key for b in app.button])
+        self.assertTrue(any('did not become compliant' in w.value.replace('\\', '') for w in app.warning))
+
     def test_round_approval_execution_and_verification_through_the_page(self):
         app = self._start_round()
         summary = [c.value.replace('\\', '') for c in app.caption if c.value.startswith('Orchestrator summary')]
@@ -281,6 +320,33 @@ class AgenticPageTests(unittest.TestCase):
         app = AppTest.from_function(agentic_page, default_timeout=30).run()
         self.assertEqual(len(app.exception), 0)
         self.assertTrue(any('Open **Servers** to pair a server' in i.value for i in app.info))
+
+
+
+class StepBadgeTests(unittest.TestCase):
+    """The progress badges say what happened, not more (live check 9 Nov)."""
+
+    def test_nothing_executed_is_not_a_failed_verification(self):
+        from hardening.agentic_view import _steps
+        refused = 'Refused before execution: approval expired'
+        state = dict(records=[dict(decision='approved', verdict=refused)], undecided=[], pending=[],
+                     verification=dict(framework_run_id=None, verdicts=[dict(proposal_id='p', verdict=refused)]))
+        steps = _steps(dict(framework_run_id='run', outcome={'outcome': 'awaiting_approval'}), state, analysis={})
+        self.assertEqual((steps['Execute'], steps['Verify']), ('skipped', 'skipped'))
+
+    def test_an_executed_fix_without_a_rescan_is_a_failed_verification(self):
+        from hardening.agentic_view import _steps
+        uncertain = 'Unresolved: outcome uncertain (channel lost); rescan to observe'
+        state = dict(records=[dict(decision='approved', verdict=uncertain)], undecided=[], pending=[],
+                     verification=dict(framework_run_id=None, verdicts=[dict(proposal_id='p', verdict=uncertain)]))
+        steps = _steps(dict(framework_run_id='run', outcome={'outcome': 'awaiting_approval'}), state, analysis={})
+        self.assertEqual((steps['Execute'], steps['Verify']), ('done', 'failed'))
+
+    def test_a_model_that_never_answered_is_not_a_failed_scan(self):
+        from hardening.agentic_view import _steps
+        steps = _steps(dict(framework_run_id=None, outcome={'outcome': 'incomplete', 'model_unavailable': True}),
+                       {}, None)
+        self.assertEqual(set(steps.values()), {'pending'})
 
 
 if __name__ == '__main__':

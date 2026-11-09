@@ -1485,5 +1485,29 @@ class LibraryParityTests(unittest.TestCase):
                          ['9.2.1', '9.2.2', '9.3.1', '9.3.2'])
 
 
+
+class ModelDownTests(AgenticTestCase):
+    """Live 9 Nov (check): with Ollama off, the round said the Orchestrator stopped, marked the scan as failed and
+    said "deterministic assessment remains usable", although nothing ran and no such button exists."""
+
+    def test_a_model_that_does_not_answer_says_so_and_nothing_ran(self):
+        class Down:
+            model, provenance = 'mock-model', 'Mock model (test only)'
+
+            def chat(self, messages, tools, *, timeout):
+                raise ConnectionRefusedError('Ollama is not running')
+        vm = FakeVm()
+        hardening = AgenticHardening(self.runtime, self.store, LiveScanner(self.runtime, target(), session_factory=vm),
+                                     client_factory=lambda role: Down())
+        result = hardening.run_round()
+        outcome = result['outcome']
+        self.assertTrue(outcome['model_unavailable'])
+        self.assertIn('did not answer, so the round did not start: nothing was scanned or changed', outcome['reason'])
+        self.assertIn('Start Ollama', outcome['reason'])
+        self.assertNotIn('deterministic assessment remains usable', outcome['reason'])
+        self.assertIsNone(result['framework_run_id'])
+        self.assertEqual(vm.writes, [])
+
+
 if __name__ == '__main__':
     unittest.main()

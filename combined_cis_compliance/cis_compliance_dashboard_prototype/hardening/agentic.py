@@ -128,8 +128,9 @@ NEXT_STEP = {
                'nothing_fixable': 'no fixable finding remains', 'nothing_executed': 'nothing was executed'},
     'next_round': {'unblocked_findings': 'the fixes unblocked {unblocked}; run a new round to propose them',
                    'remaining_findings': 'fixable findings remain ({remaining}); run a new round to review them'},
-    'remediation_review': {'verification_failed': 'verification failed for {failed}; a new proposal and approval are '
-                                                  'required before any further attempt',
+    'remediation_review': {'verification_failed': '{failed} did not become compliant (the fix failed, or the rescan '
+                                                  'did not confirm it); run the next round for a new proposal and '
+                                                  'approval before another attempt',
                            'uncertain_outcome': 'the outcome of {uncertain} is uncertain; review the server state before '
                                                 'any further attempt',
                            'remediation_incomplete': 'the Remediation Agent did not decide {not_attempted}; execute '
@@ -1255,7 +1256,7 @@ class OrchestratorReviewTools(_RoleTools):
                 parts.append('Verification rescan by the Scanner Agent: '
                              + (f"regressions in {', '.join(regressions)}." if regressions else 'no regressions.'))
             elif self.verification:
-                parts.append('Verification rescan unavailable: ' + self.verification['reason'][:200] + '.')
+                parts.append('Verification rescan unavailable: ' + self.verification['reason'][:200].rstrip('.') + '.')
             parts.append('Next step (' + step.replace('_', ' ') + '): ' + sentence + '.')
             self.terminal_outcome = dict(outcome=step, reason_code=code, reason=' '.join(parts),
                                          framework_run_id=self.framework_run_id,
@@ -1304,8 +1305,14 @@ class AgenticHardening:
         # new one. Refusals change nothing.
         result = Coordinator(self.client_factory(ORCHESTRATOR), tools, limits=Limits(
             steps=12, calls=16, seconds=self.seconds, request_seconds=240, invalid=3)).run()
-        outcome = tools.terminal_outcome or dict(outcome='incomplete', proposals=list(tools.proposals),
-            reason='The Orchestrator stopped without finishing the round: ' + stop_text(result['events'][-1]['data']))
+        finished = result['events'][-1]['data']
+        if tools.terminal_outcome is None and finished['status'] == 'Unavailable' and not tools.scans:
+            outcome = dict(outcome='incomplete', proposals=[], model_unavailable=True, reason=(
+                'The local AI model (' + OllamaClient.model + ') did not answer, so the round did not start: nothing '
+                'was scanned or changed. Start Ollama, then start the round again.'))
+        else:
+            outcome = tools.terminal_outcome or dict(outcome='incomplete', proposals=list(tools.proposals),
+                reason='The Orchestrator stopped without finishing the round: ' + stop_text(finished))
         for run_id in self.scanned_runs:
             self.history.record_drift(run_id)
         self.store.add_round(self.session_id, 'assessment', tools.framework_run_id, round_id=self.round_id,

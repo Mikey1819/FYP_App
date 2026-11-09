@@ -32,7 +32,7 @@ METER_INK = '#1C1C1C'  # Meter fill: the theme's black line colour.
 STATUS = {'awaiting_approval': 'Awaiting approval', 'no_fix_proposed': 'No fix proposed',
           'no_findings': 'No findings', 'collection_failed': 'Scan failed', 'scan_not_handed_off': 'Scan not validated',
           'incomplete': 'Stopped early', 'finish': 'Finished', 'next_round': 'Next round recommended',
-          'remediation_review': 'Needs review', 'fallback': 'Executed without AI'}
+          'remediation_review': 'Needs review', 'fallback': 'Executed without AI', 'settle_scan': 'Settled'}
 AREAS = ('Account Policies', 'Local Security Options', 'Windows Defender Firewall', 'Advanced Audit Policy',
          'Remote Desktop Services')
 
@@ -124,6 +124,8 @@ def activity_row(r, store, latest_run_id=None):
         kinds = Counter(verdict_kind(v['verdict']) for v in r['verdicts'] if v['control_id'])
         result = ', '.join(f'{n} {kind}' for kind, n in kinds.items()) or 'Nothing executed'
         activity = 'Remediation and verification'
+        if r['kind'] == 'settle_scan':  # The read-only rescan that settled an uncertain fix (Agentic hardening).
+            activity, result = 'Rescan to settle an uncertain fix', ', '.join(v['control_id'] for v in r['verdicts'])
     return {'Time': myt(r['created_at']), 'Activity': activity, 'Result': result, 'Status': status}
 
 
