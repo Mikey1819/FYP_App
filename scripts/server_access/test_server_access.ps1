@@ -173,12 +173,15 @@ if ($own) {
 if (([Environment]::OSVersion.Platform -eq 'Win32NT')) {
     $form = New-HelperForm
     $buttons = @($form.Controls | Where-Object { $_ -is [Windows.Forms.Button] } | ForEach-Object { $_.Text })
-    Assert-True (($buttons -join '|') -ceq 'Check status|Start pairing|Revert changes') 'window has the three buttons'
+    Assert-True (($buttons -join '|') -ceq 'Check status|Start pairing|Copy code|Revert changes') 'window has the four buttons'
+    Assert-True (-not $script:CopyButton.Enabled) 'Copy code waits until a code is shown'
     Assert-True ($script:PairButton.Text -ceq 'Start pairing') 'the pairing button is known to the handlers'
     $script:PairButton.Text = 'Stop pairing'  # As while a code is shown.
     & $script:StopPairing                     # No listener: only reads the firewall, changes nothing.
     Assert-True ($script:PairButton.Text -ceq 'Start pairing') 'stopping pairing turns the button back into Start pairing'
-    Assert-True (@($form.Controls | Where-Object { $_.Tag -is [scriptblock] }).Count -eq 3) 'each button carries its action'
+    Assert-True (-not $script:CopyButton.Enabled) 'stopping pairing disables Copy code'
+    Assert-True ((& $script:CopyButton.Tag) -like 'No code to copy*') 'without a code, Copy code says so and copies nothing'
+    Assert-True (@($form.Controls | Where-Object { $_.Tag -is [scriptblock] }).Count -eq 4) 'each button carries its action'
     $form.Dispose()
 }
 Write-Host 'PASS: server access helper address, workstation, state, revert-plan and pairing-message checks; window builds (fixtures only).'

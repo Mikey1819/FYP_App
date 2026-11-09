@@ -370,11 +370,11 @@
       "category": "protected"
     },
     "scripts/server_access/FYP-ServerAccess-README.txt": {
-      "sha256": "c0bd36357f053d7101a39bdd3b05e929cf190242130d7abcc3a34225e2e91072",
+      "sha256": "7090325d37ccdf163a7dc1a018b306b069099bc3c91d126e6b1ad90a9a6c9b26",
       "category": "protected"
     },
     "scripts/server_access/FYP-ServerAccess.ps1": {
-      "sha256": "fe821134ca290d0524a35a0ef50b737fdb880a94b1845310707f9a186a10b8be",
+      "sha256": "58e379067fa2a8c1fd341c78341cff964fa7e6612101964119901248160b6325",
       "category": "protected"
     },
     "scripts/server_access/Start-ServerAccess.cmd": {
@@ -386,7 +386,7 @@
       "sha256": "bfea2ffa963d445a04594fb033d0cdaebb872543b48223a64a287a272bdb9563"
     },
     "scripts/server_access/test_server_access.ps1": {
-      "sha256": "70c352207ba9378c3af249f46c5e2c90fbf0da0648bd6bf606c4c3dfcf5c8888",
+      "sha256": "0370bfe5acace0a20d267f8cae4c64c0e4a782f8893c4c5637428ea9f68f149c",
       "category": "protected"
     },
     "scripts/tools/cross_check_controls.py": {
