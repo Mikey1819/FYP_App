@@ -34,7 +34,8 @@ class ExecutionBatchTests(unittest.TestCase):
             verified.append(list(applied))
             return state
         with mock.patch.multiple(backend, check=lambda *a: 'binding', _store=lambda: store, create=True,
-                                 _latest=lambda *a: N(round_id='r'), _dispatch_one=dispatch, _verify=verify), \
+                                 _latest=lambda *a: N(round_id='r'), _dispatch_one=dispatch, _verify=verify,
+                                 _agent_skipped=lambda *a: {}), \
                 mock.patch('backends.ubuntu.adapter.execution_gate', return_value=()):
             handle = backend.execute_approved('c', 'w', 'round', tuple(outcomes), True, 'op')
         return handle.state, dispatched, verified

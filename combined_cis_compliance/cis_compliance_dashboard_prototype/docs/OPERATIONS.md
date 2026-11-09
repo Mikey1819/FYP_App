@@ -47,7 +47,7 @@ cd ~/ubuntu-helper && sudo bash install.sh && sudo bash install-runner.sh
 
 - `uninstall.sh` also removes the runner stage, and refuses while a change is in progress.
 - **Same code reinstalled:** earlier acceptance results still count.
-- **New code:** click **Run safety check** on the Ubuntu page (about two to three minutes). It runs the confirm test, confirms it over its own fresh login, then runs the rollback test and waits for the server to restore it. The panel is open while the tests are needed; once both have passed for the deployed runner it folds into **Safety check (execution acceptance): passed. Run it again**, which can be run any time (for example after reverting the server to an earlier state).
+- **New code:** click **Run safety check** on the Ubuntu page (about two to three minutes). It runs the confirm test, confirms it over its own fresh login, then runs the rollback test and waits for the server to restore it. The panel is shown only while the tests are needed; once both have passed for the deployed runner it is gone. Reinstalling the runner (a new runner digest) makes the check needed, and shown, again.
   - **By hand:** **Run confirm scenario**, Check status until it is waiting, disconnect, connect again, Confirm (about 60 s window); **Run rollback scenario**, do not confirm, wait about 90 s, Check status until `rolled_back`.
 
 ## Maintenance (Fixes tab)
