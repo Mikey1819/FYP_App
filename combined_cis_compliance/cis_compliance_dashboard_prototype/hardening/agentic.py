@@ -54,7 +54,9 @@ PROMPTS = {
         'inspect_finding for findings you may flag, check_history for findings that show D. 3) Call submit_analysis once. Flag up to '
         '3 findings the administrator should look at first: list each under the parameter named after one of its '
         'attention_codes (each parameter offers only the findings that code fits; leave the others empty). '
-        'gap_triage: every gap exactly once, each {control_id, triage_code} from its triage_codes; choose rescan only if a fresh collection could change it.',
+        'gap_triage is only for the gaps that score_findings lists (Unknown or Error results), never for findings: '
+        'every gap exactly once, each {control_id, triage_code} from its triage_codes; choose rescan only if a fresh '
+        'collection could change it. When gaps is empty, send gap_triage as [].',
     REMEDIATION: COMMON + 'You are the Remediation Agent. You act only on requests the administrator approved; you '
         'never approve, choose values or write commands. 1) Call precheck to observe the VM read-only (list_approved '
         'is optional). 2) Decide each request once: skip_fix (with a reason_code from its skip_codes) every request '
@@ -466,7 +468,8 @@ class AnalysisTools(_RoleTools):
                 tool('submit_analysis', 'Submit once: findings for administrator attention and a triage code for '
                      'every gap.', t, **flags,
                      gap_triage=coded_list(('control_id', 'triage_code'),
-                                           dict(control_id=gaps, triage_code=sorted(TRIAGE))))]
+                                           dict(control_id=gaps, triage_code=sorted(TRIAGE))) if gaps else
+                     {'type': 'array', 'maxItems': 0, 'description': 'This scan has no gaps: send [].'})]
 
     def _scores(self):
         """Compact view: on a local model every extra prompt token costs time."""
@@ -521,7 +524,9 @@ class AnalysisTools(_RoleTools):
         waiting, attention_facts, triage_facts, prerequisite = self._facts()
         # Attention is advisory and changes no number, so a flag that does not fit the facts is discarded and
         # recorded instead of failing the decision; only fitting flags are shown, at most 3, in code order.
-        # Gap triage stays strict: every gap needs one fitting code.
+        # Gap triage stays strict for real gaps: every gap needs one fitting code. An entry for a control that is not
+        # a gap triggers nothing (no rescan, no score), so it is dropped and noted, as on Ubuntu, instead of failing
+        # the whole decision.
         attention = []
         for code, controls in flags.items():
             if type(controls) is not list or len(controls) > 40 or any(
@@ -538,11 +543,11 @@ class AnalysisTools(_RoleTools):
                 fitting.append(entry)
         attention, dropped = fitting[:3], [e['control_id'] for e in fitting[3:]]
         triage = check_entries(arguments['gap_triage'], ('control_id', 'triage_code'), 'gap_triage', TRIAGE)
+        not_gaps = [e['control_id'] for e in triage if e['control_id'] not in triage_facts]
+        triage = [e for e in triage if e['control_id'] in triage_facts]
         seen = set()
         for entry in triage:
             control, code = entry['control_id'], entry['triage_code']
-            if control not in triage_facts:
-                raise ValueError(f'{control[:20]} is not a gap')
             if control in seen:
                 raise ValueError(f'{control} appears more than once')
             seen.add(control)
@@ -567,11 +572,15 @@ class AnalysisTools(_RoleTools):
         if discarded:
             parts.append('Flags that did not fit the analysis were discarded: ' + ', '.join(
                 f"{e['control_id']} ({e['attention_code']})" for e in discarded) + '.')
+        if not_gaps:
+            parts.append('Gap triage for controls that are not gaps was discarded: '
+                         + ', '.join(dict.fromkeys(c[:20] for c in not_gaps)) + '.')
         if triage:
             parts.append('Gaps: ' + '; '.join(f"{g['control_id']} ({g['reason']})" for g in triage) + '.')
         self.terminal_outcome = dict(outcome='analysis_complete', reason=' '.join(parts), attention=attention,
                                      gap_triage=triage, rescan_requested=rescan, framework_run_id=self.framework_run_id,
-                                     discarded_flags=[(e['control_id'], e['attention_code']) for e in discarded])
+                                     discarded_flags=[(e['control_id'], e['attention_code']) for e in discarded],
+                                     discarded_triage=list(dict.fromkeys(c[:20] for c in not_gaps)))
         return dict(self.terminal_outcome)
 
     def call(self, name, arguments):
@@ -592,6 +601,8 @@ class AnalysisTools(_RoleTools):
             # Attention parameters are optional and taken in code order; an empty one need not be sent.
             rest = dict(arguments) if type(arguments) is dict else arguments
             flags = {code: rest.pop(code) for code in ATTENTION if type(rest) is dict and code in rest}
+            if type(rest) is dict:
+                rest.setdefault('gap_triage', [])
             return self._submit(self._args(name, rest, lists=('gap_triage',)), flags)
         else:
             raise ValueError('Tool is outside this agent role')
@@ -910,14 +921,18 @@ class OrchestratorTools(_RoleTools):
         codes = {'fix': list(FIX_REASONS), 'defer': [c for c in SKIP_REASONS if c not in NOT_OFFERED_DEFERS]}
         entries = check_decisions(entries)
         # Deferring a control that has nothing to decide (a gap, or a finding without a library action) is a no-op:
-        # it is ignored and recorded rather than failing the plan, whatever its code. A fix for one is refused.
-        self.ignored_skips = [e['control_id'] for e in entries if e['decision'] == 'defer' and e['control_id'] not in decisions]
-        entries = [e for e in entries if e['decision'] == 'fix' or e['control_id'] in decisions]
+        # it is ignored and recorded rather than failing the plan, whatever its code. A fix for one is refused, except
+        # when nothing at all is left to decide: then no entry can change anything (an empty plan is the only plan),
+        # so a fix entry is left out and recorded too, instead of stopping the round over it.
+        self.ignored_skips = [e['control_id'] for e in entries if e['control_id'] not in decisions
+                              and (e['decision'] == 'defer' or not decisions)]
+        entries = [e for e in entries if e['control_id'] in decisions or (e['decision'] == 'fix' and decisions)]
         seen = set()
         for entry in entries:
             control = entry['control_id']
             if control not in decisions:
-                raise ValueError(f'{control[:20]} is not in must_decide (gaps and assessment-only findings have no fix)')
+                raise ValueError(f'{control[:20]} is not in must_decide (gaps and assessment-only findings have no '
+                                 'fix); leave it out of the plan')
             # One list makes "fix and defer" impossible to express; a second entry for a finding is the same
             # conflict.
             if control in seen:
@@ -995,14 +1010,16 @@ class OrchestratorTools(_RoleTools):
         no_action = [f['control_id'] for f in self.analysis['findings'] if not f['candidate_actions']]
         no_action += self.analysis['unscored_non_compliant']
         if no_action:
-            parts.append('No library action (manual review): ' + ', '.join(no_action) + '.')
+            parts.append('Not fixed by this program (fix by hand or accept as an exception, in Fixes): '
+                         + ', '.join(no_action) + '.')
         if self.analysis['gaps']:
             parts.append(f"{len(self.analysis['gaps'])} Unknown/Error gap(s) not scored.")
         if self.analysis_outcome['attention']:
             parts.append('Analysis Agent flags for attention: ' + '; '.join(
                 f"{a['control_id']} ({a['reason']})" for a in self.analysis_outcome['attention']) + '.')
         if self.ignored_skips:
-            parts.append('Ignored skip entries for controls with nothing to decide: ' + ', '.join(self.ignored_skips) + '.')
+            parts.append('Left out of the plan (nothing to decide for them): '
+                         + ', '.join(dict.fromkeys(self.ignored_skips)) + '.')
         parts.append('Nothing has been approved or executed.')
         state = ('awaiting_approval' if self.proposals else
                  'no_fix_proposed' if self.analysis['findings'] else 'no_findings')

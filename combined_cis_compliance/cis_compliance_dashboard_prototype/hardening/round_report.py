@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from html import escape
 
 from .action_library import LIBRARY
+from .manual_controls import CHOICES, NOT_AUTOMATED, WHY, setting
 from .agentic import ANALYSIS, ORCHESTRATOR, REMEDIATION, SCANNER
 from .ui import FULL, myt
 
@@ -61,8 +62,9 @@ def _decision(record):
     return record['decision'].capitalize(), f'{who}, {myt(when, FULL)} MYT' if when else who
 
 
-def round_report(hardening, rounds, assessment_round, *, now=None):
-    """HTML for one assessment round and, once run, its remediation and verification."""
+def round_report(hardening, rounds, assessment_round, *, now=None, manual=None):
+    """HTML for one assessment round and, once run, its remediation and verification. `manual`: the administrator's
+    latest choice per control this program does not fix (manual_controls.py)."""
     now = now or datetime.now(timezone.utc)
     run_id = assessment_round['framework_run_id']
     outcome = assessment_round['outcome']
@@ -124,6 +126,15 @@ def round_report(hardening, rounds, assessment_round, *, now=None):
     parts.append('<h2>3. Proposed fixes and administrator decisions</h2>'
                  + _table(('Rank', 'Control', 'Library action', 'Change', 'Risk', 'Orchestrator reason', 'Decision',
                            'By', 'Comment', 'Result'), rows, 'The Orchestrator proposed no fixes in this round.'))
+    not_automated = [r for r in results if r.control.control_id in NOT_AUTOMATED]
+    if not_automated:
+        manual = manual or {}
+        parts.append('<h3>Not fixed by this program</h3><p class="muted">' + escape(WHY) + '</p>' + _table(
+            ('Control', 'Title', 'Status this round', 'Needs', 'Administrator choice', 'By', 'When (MYT)', 'Reason'),
+            [(r.control.control_id, r.control.title, r.status.value, setting(r.control.control_id),
+              *((CHOICES[d['choice']], d['operator'], myt(d['decided_at'], FULL), d['reason'] or '—')
+                if (d := manual.get(r.control.control_id)) else ('No choice recorded', '—', '—', '—')))
+             for r in not_automated]))
 
     verification = next((r for r in reversed(rounds) if r['kind'] == 'verification_scan'
                          and r.get('remediated_run_id') == run_id), None) if run_id else None

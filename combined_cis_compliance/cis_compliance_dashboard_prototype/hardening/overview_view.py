@@ -210,7 +210,7 @@ def render_overview(database_path: Path, servers_path: Path | None = None):
             st.dataframe([{'Priority': f.priority, 'Control': f.control_id, 'Title': f.title, 'Risk': f.score,
                            'Level': f.level,
                            'Fix': (actions_for(f.control_id)[0].title if actions_for(f.control_id)
-                                   else 'Manual review (no library action)')} for f in ranked[:5]],
+                                   else 'Manual: not automated')} for f in ranked[:5]],
                          hide_index=True)
         else:
             st.caption('Nothing to prioritise.')

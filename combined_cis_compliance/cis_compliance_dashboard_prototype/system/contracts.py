@@ -177,6 +177,7 @@ class ControlRow:
     expected: str
     subchecks: tuple[Subcheck, ...] = ()
     evidence_references: tuple[RecordRef, ...] = ()
+    fix: str = ''  # Who fixes it: 'Program fix', or 'Manual: not automated' (shown in the Controls tab).
 
 
 @dataclass(frozen=True)

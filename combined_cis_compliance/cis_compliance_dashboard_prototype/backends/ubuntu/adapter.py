@@ -91,6 +91,13 @@ def execution_gate(backend=None):
     return tuple(prefix + reason for reason in backend._execution_reasons())
 
 
+@lru_cache(maxsize=1)
+def _fixed_controls():
+    """Controls some registered fix family can change."""
+    from .actions import FAMILIES
+    return frozenset(c for spec in FAMILIES.values() for c in spec.control_ids)
+
+
 @dataclass(frozen=True)
 class DeploymentStatus:
     ok: bool
@@ -498,7 +505,8 @@ class UbuntuBackend(BoundBackend):
                 control.assessment_contract,
                 tuple(Subcheck(c.name, CHECK_STATUS.get(c.state, ComplianceStatus.UNKNOWN), c.reason or c.state)
                       for c in result.checks),
-                (self._ref(row.framework_run_id),)))
+                (self._ref(row.framework_run_id),),
+                fix='Program fix' if control.control_id in _fixed_controls() else 'Manual: not automated'))
         findings = self._findings(store, row, evidence)
         details = row.details or {}
         proposals, results = self._proposal_rows(store, binding, row, rounds[-1].round_id == row.round_id, all_rounds)
