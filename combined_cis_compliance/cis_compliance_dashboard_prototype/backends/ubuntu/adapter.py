@@ -1129,6 +1129,7 @@ class UbuntuBackend(BoundBackend):
         from vm.ubuntu.provenance import collector_digest
         from .actions import AUXILIARY
         from datetime import datetime, timezone
+        from .ssh_channel import SETUP_FOLDER
         try:
             sent = datetime.now(timezone.utc)
             probe = json.loads(self.session.channel.invoke_runner(b'{"op":"probe"}\n'))
@@ -1137,23 +1138,35 @@ class UbuntuBackend(BoundBackend):
                 raise ValueError('Unexpected probe')
             offset = (datetime.fromisoformat(probe['now']) - (sent + (received - sent) / 2)).total_seconds()
         except Exception:
-            return DeploymentStatus(False, ('The root-owned runner is not deployed or refused the probe: open Servers and '
-                                            'click Set up this server (or run install-runner.sh, which needs its '
-                                            'separate approval).',), None)
+            return DeploymentStatus(False, (self._runner_setup_steps(),), None)
         reasons = []
         if abs(offset) > MAX_CLOCK_OFFSET_SECONDS:
             reasons.append('The server clock differs from this computer by %d s (more than %d s); fix time sync on the server '
                            '(timedatectl) and connect again.' % (round(offset), MAX_CLOCK_OFFSET_SECONDS))
         if probe['collector_digest'] != collector_digest(APP / 'vm' / 'ubuntu'):
-            reasons.append('The deployed helper differs from this application; reinstall the bundle first.')
+            reasons.append('The FYP helper installed on the server differs from this version of the application. Open '
+                           'Servers, click Set up this server, then on the server run: '
+                           f'sudo bash ~/{SETUP_FOLDER}/setup.sh (it says how to replace the older helper), and click '
+                           'Check again.')
         expected = {aid: [spec.version, spec.implementation_sha256] for aid, spec in dict(self.families, **AUXILIARY).items()}
         if any(probe['families'].get(aid) != value for aid, value in expected.items()):
             reasons.append('The deployed runner registers different fix families or versions.')
         if probe['launcher'] is not True:
             reasons.append('systemd-run is unavailable on the server, so supervised jobs cannot run.')
         if probe['boot_rollback'] != 'enabled':
-            reasons.append('The boot rollback unit is not enabled (install-runner.sh).')
+            reasons.append('The fix runner\'s boot rollback unit is not enabled on the server. On the server, run: '
+                           f'cd ~/{SETUP_FOLDER} && sudo bash install-runner.sh (the files come from Set up this '
+                           'server on the Servers page), then click Check again there.')
         return DeploymentStatus(not reasons, tuple(reasons), probe['collector_digest'])
+
+    def _runner_setup_steps(self):
+        """What to do when the root-owned fix runner does not answer its read-only probe: open Servers and click Set up
+        this server. That panel shows the command to run on the server and Check again (administrator request
+        2026-11-11: only this step here)."""
+        host = self.session.identity.hostname
+        return (f'The fix runner on {host} is not deployed, or it refused its read-only check (for example after a '
+                'snapshot restore). Fixes and the safety check need it: open Servers, connect to '
+                f'{host} and click Set up this server, then follow the steps shown there.')
 
     def _acceptance_runs(self):
         s = self.session

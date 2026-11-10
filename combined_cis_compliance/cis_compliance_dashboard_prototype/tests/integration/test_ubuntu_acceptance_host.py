@@ -74,6 +74,29 @@ class DeploymentTests(AcceptanceCase):
             with self.assertRaises(ValueError):
                 backend.start_acceptance('c', 'confirm', 'fixture-operator', 'op-x')
 
+    def test_the_not_deployed_message_points_to_set_up_this_server(self):
+        """Administrator request 2026-11-11: say what is wrong and on which server, and only the step to open Servers
+        and click Set up this server; that panel shows the command to run on the server and Check again."""
+        backend = self.deployed()
+        host = backend.session.identity.hostname
+        refused = lambda data, **kw: (_ for _ in ()).throw(ValueError('runner refused'))
+        with mock.patch.object(type(self.channel), 'invoke_runner', refused):
+            [reason] = backend.deployment_status('c').reasons
+        for part in (f'The fix runner on {host} is not deployed', 'open Servers', f'connect to {host}',
+                     'click Set up this server'):
+            self.assertIn(part, reason)
+        for later in ('sudo', 'install-runner.sh', 'Check again', 'separate approval'):
+            self.assertNotIn(later, reason)  # the Servers panel gives these
+        backend = self.deployed()
+        self.launcher.boot_rollback_state = lambda: 'not-enabled'
+        [reason] = backend.deployment_status('c').reasons
+        self.assertIn('cd ~/fyp-ubuntu-helper && sudo bash install-runner.sh', reason)
+        backend = self.deployed()
+        self.launcher.boot_rollback_state = lambda: 'enabled'
+        with self.vm_reports(collector_digest='f' * 64):
+            [reason] = backend.deployment_status('c').reasons
+        self.assertIn('sudo bash ~/fyp-ubuntu-helper/setup.sh', reason)
+
     def test_a_deployed_runner_without_acceptance_still_keeps_the_gate_closed(self):
         from backends.ubuntu.adapter import execution_gate
         backend = self.deployed()

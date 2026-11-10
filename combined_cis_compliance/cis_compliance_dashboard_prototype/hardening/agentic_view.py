@@ -1464,16 +1464,17 @@ def render_agentic(database_path: Path):
                     return
                 undecided, pending = _ubuntu_open_fixes(snapshot)
                 with st.container(horizontal=True, vertical_alignment='center'):
-                    # As on Windows, a new round is offered once nothing in this one awaits a decision or execution,
-                    # so approvals are never left behind in an older round.
-                    held = undecided or pending or (previous and previous[2])  # previous[2]: its open fixes
-                    if previous and previous[2]:
-                        st.markdown('Resume the earlier session to decide or execute its open fixes first.')
-                    if not held and st.button(
+                    # Ubuntu page (administrator request 2026-11-10): a new round can start at any time, also while
+                    # fixes of this round are undecided or approved but not executed. Those stay in this round,
+                    # read-only (only the latest round is decided or executed); the new round proposes them again.
+                    # The Windows page keeps its own rule.
+                    open_note = (f' The {len(undecided) + len(pending)} open fix(es) of this round stay in it, '
+                                 'read-only; the new round proposes them again.') if undecided or pending else ''
+                    if st.button(
                             'Start agentic round' if snapshot.current_round_reference is None else 'Run next round',
                             key='agentic_run', type='primary', disabled=not capabilities.can_use_model,
                             help='Scan the server, rank the findings and propose fixes. Nothing changes until you '
-                                 'approve and execute.'):
+                                 'approve and execute.' + open_note):
                         # Bounded Ubuntu agents through the backend; the orchestrator plans, the administrator approves.
                         _run_round(None, None)
                     if previous and st.button('Resume earlier session', key='agentic_resume'):
