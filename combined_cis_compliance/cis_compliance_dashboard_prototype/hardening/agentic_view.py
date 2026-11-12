@@ -45,7 +45,10 @@ UBUNTU_AGENTS_EXECUTE_LABEL = 'Remediation Agent executing, then Scanner verifyi
 CLOCK = 'agentic_clock'                # Windows: the last check of the server clock (plain session key).
 CLOCK_NOTICE = 'agentic_clock_notice'  # What the last clock sync did, shown once.
 CLOCK_RECHECK = timedelta(minutes=2)   # The box checks again after this; Start and Execute always check afresh.
-NAME_NEEDED = 'agentic_name_needed'   # A decision was clicked before a name was typed.
+# Windows and Ubuntu alike: Approve and Reject stay disabled until a name is entered. Streamlit sends typed text only on
+# Enter or when the box loses focus, so the hint under the name box says to press Enter.
+NAME_HINT = 'Press Enter after typing your name.'
+DECIDE_HINT = 'Enter your name above first'
 MANUAL_ASK = 'agentic_manual_exception'  # The not-automated control whose exception reason is being typed.
 MANUAL_ERROR = 'agentic_manual_error'
 SETTLE_LABEL = 'Rescanning the server (read-only) to settle an uncertain fix'
@@ -941,14 +944,11 @@ def _decision_cell(store, record, operator, comment, editable):
         st.markdown(badge('No decision'))
     else:
         with st.container(horizontal=True):
-            # Never disabled while the name is being typed: a disabled button would need a second click.
-            hint = None if operator.strip() else 'Your name above is recorded with the decision'
-            approve = st.button('Approve', key='agentic_approve_' + p['request_id'], help=hint)
-            reject = st.button('Reject', key='agentic_reject_' + p['request_id'], help=hint)
-        if (approve or reject) and not operator.strip():
-            st.session_state[NAME_NEEDED] = True
-            st.rerun()
-        if approve or reject:
+            ready = bool(operator.strip())
+            hint = None if ready else DECIDE_HINT
+            approve = st.button('Approve', key='agentic_approve_' + p['request_id'], help=hint, disabled=not ready)
+            reject = st.button('Reject', key='agentic_reject_' + p['request_id'], help=hint, disabled=not ready)
+        if (approve or reject) and ready:
             _decide(store, p['request_id'], approve=approve, operator=operator, comment=comment)
             st.session_state.pop(COMMENT, None)
             st.rerun()
@@ -971,11 +971,10 @@ def _show_fixes(store, assessment_round, state, analysis, *, editable):
             operator = st.text_input('Your name (recorded with each decision)', key='agentic_operator',
                                      persist_state='session', width=320)
             ready = bool(operator.strip())
-            approve_all = st.button('Approve all undecided', key='agentic_approve_all')
-            reject_all = st.button('Reject all undecided', key='agentic_reject_all')
-        if (st.session_state.pop(NAME_NEEDED, False) or approve_all or reject_all) and not ready:
-            st.warning('Type your name first: it is recorded with each decision.', icon=':material/badge:')
-            approve_all = reject_all = False
+            approve_all = st.button('Approve all undecided', key='agentic_approve_all', disabled=not ready)
+            reject_all = st.button('Reject all undecided', key='agentic_reject_all', disabled=not ready)
+        if not ready:
+            st.caption(NAME_HINT)
         comment = st.text_input('Comment (optional, recorded with your next decision)', key=COMMENT, max_chars=500,
                                 placeholder='e.g. Approved for the Saturday maintenance window')
         if approve_all or reject_all:
@@ -1631,7 +1630,7 @@ def _ubuntu_decision_cell(backend, connection, card, p, operator, comment):
             st.caption(md_escape(p.reason))
         with st.container(horizontal=True):
             ready = bool(operator.strip())
-            hint = None if ready else 'Enter your name above first'
+            hint = None if ready else DECIDE_HINT
             if st.button('Approve', key='ubuntu_approve_' + p.reference.record_id, help=hint,
                          disabled=not ready or 'approve' not in p.eligible_commands):
                 _ubuntu_decide(backend, connection, p, True, operator, comment)
@@ -1766,6 +1765,8 @@ def _ubuntu_show_fixes(backend, connection, snapshot, capabilities, editable=Tru
             ready = bool(operator.strip())
             approve_all = st.button('Approve all undecided', key='ubuntu_approve_all', disabled=not (ready and undecided))
             reject_all = st.button('Reject all undecided', key='ubuntu_reject_all', disabled=not (ready and undecided))
+        if not ready:
+            st.caption(NAME_HINT)
         comment = st.text_input('Comment (optional, recorded with your next decision)', key='agentic_comment',
                                 max_chars=500, placeholder='e.g. Approved for the Saturday maintenance window')
         if approve_all or reject_all:

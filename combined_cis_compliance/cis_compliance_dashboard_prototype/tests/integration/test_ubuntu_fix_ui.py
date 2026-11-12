@@ -106,7 +106,9 @@ class FixUiTests(StoreFixture):
             self.assertIn('Why the Orchestrator chose it', self.text(app))
             self.assertTrue(approve[0].disabled)  # no operator name yet
             self.assertTrue(app.button(key='ubuntu_approve_all').disabled)
+            self.assertIn('Press Enter after typing your name.', [c.value for c in app.caption])  # As on Windows.
             app.text_input(key='agentic_operator').input('fixture-operator').run()
+            self.assertNotIn('Press Enter after typing your name.', [c.value for c in app.caption])
             self.approve_buttons(app)[0].click().run()
             self.assertFalse(list(app.error), [e.value for e in app.error])
             self.assertEqual(self.approve_buttons(app), [])

@@ -354,19 +354,20 @@ class AgenticPageTests(unittest.TestCase):
                 if 'Fix' in r and 'Area' in r}
         self.assertEqual((rows['9.3.1']['Fix'], rows['1.1.1']['Fix']), ('Manual: not automated', 'Program fix'))
 
-    def test_typing_a_name_and_clicking_approve_works_in_one_click(self):
-        # Streamlit commits typed text when the field loses focus, which a click on a button does. A button that
-        # stayed disabled until then needed a second click; now the first click carries the name with it.
+    def test_approve_and_reject_wait_for_a_name_as_on_ubuntu(self):
+        # As on the Ubuntu page: every decision button is disabled until a name is entered, and the hint under the
+        # name box says to press Enter (Streamlit sends typed text only on Enter or when the box loses focus).
         app = self._start_round()
-        approve = [b for b in app.button if b.key.startswith('agentic_approve_') and b.key != 'agentic_approve_all']
-        self.assertFalse(approve[0].disabled)
-        approve[0].click().run()  # No name yet: nothing is decided, and the page says what to type.
-        self.assertEqual([w.value for w in app.warning], ['Type your name first: it is recorded with each decision.'])
-        self.assertEqual(len([b for b in app.button if b.key.startswith('agentic_approve_')
-                              and b.key != 'agentic_approve_all']), 2)
-        app.text_input(key='agentic_operator').set_value('admin01')
-        approve = [b for b in app.button if b.key.startswith('agentic_approve_') and b.key != 'agentic_approve_all']
-        approve[0].click().run()  # Typed and clicked in one go.
+
+        def deciding():
+            return [b for b in app.button if b.key.startswith(('agentic_approve_', 'agentic_reject_'))]
+        self.assertEqual(len(deciding()), 6)  # Two fixes' Approve and Reject, plus Approve all and Reject all.
+        self.assertTrue(all(b.disabled for b in deciding()))
+        self.assertIn('Press Enter after typing your name.', [c.value for c in app.caption])
+        app.text_input(key='agentic_operator').input('admin01').run()
+        self.assertFalse(any(b.disabled for b in deciding()))
+        self.assertNotIn('Press Enter after typing your name.', [c.value for c in app.caption])
+        [b for b in deciding() if b.key.startswith('agentic_approve_') and b.key != 'agentic_approve_all'][0].click().run()
         self.assertEqual(len([b for b in app.button if b.key.startswith('agentic_approve_')
                               and b.key != 'agentic_approve_all']), 1)
         self.assertTrue(any('by admin01' in c.value for c in app.caption))

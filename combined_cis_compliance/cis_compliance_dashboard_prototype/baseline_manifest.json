@@ -174,7 +174,7 @@
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/tests/test_agentic_view.py": {
-      "sha256": "9bc1635f7315754f9671de9ff9090e27aff7b192a7919fb38c20cadb2e53e9f1",
+      "sha256": "8ed2347d68f583faf4364e82e9de16112ed6889fb6d41839d4f2a8390a97862e",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/tests/test_app_navigation.py": {
