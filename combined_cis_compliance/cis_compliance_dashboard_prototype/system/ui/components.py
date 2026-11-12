@@ -197,7 +197,7 @@ def render_results_table(snapshot):
 
 
 def render_snapshot_tabs(snapshot, *, tabs=None, fix_actions=None, fix_header=None, control_actions=None,
-                         fixes_panel=None, risk_panel=None, results_panel=None, log_panel=None):
+                         fixes_panel=None, risk_panel=None, results_panel=None, log_panel=None, controls_panel=None):
     """Common panels, also used while a verified backend requires setup. `fix_actions` renders the page's own
     decision/execution controls inside Fixes; with a plan (Ubuntu), `fix_header` renders above the per-control
     cards and `control_actions(card)` inside each card. `fixes_panel`, `risk_panel`, `results_panel` and `log_panel`
@@ -237,7 +237,10 @@ def render_snapshot_tabs(snapshot, *, tabs=None, fix_actions=None, fix_header=No
         else:
             st.info('No scored findings are available for this assessment.')
     with controls:
-        render_controls(snapshot)
+        if controls_panel is not None:  # Ubuntu: the newest scan of the round, as on the Windows page.
+            controls_panel()
+        else:
+            render_controls(snapshot)
     with results:
         if results_panel is not None:
             results_panel()

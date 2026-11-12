@@ -1485,7 +1485,8 @@ def render_agentic(database_path: Path):
                                                                    editable=chosen is None),
                             risk_panel=lambda: _ubuntu_show_risk(backend, connection, workflow, viewed),
                             results_panel=lambda: _ubuntu_show_results(backend, connection, workflow, viewed),
-                            log_panel=lambda: _ubuntu_show_agent_log(viewed))
+                            log_panel=lambda: _ubuntu_show_agent_log(viewed),
+                            controls_panel=lambda: _ubuntu_show_controls(backend, connection, workflow, viewed))
                 if chosen is not None:
                     st.caption('An earlier round, read-only. Decisions and execution happen in the latest round.')
                     render_snapshot_tabs(viewed, **tabs)
@@ -1945,6 +1946,19 @@ def _ubuntu_show_risk(backend, connection, workflow, snapshot):
         st.markdown('**Gaps (not scored, no fix)**')
         st.dataframe([{'Control': c.control_id, 'Status': c.status.value, 'Sub-checks': c.observed} for c in gaps],
                      hide_index=True)
+
+
+def _ubuntu_show_controls(backend, connection, workflow, snapshot):
+    """As the Windows Controls tab: the newest scan of this round (the verification rescan once fixes have run)."""
+    ref = snapshot.current_round_reference
+    if snapshot.summary is None or not (workflow and ref):
+        render_controls(snapshot)
+        return
+    newest = backend.snapshot(connection, workflow, ref, newest_scan=True)
+    later = newest.summary.reference != snapshot.summary.reference
+    st.caption(controls_scan_line('the verification rescan after the fixes' if later else None,
+                                  (newest if later else snapshot).summary.collected_at))
+    render_controls(newest)
 
 
 def _ubuntu_show_results(backend, connection, workflow, snapshot):

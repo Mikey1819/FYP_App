@@ -24,7 +24,8 @@ class FixUiTests(StoreFixture):
                 def factory():
                     target = fake_io_factory()()
                     original = target.command
-                    target.command = lambda key: (SimpleNamespace(returncode=0, stdout='0' + chr(10))
+                    # 1.5.1's value on the fake server: 0 (non-compliant) unless a test sets `aslr` (e.g. '2').
+                    target.command = lambda key: (SimpleNamespace(returncode=0, stdout=getattr(test, 'aslr', '0') + chr(10))
                                                   if key == 'sysctl.kernel.randomize_va_space' else original(key))
                     return target
                 code, out, _ = run_cli(stdin_bytes, io_factory=factory, preflight=fake_preflight)

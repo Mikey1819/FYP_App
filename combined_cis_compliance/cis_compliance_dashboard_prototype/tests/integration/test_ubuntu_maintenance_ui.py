@@ -141,6 +141,34 @@ class MaintenanceUiTests(FixUiTests):
             self.assertTrue(app.button(key='ubuntu_prepare_reboot').disabled)  # one open reboot at a time
         self.assertEqual(len([c for c in channel.runner_calls if c.startswith(b'{"op":"execute"}')]), 1)
 
+    def test_the_controls_tab_shows_the_verification_rescan_after_the_fixes(self):
+        # As on Windows (user report 2026-11-12): the Controls tab used to keep the round's first scan, so a fixed
+        # control still read Non-Compliant there.
+        from tests.integration.test_ubuntu_live_path import open_gate
+
+        def controls(app):
+            return {r['Control']: r['Status'] for frame in app.dataframe for r in frame.value.to_dict('records')
+                    if 'Applicability' in r}
+
+        def line(app):
+            return [c.value for c in app.caption if c.value.startswith(("Newest scan of this round", "This round's first"))]
+        with open_gate(), mock.patch('backends.ubuntu.adapter.execution_gate', return_value=()):
+            app, _ = self.page()
+            app.button(key='agentic_run').click().run()
+            self.assertEqual(controls(app)['1.5.1'], 'Non-Compliant')
+            self.assertTrue(line(app)[0].startswith("This round's first scan"), line(app))
+            app.text_input(key='agentic_operator').input('fixture-operator').run()
+            self.keyed(app, 'ubuntu_approve_', exclude='ubuntu_approve_all')[0].click().run()
+            self.model_up = False  # without the model, Confirm runs the fixes in plan order, then the rescan
+            app.button(key='ubuntu_execute_review').click().run()
+            self.aslr = '2'  # The fake server reads compliant from here on, as after the fix (the fixture's write
+            app.button(key='ubuntu_execute').click().run()  # goes to a TEST-ONLY file, not to this value).
+            app.run()
+            self.assertEqual(self.writes(), ['alpha'])
+            self.assertEqual(controls(app)['1.5.1'], 'Compliant')
+            self.assertTrue(line(app)[0].startswith('Newest scan of this round: the verification rescan after the fixes'),
+                            line(app))
+
 
 class MaintenanceNeedsTests(unittest.TestCase):
     """Which maintenance a round's fix cards call for, from their states alone."""

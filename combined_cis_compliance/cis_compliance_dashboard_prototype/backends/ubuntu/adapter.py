@@ -483,7 +483,10 @@ class UbuntuBackend(BoundBackend):
                                         + newer.run_reference.record_id[:8]))
         return tuple(records)
 
-    def snapshot(self, connection_session_id, workflow_session_id, round_ref=None):
+    def snapshot(self, connection_session_id, workflow_session_id, round_ref=None, *, newest_scan=False):
+        """The round's records. `newest_scan` (as on Windows): the summary and control rows come from the newest
+        verification scan of this round, so the Controls tab shows the server as it is after the fixes; findings,
+        plan, proposals and results always stay those of the round's own first scan."""
         binding = self.check(connection_session_id, workflow_session_id, round_ref)
         store = self._store() if binding else None
         all_rounds = store.rounds(binding) if store else ()
@@ -494,9 +497,13 @@ class UbuntuBackend(BoundBackend):
         if row is None:
             raise ValueError('Round is outside this workflow')
         evidence = self._evidence(store, row.evidence_sha256)
+        checks = [r for r in all_rounds if r.kind == 'verification'
+                  and (r.details or {}).get('verifies_round') == row.round_id] if newest_scan else []
+        scan = checks[-1] if checks else row
+        scanned = self._evidence(store, scan.evidence_sha256) if checks else evidence
         catalogue = _controls()
         controls = []
-        for result in evidence.assessments:
+        for result in scanned.assessments:
             control = catalogue[result.control_id]
             states = [c.state for c in result.checks]
             controls.append(ControlRow(control.control_id, control.title, control.area,
@@ -507,7 +514,7 @@ class UbuntuBackend(BoundBackend):
                 control.assessment_contract,
                 tuple(Subcheck(c.name, CHECK_STATUS.get(c.state, ComplianceStatus.UNKNOWN), c.reason or c.state)
                       for c in result.checks),
-                (self._ref(row.framework_run_id),),
+                (self._ref(scan.framework_run_id),),
                 fix='Program fix' if control.control_id in _fixed_controls() else 'Manual: not automated'))
         findings = self._findings(store, row, evidence)
         details = row.details or {}
@@ -529,7 +536,7 @@ class UbuntuBackend(BoundBackend):
                                  'Read-only scan and deterministic predicates; no model was called and no proposal was created.',
                                  'no_ai', row.created_at, 'Deterministic (no AI)'),)
         return WorkspaceSnapshot(self._target(evidence.expected.evidence_mode), binding, self._ref(row.round_id),
-                                 self._summary(row.framework_run_id, evidence), tuple(controls), findings,
+                                 self._summary(scan.framework_run_id, scanned), tuple(controls), findings,
                                  proposals, results, events=events, step_states=steps, goal=details.get('goal'),
                                  plan=plan)
 
