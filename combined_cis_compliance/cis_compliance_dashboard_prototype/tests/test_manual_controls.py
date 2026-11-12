@@ -104,7 +104,7 @@ class OpenItemTests(unittest.TestCase):
         choices = {'9.2.1': dict(choice='manual_fix'), '9.3.1': dict(choice='exception')}
         items = {i['control_id']: i['why'] for i in open_items(results, choices)}
         self.assertEqual(set(items), {'9.2.1', '9.3.2', '1.1.1', '1.2.1'})
-        self.assertIn('You chose to fix it by hand, but the scan still finds it Non-Compliant', items['9.2.1'])
+        self.assertIn('You chose to fix it manually on the server, but the scan still finds it Non-Compliant', items['9.2.1'])
         self.assertIn('Not fixed by this program', items['9.3.2'])
         self.assertIn('approve and execute its fix', items['1.1.1'])
         self.assertIn('Unknown: no value could be judged', items['1.2.1'])

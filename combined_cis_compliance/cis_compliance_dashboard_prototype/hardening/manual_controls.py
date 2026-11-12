@@ -1,10 +1,10 @@
-"""Windows controls this program assesses but never changes, how to fix them by hand, and what the administrator chose.
+"""Windows controls this program assesses but never changes, how to fix them manually on the server, and what the administrator chose.
 
 The catalogue's firewall on/off and inbound-block controls (9.2.1, 9.2.2, 9.3.1, 9.3.2) have no library action: changing
 them over the network could cut the WinRM connection the agents use. They stay applicable and are reported exactly as
 scanned. They are never shown as Not applicable and never counted as passed, so the compliance figure stays honest.
 
-For each one the administrator records a choice: fix it by hand on the server, or accept it as an exception with a
+For each one the administrator records a choice: fix it manually on the server, or accept it as an exception with a
 reason. Any other control still open when a hardening session is completed (a rejected fix, an Unknown or Error result)
 can be accepted as an exception too. Choices belong to one hardening session: a new session starts with none (earlier
 ones stay in their own records and reports). Records are append-only. The latest record per control counts, and
@@ -29,9 +29,9 @@ PROGRAM_FIX, MANUAL_FIX = 'Program fix', 'Manual: not automated'
 
 WHY = ('Assessed, never changed by this program. These settings turn the firewall on and block incoming connections by '
        "default. Changing them over the network could cut the connection this program uses to reach the server, so they "
-       'are fixed by hand on the server itself, or accepted as an exception. They still count as Non-Compliant until a '
+       'are fixed manually on the server itself, or accepted as an exception. They still count as Non-Compliant until a '
        'scan finds them compliant.')
-CHOICES = {'manual_fix': 'Will fix it by hand on the server', 'exception': 'Accepted as an exception'}
+CHOICES = {'manual_fix': 'To be fixed manually on the server', 'exception': 'Accepted as an exception'}
 WITHDRAWN = 'withdrawn'
 MAX_REASON = 500
 
@@ -62,7 +62,7 @@ def setting(control_id):
 
 
 def steps(control_id, *, check='run the next round'):
-    """How to fix it by hand on the server. About two minutes; all four firewall settings are in the same dialog.
+    """How to fix it manually on the server. About two minutes; all four firewall settings are in the same dialog.
     `check`: how the administrator then has it scanned (in the Complete hardening panel, the final scan)."""
     if control_id not in _FIREWALL:
         return ('Fix it on the server itself, following the CIS benchmark text for this control.',
@@ -111,9 +111,9 @@ def open_items(results, choices):
             continue
         status = result.status.value
         if choice == 'manual_fix':
-            why = f'You chose to fix it by hand, but the scan still finds it {status}. Fix it on the server first.'
+            why = f'You chose to fix it manually on the server, but the scan still finds it {status}. Fix it on the server first.'
         elif control in NOT_AUTOMATED:
-            why = 'Not fixed by this program: fix it by hand on the server, or accept it as an exception.'
+            why = 'Not fixed by this program: fix it manually on the server, or accept it as an exception.'
         elif result.status in (Status.UNKNOWN, Status.ERROR):
             why = f'{status}: no value could be judged. A new round may resolve it, or accept it as an exception.'
         else:
@@ -147,7 +147,7 @@ class ManualDecisionStore:
         if choice not in CHOICES and choice != WITHDRAWN:
             raise ValueError('Unknown choice.')
         if choice == 'manual_fix' and control_id not in NOT_AUTOMATED:
-            raise ValueError('Only controls this program does not fix are fixed by hand; this one has a program fix.')
+            raise ValueError('Only controls this program does not fix can be fixed manually; this one has a program fix.')
         if not operator or len(operator) > 64:
             raise ValueError('Your name is recorded with each choice (up to 64 characters).')
         if len(reason) > MAX_REASON:

@@ -108,7 +108,12 @@ class AgenticPageTests(unittest.TestCase):
         labels = {e.label for e in app.expander}
         self.assertIn('How to fix it on the server', labels)  # The firewall controls: the gpedit steps, here too.
         self.assertIn('How to close it', labels)  # A rejected fix: run the next round, approve and execute it.
+        app.text_input(key='agentic_complete_operator').input('').run()  # As Approve and Reject: no name, no record.
+        self.assertTrue(app.button(key='agentic_complete_run').disabled)
+        self.assertTrue(all(b.disabled for b in app.button if b.key.startswith('agentic_complete_accept_')))
+        self.assertIn('Press Enter after typing your name.', [c.value for c in app.caption])
         app.text_input(key='agentic_complete_operator').input('kk').run()
+        self.assertFalse(app.button(key='agentic_complete_run').disabled)
         app.button(key='agentic_complete_run').click().run()  # The final scan still finds open controls.
         self.assertEqual(len(app.exception), 0, [e.value for e in app.exception])
         self.assertTrue(any('Not completed: the final scan' in w.value for w in app.warning), [w.value for w in app.warning])
@@ -324,9 +329,10 @@ class AgenticPageTests(unittest.TestCase):
         self.assertEqual(text.count('Compliant now'), 3)  # Listed, never hidden or shown as Not applicable.
         self.assertEqual([b.key for b in app.button if b.key.startswith('agentic_manual_')],
                          ['agentic_manual_fix_9.3.1', 'agentic_manual_exception_9.3.1'])
-        # The name comes first: a click without it records nothing and says why.
-        app.button(key='agentic_manual_fix_9.3.1').click().run()
-        self.assertTrue(any('Your name is recorded' in e.value for e in app.error))
+        # The name comes first, as for Approve and Reject: both choice buttons wait for it.
+        self.assertTrue(app.button(key='agentic_manual_fix_9.3.1').disabled)
+        self.assertTrue(app.button(key='agentic_manual_exception_9.3.1').disabled)
+        self.assertEqual(app.button(key='agentic_manual_fix_9.3.1').label, "I'll fix it manually on the server")
         self.assertIn('need your choice in **Fixes**', ' '.join(m.value for m in app.markdown))
         steps = ' '.join(m.value.replace('\\', '') for e in app.expander if e.label == 'How to fix it on the server'
                          for m in e.markdown)
@@ -348,7 +354,7 @@ class AgenticPageTests(unittest.TestCase):
         app.button(key='agentic_manual_withdraw_9.3.1').click().run()
         self.assertIn('1 control(s) this program does not fix need your choice', ' '.join(m.value for m in app.markdown))
         app.button(key='agentic_manual_fix_9.3.1').click().run()
-        self.assertIn('Will fix it by hand on the server · admin01', ' '.join(c.value for c in app.caption))
+        self.assertIn('To be fixed manually on the server · admin01', ' '.join(c.value for c in app.caption))
         self.assertEqual(self.vm.writes, [])  # A choice never changes the server.
         rows = {r['Control']: r for frame in app.dataframe for r in frame.value.to_dict('records')
                 if 'Fix' in r and 'Area' in r}

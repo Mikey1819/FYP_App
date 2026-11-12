@@ -493,7 +493,7 @@ def _ubuntu_acceptance(backend, connection):
                 st.session_state['ubuntu_acceptance_notice'] = scenario + ' scenario started.'
             except (ValueError, OSError) as failure:
                 st.session_state['ubuntu_acceptance_error'] = str(failure)[:300]
-        st.caption('Or run each test by hand:')
+        st.caption('Or run each test yourself:')
         with st.container(horizontal=True):
             for scenario, label in (('confirm', 'Run confirm scenario'), ('rollback', 'Run rollback scenario')):
                 st.button(label, key='ubuntu_acceptance_' + scenario, on_click=start, args=(scenario,),
@@ -550,7 +550,7 @@ def _ubuntu_watch_changes():
 
 def _ubuntu_pending_changes(backend, connection):
     """Changes still running or waiting for confirmation on this VM, from any workflow, so a fresh login finds them.
-    They are watched automatically; the buttons stay for checking or confirming by hand."""
+    They are watched automatically; the buttons stay for checking or confirming manually."""
     error, notice = st.session_state.pop('ubuntu_pending_error', None), st.session_state.pop('ubuntu_pending_notice', None)
     if error:
         st.error(md_escape(error))
@@ -1091,7 +1091,7 @@ def _show_completion(hardening, runtime, store, decisions, rounds, latest, sessi
         st.markdown('**Complete hardening**')
         st.caption('A final read-only scan checks the server now. The session is completed when every control is '
                    'compliant or accepted as an exception; it is then closed (read-only), and a later check starts a '
-                   'new session. A control you will fix by hand counts once the final scan finds it compliant.')
+                   'new session. A control you chose to fix manually counts once the final scan finds it compliant.')
         error = st.session_state.pop(COMPLETE_ERROR, None)
         if error:
             st.error(md_escape(error))
@@ -1102,6 +1102,9 @@ def _show_completion(hardening, runtime, store, decisions, rounds, latest, sessi
         operator = st.text_input('Your name (recorded with the completion and each exception)',
                                  key='agentic_complete_operator', width=320,
                                  value=st.session_state.get('agentic_operator') or '')
+        ready = bool(operator.strip())  # As Approve and Reject: what records a name waits for one.
+        if not ready:
+            st.caption(NAME_HINT)
         if items:
             st.markdown(f'**{len(items)} control(s) still open** in the newest scan:')
             for item in items:
@@ -1117,7 +1120,8 @@ def _show_completion(hardening, runtime, store, decisions, rounds, latest, sessi
                     reason = st.text_input('Reason to accept it', key='agentic_complete_reason_' + item['control_id'],
                                            max_chars=MAX_REASON, label_visibility='collapsed',
                                            placeholder='Reason to accept it as an exception')
-                    if st.button('Accept as exception', key='agentic_complete_accept_' + item['control_id']):
+                    if st.button('Accept as exception', key='agentic_complete_accept_' + item['control_id'],
+                                 disabled=not ready, help=None if ready else DECIDE_HINT):
                         try:
                             decisions.record(target_id, item['control_id'], 'exception', operator=operator,
                                              reason=reason, round_id=latest['round_id'], session_id=session_id)
@@ -1130,7 +1134,7 @@ def _show_completion(hardening, runtime, store, decisions, rounds, latest, sessi
                        'checks it once more.')
         with st.container(horizontal=True):
             st.button('Run final scan and complete', type='primary', key='agentic_complete_run', icon=':material/flag:',
-                      disabled=not clock_ok, on_click=_click_complete,
+                      disabled=not (clock_ok and ready), help=None if ready else DECIDE_HINT, on_click=_click_complete,
                       args=(hardening, runtime, store, decisions, session_id, target_id, latest['framework_run_id'],
                             target.hostname))
             if st.button('Cancel', key='agentic_complete_cancel'):
@@ -1193,35 +1197,39 @@ def _manual_cell(decisions, target_id, control, decision, operator, round_id, se
         st.session_state.pop(MANUAL_ASK, None)
         st.rerun()
 
+    ready = bool(operator)  # As Approve and Reject: every button that records a choice waits for a name.
     if decision is not None:
-        if st.button('Change choice', key=f'agentic_manual_withdraw_{control}', width='stretch',
-                     help='Withdraws this choice (recorded too); the control waits for a new one.'):
+        if st.button('Change choice', key=f'agentic_manual_withdraw_{control}', width='stretch', disabled=not ready,
+                     help='Withdraws this choice (recorded too); the control waits for a new one.' if ready
+                     else DECIDE_HINT):
             record(WITHDRAWN)
         return
     if st.session_state.get(MANUAL_ASK) == control:
         reason = st.text_input('Why accept it?', key=f'agentic_manual_reason_{control}', max_chars=MAX_REASON,
                                placeholder='e.g. Firewall is managed by the network team')
         with st.container(horizontal=True):
-            if st.button('Accept', key=f'agentic_manual_accept_{control}', type='primary'):
+            if st.button('Accept', key=f'agentic_manual_accept_{control}', type='primary', disabled=not ready,
+                         help=None if ready else DECIDE_HINT):
                 record('exception', reason)
             if st.button('Cancel', key=f'agentic_manual_cancel_{control}'):
                 st.session_state.pop(MANUAL_ASK, None)
                 st.rerun()
         return
-    if st.button('I will fix it by hand', key=f'agentic_manual_fix_{control}', type='primary',
-                 width='stretch', help='Records your choice. The steps are under "How to fix it on the server".'):
+    if st.button("I'll fix it manually on the server", key=f'agentic_manual_fix_{control}', type='primary',
+                 width='stretch', disabled=not ready,
+                 help='Records your choice. The steps are under "How to fix it on the server".' if ready
+                 else DECIDE_HINT):
         record('manual_fix')
-    if st.button('Accept as exception', key=f'agentic_manual_exception_{control}',
-                 width='stretch', help='Records that it stays as it is, with your reason.'):
+    if st.button('Accept as exception', key=f'agentic_manual_exception_{control}', width='stretch',
+                 disabled=not ready,
+                 help='Records that it stays as it is, with your reason.' if ready else DECIDE_HINT):
         st.session_state[MANUAL_ASK] = control
         st.rerun()
-    if not operator:
-        st.caption('Your name is recorded with the choice.')
 
 
 def _show_not_automated(runtime, decisions, assessment_round, analysis, operator, *, editable, session_id):
-    """The controls this program assesses but never changes: why, how to fix each by hand, and the administrator's
-    choice for each (fix it by hand, or accept it as an exception)."""
+    """The controls this program assesses but never changes: why, how to fix each manually on the server, and the
+    administrator's choice for each (fix it manually, or accept it as an exception)."""
     target_id, results = _manual_results(runtime, assessment_round)
     if not results:
         return
@@ -1236,6 +1244,8 @@ def _show_not_automated(runtime, decisions, assessment_round, analysis, operator
     if pending and operator is None:  # The proposals above did not ask for the name.
         operator = st.text_input('Your name (recorded with each decision)', key='agentic_operator',
                                  persist_state='session', width=320)
+        if not operator.strip():
+            st.caption(NAME_HINT)
     operator = (operator or '').strip()
     for control, result in results.items():
         decision, finding = chosen.get(control), scores.get(control)
@@ -1253,7 +1263,7 @@ def _show_not_automated(runtime, decisions, assessment_round, analysis, operator
                              f"{myt(decision['decided_at'])}" + (f": {md_escape(decision['reason'])}"
                                                                   if decision['reason'] else ''))
             elif not compliant:
-                left.caption(':orange[Needs your choice: fix it by hand, or accept it as an exception.]')
+                left.caption(':orange[Needs your choice: fix it manually on the server, or accept it as an exception.]')
             with left.expander('How to fix it on the server'):
                 st.markdown('\n'.join(f'{n}. {md_escape(text)}' for n, text in enumerate(steps(control), 1)))
             with right:

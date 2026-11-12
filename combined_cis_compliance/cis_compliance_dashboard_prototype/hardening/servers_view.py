@@ -270,7 +270,7 @@ def _show_saved(registry, saved, connected, busy=False):
         if chosen.platform == 'ubuntu':
             with st.expander('Manual alternative: build the helper bundle yourself'):
                 st.caption('Normally not needed: connect and use **Set up this server**, which does this for you. '
-                           'By hand: build it on this laptop from the application folder, copy it to the server and run '
+                           'To do it yourself: build it on this laptop from the application folder, copy it to the server and run '
                            '`sudo bash setup.sh` there. Its scripts refuse any other machine, so the values below come '
                            'from this server itself, as found by pairing.')
                 st.code(f'..\\.venv-integration\\Scripts\\python.exe -B -m tools.build_ubuntu_bundle '

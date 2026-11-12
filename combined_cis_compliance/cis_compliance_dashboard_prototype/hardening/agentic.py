@@ -1011,7 +1011,7 @@ class OrchestratorTools(_RoleTools):
         no_action = [f['control_id'] for f in self.analysis['findings'] if not f['candidate_actions']]
         no_action += self.analysis['unscored_non_compliant']
         if no_action:
-            parts.append('Not fixed by this program (fix by hand or accept as an exception, in Fixes): '
+            parts.append('Not fixed by this program (fix manually on the server or accept as an exception, in Fixes): '
                          + ', '.join(no_action) + '.')
         if self.analysis['gaps']:
             parts.append(f"{len(self.analysis['gaps'])} Unknown/Error gap(s) not scored.")

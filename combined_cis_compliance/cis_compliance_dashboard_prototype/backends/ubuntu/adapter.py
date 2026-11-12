@@ -177,7 +177,7 @@ def _plan_rows(details, evidence, catalogue):
 
 def recovery_text(recovery):
     """How a change is undone, as the page shows it. The approved request keeps the registered record unchanged."""
-    words = {'VM console and recovery snapshot': 'by hand at the server console',
+    words = {'VM console and recovery snapshot': 'manually at the server console',
              'VirtualBox recovery snapshot': 'from your own backup of the server', 'VM console': 'the server console'}
     scope = ', '.join(words.get(item, item) for item in recovery['scope'])
     kind = {'snapshot_restore': 'cannot be undone automatically', 'manual_console': 'manual'}.get(recovery['kind'],
