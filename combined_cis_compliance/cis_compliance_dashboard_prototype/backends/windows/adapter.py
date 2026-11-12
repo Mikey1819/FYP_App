@@ -29,6 +29,17 @@ def original_services(database_path, target, *, scanner_factory=LiveScanner):
     return runtime, store, AgenticHardening(runtime, store, scanner_factory(runtime, target))
 
 
+# Scans that follow up a round's first scan and record which one (`remediated_run_id`), oldest first in the store.
+FOLLOW_UP_SCANS = {'verification_scan': 'the verification rescan after the fixes',
+                   'settle_scan': 'the rescan that settled an uncertain fix', 'final_scan': 'the final scan'}
+
+
+def follow_up_scan(rounds, run_id):
+    """The newest scan row that follows up the round whose first scan is `run_id`, or None if there is none yet."""
+    return next((r for r in reversed(rounds) if r['kind'] in FOLLOW_UP_SCANS and r['framework_run_id']
+                 and r.get('remediated_run_id') == run_id), None)
+
+
 class WindowsBackend(BoundBackend):
     def __init__(self, database_path, *, session, ledger, scanner_factory=LiveScanner, allow_mutation=False):
         super().__init__(session=session, ledger=ledger)
@@ -253,7 +264,10 @@ class WindowsBackend(BoundBackend):
             self.ledger.transition(operation_id, 'unresolved', detail='Assessment interrupted; inspect durable records before continuing.')
             raise
 
-    def snapshot(self, connection_session_id, workflow_session_id, round_ref=None):
+    def snapshot(self, connection_session_id, workflow_session_id, round_ref=None, *, newest_scan=False):
+        """The round's records. `newest_scan`: the summary and control rows come from the newest scan that follows
+        up this round (verification rescan, rescan to settle, final scan), so the Controls tab shows the server as it
+        is after the fixes; findings, proposals and results always stay those of the round's own first scan."""
         binding = self.check(connection_session_id, workflow_session_id, round_ref)
         if not binding:
             return WorkspaceSnapshot(self._target(), available_commands=('start_round',))
@@ -269,14 +283,16 @@ class WindowsBackend(BoundBackend):
             return WorkspaceSnapshot(self._target(), binding, reference, step_states=('failed',) + ('pending',) * 5)
         run_id = row['framework_run_id']
         record = self.runtime.record(run_id)
-        results = record.assessment.results
+        later = follow_up_scan(rounds, run_id) if newest_scan else None
+        scan_id = later['framework_run_id'] if later else run_id
+        results = (record if scan_id == run_id else self.runtime.record(scan_id)).assessment.results
         counts = summarise(results)
-        summary = AssessmentSummary.from_counts(self._ref(run_id), counts.selected, counts.compliant,
+        summary = AssessmentSummary.from_counts(self._ref(scan_id), counts.selected, counts.compliant,
             counts.non_compliant, counts.unknown, counts.errors, results[0].control.catalogue_version,
             results[0].evidence.collected_at.isoformat())
         controls = tuple(ControlRow(r.control.control_id, r.control.title, r.control.area, r.control.profile,
             r.control.source_reference, ComplianceStatus(r.status.value), 'applicable', repr(r.evidence.value),
-            rule_text(r.control.rule), evidence_references=(self._ref(run_id),),
+            rule_text(r.control.rule), evidence_references=(self._ref(scan_id),),
             fix=PROGRAM_FIX if r.control.control_id in AUTOMATED else MANUAL_FIX) for r in results)
         ranked = analyse(record, self.engine.history.previous_records(run_id))
         findings = tuple(FindingRow(f.control_id, **f.factors, score=f.score, level=f.level,

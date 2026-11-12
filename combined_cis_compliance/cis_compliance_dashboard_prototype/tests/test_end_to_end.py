@@ -116,6 +116,13 @@ class EndToEndTests(unittest.TestCase):
         self.assertEqual(self.server.vm.writes, ['1.2.2'])
         verdicts = [row for frame in app.dataframe for row in frame.value.to_dict('records') if 'Verdict' in row]
         self.assertEqual([v['Verdict'] for v in verdicts], ['Verified compliant'])
+        # The Controls tab (through the backend) shows the verification rescan: 1.2.2 is compliant now, not only
+        # once the hardening session is completed.
+        controls = {r['Control']: r for frame in app.dataframe for r in frame.value.to_dict('records')
+                    if 'Applicability' in r}
+        self.assertEqual(controls['1.2.2']['Status'], 'Compliant')
+        self.assertTrue(any(c.value.startswith('Newest scan of this round: the verification rescan after the fixes')
+                            for c in app.caption))
 
         # Overview and History read the same records.
         overview = self.go(app, 'overview')

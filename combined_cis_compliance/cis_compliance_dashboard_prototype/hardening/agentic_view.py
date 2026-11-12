@@ -24,7 +24,7 @@ from .winrm_channel import MAX_CLOCK_OFFSET_SECONDS, ChannelError, LiveScanner
 from system.bootstrap import active_backend, CONNECTION_KEY, SERVICE_KEY, WORKFLOW_KEY
 from system.contracts import AssessmentMode, RecordRef
 from system.ui.components import render_controls, render_snapshot_tabs
-from backends.windows.adapter import original_services
+from backends.windows.adapter import FOLLOW_UP_SCANS, follow_up_scan, original_services
 
 # Plain session keys (not widget keys), so they survive switching to another page and back.
 SESSION = 'agentic_session'
@@ -49,6 +49,16 @@ CLOCK_RECHECK = timedelta(minutes=2)   # The box checks again after this; Start 
 # Enter or when the box loses focus, so the hint under the name box says to press Enter.
 NAME_HINT = 'Press Enter after typing your name.'
 DECIDE_HINT = 'Enter your name above first'
+
+
+def controls_scan_line(newest, at):
+    """The line above the Controls tab on both pages: which scan it shows. `newest` names the follow-up scan, or None
+    while the round has only its first scan; `at` is that scan's time."""
+    when = myt(at, '%H:%M:%S')
+    if newest:
+        return (f'Newest scan of this round: {newest}, {when}. The first scan, before any fix, is ranked under '
+                'Risk ranking.')
+    return f"This round's first scan, {when}. Once fixes are executed, this tab shows the verification rescan."
 
 
 def card_title(rank, control_id, title):
@@ -1570,11 +1580,15 @@ def render_agentic(database_path: Path):
             _show_risk(analysis, viewing['round_id'], viewing.get('analysis_outcome'))
         with controls:
             if viewing['framework_run_id']:
+                # The newest scan of this round, so the tab shows the server after its fixes, not only before them.
+                later = follow_up_scan(rounds, viewing['framework_run_id'])
+                st.caption(controls_scan_line(FOLLOW_UP_SCANS[later['kind']] if later else None,
+                                              (later or viewing)['created_at']))
                 if backend:
                     render_controls(backend.snapshot(connection, st.session_state[WORKFLOW_KEY],
-                        RecordRef('windows', backend.session.target_id, viewing['round_id'])))
+                        RecordRef('windows', backend.session.target_id, viewing['round_id']), newest_scan=True))
                 else:
-                    _show_assessment(runtime, viewing['framework_run_id'])
+                    _show_assessment(runtime, later['framework_run_id'] if later else viewing['framework_run_id'])
             else:
                 st.info('The scan did not complete in this round.')
         with results:

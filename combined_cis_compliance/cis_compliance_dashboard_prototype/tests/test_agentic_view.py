@@ -192,6 +192,12 @@ class AgenticPageTests(unittest.TestCase):
         verdicts = [row for frame in app.dataframe for row in frame.value.to_dict('records') if 'Verdict' in row]
         self.assertEqual([v['Verdict'] for v in verdicts], ['Verified compliant'])
         self.assertIn('Run next round', [b.label for b in app.button])
+        # The Controls tab shows the server after the fix (the verification rescan), not only the round's first scan.
+        controls = {r['Control']: r for frame in app.dataframe for r in frame.value.to_dict('records')
+                    if 'Observed' in r and 'Status' in r}
+        self.assertEqual(controls['1.2.2']['Status'], 'Compliant')
+        self.assertTrue(any(c.value.startswith('Newest scan of this round: the verification rescan after the fixes')
+                            for c in app.caption), [c.value for c in app.caption])
 
         overview = AppTest.from_function(overview_page, default_timeout=60).run()
         self.assertEqual(len(overview.exception), 0, [e.value for e in overview.exception])
