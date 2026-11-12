@@ -17,6 +17,7 @@ from streamlit.testing.v1 import AppTest
 
 from hardening import pairing, servers_view, winrm_channel
 from hardening.connection_view import LIVE_TARGET
+from hardening.overview_view import NEW_SERVER
 from hardening.pairing import PairingError
 from hardening.pairing_client import FoundServer, find_server, local_addresses
 from hardening.server_control import HELPER, close_access, disconnect_laptop, paired_laptops
@@ -349,6 +350,8 @@ class PairingPageTests(unittest.TestCase):
         self.assertEqual(app.session_state[LIVE_TARGET].host, '192.168.1.50')
         self.assertEqual(self.connected(app).identity.machine_identity, MACHINE_UUID)
         self.assertTrue(any('Paired and connected to FIXTURE' in s.value for s in app.success))
+        self.assertEqual(app.session_state[NEW_SERVER], dict(key='windows:' + MACHINE_UUID, hostname='FIXTURE-SERVER',
+                                                             system='Windows Server 2022'))  # New to this laptop.
         saved = self.registry().get('windows', MACHINE_UUID)
         self.assertEqual((saved.pairing_id, saved.laptop_address, saved.host), ('a' * 32, '192.168.1.23', '192.168.1.50'))
         # The identity probe at login, the identity check before the helper runs, then the helper's pairing list.
@@ -496,10 +499,12 @@ class PairingPageTests(unittest.TestCase):
         self.found = FoundServer('192.168.1.77', 'OTHER', OTHER_UUID, 5985, 'c' * 32, '192.168.1.23', *WS2022)
         app = self.pair(app, field='servers_repair_code', button='servers_repair')
         self.assertTrue(any('A different machine answered' in e.value for e in app.error))
+        app.session_state[NEW_SERVER] = None  # As after its first scan: re-pairing a known server is not "new".
         self.found = FoundServer('192.168.1.77', 'FIXTURE-SERVER', MACHINE_UUID, 5985, 'c' * 32, '192.168.0.105', *WS2022)
         self.session.pairings = [laptop('c' * 32, '192.168.0.105')]
         app = self.pair(app, field='servers_repair_code', button='servers_repair')
         self.assertTrue(any('Re-paired FIXTURE' in s.value.replace('\\', '') for s in app.success))  # Shown escaped.
+        self.assertIsNone(app.session_state[NEW_SERVER])
         saved = self.registry().get('windows', MACHINE_UUID)
         self.assertEqual((saved.host, saved.pairing_id, saved.laptop_address), ('192.168.1.77', 'c' * 32, '192.168.0.105'))
         self.assertEqual(len(self.registry().all()), 1)

@@ -135,7 +135,7 @@
     },
     "cis_compliance_dashboard_prototype/hardening/servers_view.py": {
       "category": "protected",
-      "sha256": "13c399408e3e42fa326f868c8094cb1e2ff0800bb20ffe75bc988590919c88ce"
+      "sha256": "d3494061d516d0b9ee124a7a37108fe879193cf239e213ff9f77b3f588801ae2"
     },
     "cis_compliance_dashboard_prototype/hardening/system_detect.py": {
       "category": "protected",
@@ -227,7 +227,7 @@
     },
     "cis_compliance_dashboard_prototype/tests/test_pairing_flow.py": {
       "category": "protected",
-      "sha256": "329371f6a3419e073ce8ce1eab730a3f730f1911e337e2ebfdc2d5a4b241bcda"
+      "sha256": "77e037bea819a45d24de040e219dfb63dc2883f618a32c91d61d385b8b2738d6"
     },
     "cis_compliance_dashboard_prototype/tests/test_round_report.py": {
       "sha256": "17cb24d6e0dcec411892b7ec5431820e85145ac855ce55d0de73f1f12e2c272f",

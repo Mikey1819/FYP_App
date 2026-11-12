@@ -133,6 +133,27 @@ def activity_row(r, store, latest_run_id=None):
     return {'Time': myt(r['created_at']), 'Activity': activity, 'Result': result, 'Status': status}
 
 
+NEW_SERVER = 'overview_new_server'  # Set by pairing when the server is new to this laptop; shown until its first scan.
+
+
+def _new_server_note(platform, machine_identity):
+    """The first-pairing message (both systems), in place of "No assessments yet". True if it was shown."""
+    new = st.session_state.get(NEW_SERVER)
+    if not new or new['key'].casefold() != (platform + ':' + machine_identity).casefold():
+        return False
+    st.success(f"**New server paired: {md_escape(new['hostname'])}** ({md_escape(new['system'])}). This is the first "
+               'time it has been paired with this program, so nothing has been scanned yet. Open **Agentic hardening** '
+               'and start the first round to see its compliance.', icon=':material/new_releases:')
+    return True
+
+
+def _scanned(platform, machine_identity):
+    """The server has a scan now: the first-pairing message has done its job."""
+    new = st.session_state.get(NEW_SERVER)
+    if new and new['key'].casefold() == (platform + ':' + machine_identity).casefold():
+        st.session_state.pop(NEW_SERVER, None)
+
+
 def render_overview(database_path: Path, servers_path: Path | None = None):
     st.title('Overview')
     completed = st.session_state.pop(COMPLETED, None)
@@ -158,8 +179,12 @@ def render_overview(database_path: Path, servers_path: Path | None = None):
             targets = {t: name for t, name in targets.items() if t == 'windows:' + choice.machine_identity}
         elif backend:
             targets = {t: name for t, name in targets.items() if t == backend.session.target_id}
+        here = (('windows', choice.machine_identity) if choice is not None else
+                ('windows', backend.session.identity.machine_identity) if backend else None)
         if not targets:
-            st.info('No assessments yet for this server. Start a round in **Agentic hardening** while connected to it.')
+            if not (here and _new_server_note(*here)):
+                st.info('No assessments yet for this server. Start a round in **Agentic hardening** while connected '
+                        'to it.')
             return
         target = (next(iter(targets)) if choice is not None or len(targets) == 1 else
                   st.selectbox('Server', list(targets), format_func=lambda t: f'{targets[t]} ({t.removeprefix("windows:")})',
@@ -169,8 +194,11 @@ def render_overview(database_path: Path, servers_path: Path | None = None):
             allowed = {r.run_reference.record_id for r in shared_rows}
             runs = [r for r in runs if r['run_id'] in allowed]
             if not runs:
-                st.info('No assessments yet for this verified target and registration epoch.')
+                if not (here and _new_server_note(*here)):
+                    st.info('No assessments yet for this verified target and registration epoch.')
                 return
+        if here:
+            _scanned(*here)
         latest = runs[-1]
         record = imports.get(runtime.get(latest['run_id']).evidence_sha256)
         results = record.assessment.results
@@ -251,9 +279,12 @@ def _ubuntu_area_table(areas):
 def _render_ubuntu(backend, connection, *, connected=True):
     """The Windows Overview's sections for an Ubuntu 22.04 server, from the Ubuntu backend's read model."""
     data = backend.overview(connection) if hasattr(backend, 'overview') else None
+    here = ('ubuntu', getattr(backend.session.identity, 'machine_identity', '') or '')
     if data is None:
-        st.info('No assessments yet. Open **Agentic hardening** and start a round.')
+        if not (here[1] and _new_server_note(*here)):
+            st.info('No assessments yet. Open **Agentic hardening** and start a round.')
         return
+    _scanned(*here)
     s, previous, ranked = data['summary'], data['previous'], data['findings']
     st.caption(f"{md_escape(backend.session.identity.hostname)} · latest assessment {myt(s.collected_at)} · "
                f"{s.selected} controls · CIS Ubuntu Linux 22.04 LTS v2.0.0, Level 1 Server"

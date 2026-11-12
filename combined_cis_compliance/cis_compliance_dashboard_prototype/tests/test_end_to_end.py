@@ -96,6 +96,10 @@ class EndToEndTests(unittest.TestCase):
         self.assertEqual(app.session_state[SERVICE_KEY].ledger.path, self.paths.coordination)
         self.assertEqual(app.title[0].value, 'Overview')  # The workspace opens once connected.
         self.assertIn('Workspace: Windows Server 2022', text(app))
+        # First pairing of this server on this laptop: Overview says so, instead of a plain "No assessments yet".
+        self.assertTrue(any(s.value.replace('\\', '').startswith('**New server paired: FIXTURE-SERVER** (Windows Server 2022)')
+                            for s in app.success), [s.value for s in app.success])
+        self.assertFalse(any('No assessments yet' in i.value for i in app.info))
 
         # Agentic round through the Windows backend: scan, analyse, plan; nothing is written yet.
         app = self.go(app, 'agentic')
@@ -128,6 +132,7 @@ class EndToEndTests(unittest.TestCase):
         overview = self.go(app, 'overview')
         metrics = {m.label: m.value for m in overview.metric}
         self.assertEqual(metrics['Fixes awaiting you'], '0')
+        self.assertFalse(any('New server paired' in s.value for s in overview.success))  # Scanned now: no longer new.
         history = self.go(app, 'history')
         self.assertEqual(history.title[0].value, 'History and configuration drift')
 

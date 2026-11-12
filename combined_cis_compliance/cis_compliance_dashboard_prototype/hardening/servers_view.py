@@ -26,6 +26,7 @@ import streamlit as st
 
 from . import background
 from .connection_view import LIVE_TARGET, LOCKED, connected_session, disconnect, running_job
+from .overview_view import NEW_SERVER
 from .pairing import PairingError, normalize_code
 from .pairing_client import FoundServer, find_server
 from .reconnect import remember
@@ -395,6 +396,9 @@ def _finish_pairing(registry, pending, username, password, key_path, sudo, note)
             if report is not None:
                 st.session_state[REPORT] = dict(key=server.key, report=report)
             st.session_state[SELECT_NEXT] = server.key
+            if is_new:  # First time on this laptop: Overview says so until the first scan (both systems).
+                st.session_state[NEW_SERVER] = dict(key=server.key, hostname=server.hostname,
+                                                    system=server.system_label)
             st.session_state[NOTICE] = (f'Paired and connected to {server.hostname}.' if is_new else
                                         f'Re-paired {server.hostname}: its address is now {server.host}:{server.port}. '
                                         'Connected.')
