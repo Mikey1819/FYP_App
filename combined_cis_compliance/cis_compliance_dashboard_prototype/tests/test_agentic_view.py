@@ -368,6 +368,9 @@ class AgenticPageTests(unittest.TestCase):
         def deciding():
             return [b for b in app.button if b.key.startswith(('agentic_approve_', 'agentic_reject_'))]
         self.assertEqual(len(deciding()), 6)  # Two fixes' Approve and Reject, plus Approve all and Reject all.
+        titles = [m.value for m in app.markdown if m.value.startswith('**#')]  # As on Ubuntu: "#rank · CIS id · title".
+        self.assertEqual([t.split(' · ')[0] for t in titles], ['**#1', '**#2'])
+        self.assertTrue(all(t.split(' · ')[1].startswith('CIS ') for t in titles), titles)
         self.assertTrue(all(b.disabled for b in deciding()))
         self.assertIn('Press Enter after typing your name.', [c.value for c in app.caption])
         app.text_input(key='agentic_operator').input('admin01').run()

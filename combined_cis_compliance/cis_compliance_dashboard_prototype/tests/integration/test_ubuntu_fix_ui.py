@@ -102,7 +102,7 @@ class FixUiTests(StoreFixture):
             self.assertTrue([b for b in app.button if b.key == 'agentic_disconnect'])  # still connected
             self.assertEqual([b for b in app.button if b.key == 'ubuntu_verify_applied'], [])  # nothing applied yet
             # The Windows layout: one bordered row per proposed fix, numbered, with its decision on the right.
-            self.assertIn('1. 1.5.1 · TEST-ONLY fixture value', self.text(app))
+            self.assertIn('#1 · CIS 1.5.1 · TEST-ONLY fixture value', self.text(app))  # As on Windows: rank, then ID.
             self.assertIn('Why the Orchestrator chose it', self.text(app))
             self.assertTrue(approve[0].disabled)  # no operator name yet
             self.assertTrue(app.button(key='ubuntu_approve_all').disabled)

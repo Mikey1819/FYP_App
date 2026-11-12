@@ -49,6 +49,15 @@ CLOCK_RECHECK = timedelta(minutes=2)   # The box checks again after this; Start 
 # Enter or when the box loses focus, so the hint under the name box says to press Enter.
 NAME_HINT = 'Press Enter after typing your name.'
 DECIDE_HINT = 'Enter your name above first'
+
+
+def card_title(rank, control_id, title):
+    """A fix card's title on both pages: "#1 · CIS 1.1.4 · Title". The risk rank and the benchmark ID never run
+    together ("1. 1.1.4" read as one number); no rank (an unscored control) leaves the "#" part out."""
+    return ((f'#{rank} · ' if rank is not None else '') + 'CIS ' + md_escape(str(control_id)) + ' · '
+            + md_escape(str(title)))
+
+
 MANUAL_ASK = 'agentic_manual_exception'  # The not-automated control whose exception reason is being typed.
 MANUAL_ERROR = 'agentic_manual_error'
 SETTLE_LABEL = 'Rescanning the server (read-only) to settle an uncertain fix'
@@ -990,7 +999,7 @@ def _show_fixes(store, assessment_round, state, analysis, *, editable):
         with st.container(border=True):
             left, right = st.columns([3, 1.2], vertical_alignment='center')
             level = levels.get(p['control_id'])
-            left.markdown(f"**{p['rank']}. {p['control_id']} · {action.title}** "
+            left.markdown(f"**{card_title(p['rank'], p['control_id'], action.title)}** "
                           + (level_badge(level) + f" risk {p['risk_score']}" if level else ''))
             left.caption(f"Now {md_escape(shown(p['expected_before'], 'Non-Compliant'))} → {md_escape(repr(p['value']))} · "
                          f"{p['action_id']} · {action.impact}")
@@ -1788,12 +1797,12 @@ def _ubuntu_show_fixes(backend, connection, snapshot, capabilities, editable=Tru
             st.rerun()
         st.caption('Each approval is bound to that exact request on this server and expires after one hour.')
     findings = {f.control_id: f for f in snapshot.findings}
-    for number, card in enumerate(fixes, 1):
+    for card in fixes:
         p = [q for q in card['proposals'] if q.kind == 'control_remediation'][-1]  # The latest plan for the control.
         finding = findings.get(card['control_id'])
         with st.container(border=True):
             left, right = st.columns([3, 1.2], vertical_alignment='center')
-            left.markdown(f"**{number}. {md_escape(card['control_id'])} · {md_escape(p.title)}** "
+            left.markdown(f"**{card_title(finding.rank if finding else None, card['control_id'], p.title)}** "
                           + (level_badge(finding.level) + f' risk {finding.score}' if finding else ''))
             left.caption('Now: ' + md_escape(_ubuntu_now_line(p)) + ' · ' + md_escape(p.recovery))
             left.caption('Why the Orchestrator chose it: ' + md_escape(card['reason'])
