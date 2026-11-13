@@ -43,6 +43,8 @@ The first time, it prepares itself. This takes a few minutes and needs an intern
 
 The program finds a server by a one-time **pairing code**, so you never type an address.
 
+**Before you start (Windows and Ubuntu):** the laptop and the server must be on the **same network**, for example the same Wi-Fi or office network. If the server is not found, see the network tips under [On a real server](#on-a-real-server).
+
 **Windows Server**
 
 1. In the program, open **Servers** and click **Download helper (.zip)**. Copy the files to the server.
