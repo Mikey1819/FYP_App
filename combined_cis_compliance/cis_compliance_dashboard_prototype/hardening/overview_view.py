@@ -228,6 +228,8 @@ def render_overview(database_path: Path, servers_path: Path | None = None):
                 return
         if here:
             _scanned(*here)
+        if backend:  # connected: the register of this server and registration, as on Ubuntu (14 November 2026)
+            _register(backend, st.session_state[CONNECTION_KEY])
         latest = runs[-1]
         record = imports.get(runtime.get(latest['run_id']).evidence_sha256)
         results = record.assessment.results
@@ -305,12 +307,12 @@ def _ubuntu_area_table(areas):
     return rows
 
 
-def _ubuntu_register(backend, connection):
-    """The live validation register (Ubuntu): which of the 30 controls were proven on this server. Shown on Overview
-    once the server has an assessment; read-only, from the stored records."""
-    from .agentic_view import _ubuntu_live_register
+def _register(backend, connection):
+    """The live validation register (both systems; Windows since 14 November 2026): which controls were proven on
+    this server. Shown on Overview once the server has an assessment; read-only, from the stored records."""
+    from .agentic_view import live_register
     if hasattr(backend, 'live_validation'):
-        _ubuntu_live_register(backend, connection)
+        live_register(backend, connection)
 
 
 def _render_ubuntu(backend, connection, *, connected=True):
@@ -322,7 +324,7 @@ def _render_ubuntu(backend, connection, *, connected=True):
         return
     _scanned(*here)
     s, previous, ranked = data['summary'], data['previous'], data['findings']
-    _ubuntu_register(backend, connection)  # moved here from Agentic hardening (2026-11-13); needs an assessment
+    _register(backend, connection)  # moved here from Agentic hardening (2026-11-13); needs an assessment
     st.caption(f"{md_escape(backend.session.identity.hostname)} · latest assessment {myt(s.collected_at)} · "
                f"{s.selected} controls · CIS Ubuntu Linux 22.04 LTS v2.0.0, Level 1 Server"
                + ('' if connected else ' · read-only, not connected'))

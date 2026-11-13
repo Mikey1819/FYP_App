@@ -8,7 +8,7 @@ scan's changes and the agents' recorded runs. Optional AI explanations are unver
 from datetime import datetime, timezone
 from html import escape
 
-from hardening.round_report import _PAGE, _table
+from hardening.round_report import _PAGE, _table, register_section
 from hardening.ui import FULL, myt
 
 from .components import plan_cards, plan_summary
@@ -37,19 +37,8 @@ def _agents(events):
 
 
 def _register(rows):
-    """Section 7: the live-validation register of this server (tools/live_validation_register.register rows)."""
-    from tools.live_validation_register import summary
-    table = _table(('Control', 'Status', 'Proven or last attempt (MYT, UTC+8)', 'Approver', 'Request', 'Round'),
-                   [(r['control_id'], r['status'],
-                     myt(r['evidence']['time'], FULL) if r['evidence'] else '—',
-                     (r['evidence'] or {}).get('approver') or '—',
-                     (r['evidence'] or {}).get('request_id') or '—',
-                     (r['evidence'] or {}).get('round_id') or '—') for r in rows])
-    return (f'<h2>7. Live validation register</h2><p>{escape(summary(rows))} on this server.</p><p class="muted">'
-            '"Validated live": an administrator-approved fix was applied on this server and the automatic verification '
-            'scan read the control Compliant. "Fixture-tested only": no live outcome is recorded, whatever the fixture '
-            'tests show. Derived from the stored approvals, receipts and verification scans; nothing is typed in.</p>'
-            + table)
+    """Section 7: the live-validation register of this server, the same section as in the Windows report."""
+    return register_section(rows, 7)
 
 
 def _completion(record):

@@ -103,10 +103,26 @@ def phase_line(hardening, phase_round, name):
     return f'{name} took {duration_text(total)}' + (f' ({" · ".join(parts)})' if parts else '') + f', {limit}.'
 
 
-def round_report(hardening, rounds, assessment_round, *, now=None, manual=None, completion=None):
+def register_section(rows, number):
+    """The live-validation register of this server (tools/live_validation_register.register rows), the same section
+    in both systems' round reports (Windows since 14 November 2026)."""
+    from tools.live_validation_register import NOTE, summary
+    table = _table(('Control', 'Status', 'Proven or last attempt (MYT, UTC+8)', 'Approver', 'Request', 'Round'),
+                   [(r['control_id'], r['status'],
+                     myt(r['evidence']['time'], FULL) if r['evidence'] else '—',
+                     (r['evidence'] or {}).get('approver') or '—',
+                     (r['evidence'] or {}).get('request_id') or '—',
+                     (r['evidence'] or {}).get('round_id') or '—') for r in rows])
+    return (f'<h2>{number}. Live validation register</h2><p>{escape(summary(rows))} on this server.</p>'
+            f'<p class="muted">{escape(NOTE)} Derived from the stored approvals, outcomes and verification scans; '
+            'nothing is typed in.</p>' + table)
+
+
+def round_report(hardening, rounds, assessment_round, *, now=None, manual=None, completion=None, register=None):
     """HTML for one assessment round and, once run, its remediation and verification. `manual`: the administrator's
     latest choice per control this program does not fix (manual_controls.py). `completion`: the session's completion
-    record, which adds the completion section (the completion report)."""
+    record, which adds the completion section (the completion report). `register`: this server's live-validation
+    register rows, printed as the last section, as in the Ubuntu report."""
     now = now or datetime.now(timezone.utc)
     run_id = assessment_round['framework_run_id']
     outcome = assessment_round['outcome']
@@ -221,6 +237,8 @@ def round_report(hardening, rounds, assessment_round, *, now=None, manual=None, 
             parts.append('<h3>Accepted exceptions</h3>' + _table(
                 ('Control', 'Title', 'Status in the final scan', 'Reason', 'Accepted by'),
                 [(e['control_id'], e['title'], e['status'], e['reason'], e['operator']) for e in exceptions]))
+    if register is not None:
+        parts.append(register_section(register, 8 if completion else 7))
     return _PAGE.format(title=title, body='\n'.join(parts), benchmark=escape(BENCHMARK))
 
 

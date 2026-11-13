@@ -41,6 +41,16 @@ def follow_up_scan(rounds, run_id):
                  and r.get('remediated_run_id') == run_id), None)
 
 
+def _register_outcome(verdict):
+    """A stored Windows verdict as the register's (outcome, verification), in the Ubuntu receipts' words: applied and
+    read Compliant or Non-Compliant by the fresh scan; refused or failed (nothing applied); or outcome unknown."""
+    if verdict == 'Verified compliant':
+        return 'applied', 'Compliant'
+    if verdict == 'Verification failed':
+        return 'applied', 'Non-Compliant'
+    return {'refused': 'refused', 'failed': 'refused'}.get(verdict_kind(verdict), 'unresolved'), None
+
+
 class WindowsBackend(BoundBackend):
     def __init__(self, database_path, *, session, ledger, scanner_factory=LiveScanner, allow_mutation=False):
         super().__init__(session=session, ledger=ledger)
@@ -389,6 +399,42 @@ class WindowsBackend(BoundBackend):
             items.append(HistoryRow(summary.reference, self._target(r['evidence']), r['created_at'], summary.catalogue_id,
                                     summary, r['evidence'], 'assessment', None))
         return tuple(items)
+
+    def live_validation(self, connection_session_id):
+        """The live-validation register of this server, as on Ubuntu (administrator, 14 November 2026): one row per
+        catalogue control, from the approved fixes, their verdicts and the verification scans of every session of this
+        registration (read-only). The rows are tools.live_validation_register.register rows; the four controls with
+        no library action read "Manual on the server"."""
+        from hardening.server2022_catalogue import CATALOGUE
+        from tools.live_validation_register import register
+        self.check(connection_session_id)
+        decisions, receipts, verifications, seen = [], [], {}, set()
+        s = self.session
+        for binding in self.ledger.bindings_for_target('windows', s.target_id, s.registration_epoch):
+            rounds = self._rounds(binding)
+            checked = {v['proposal_id']: r['created_at'] for r in rounds if r['kind'] == 'verification_scan'
+                       for v in r.get('verdicts') or ()}
+            for row in rounds:
+                if row['kind'] != 'assessment' or not row['framework_run_id']:
+                    continue
+                for item in self.store.for_run(row['framework_run_id']):
+                    proposal, approval = item['proposal'], item.get('decision_record') or {}
+                    request = proposal['request_id']
+                    if item['decision'] != 'approved' or request in seen:
+                        continue
+                    seen.add(request)
+                    decisions.append({'request_id': request, 'control_id': proposal['control_id'],
+                                      'action_id': proposal['action_id'], 'approver': approval.get('approved_by'),
+                                      'round_id': row['round_id'], 'workflow': binding.workflow_session_id})
+                    if item['verdict'] is None:
+                        continue  # approved, never executed
+                    outcome, verification = _register_outcome(item['verdict'])
+                    receipts.append({'request_id': request, 'outcome': outcome, 'code': item['verdict'][:120],
+                                     'completed_at': checked.get(request) or approval.get('approved_at') or ''})
+                    if verification:
+                        verifications[request] = verification
+        return register([c.control_id for c in CATALOGUE], decisions=decisions, receipts=receipts,
+                        verifications=verifications, automated=AUTOMATED)
 
     def _epoch_runs(self):
         bindings = self.ledger.bindings_for_target('windows', self.session.target_id, self.session.registration_epoch)

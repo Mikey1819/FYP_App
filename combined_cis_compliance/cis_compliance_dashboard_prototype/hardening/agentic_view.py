@@ -1254,7 +1254,8 @@ def _action_bar(hardening, session_id, latest, state, rounds, target, manual_ope
             st.markdown(f"{len(state['undecided'])} proposed fix(es) need your decision in **Fixes**.")
         if manual_open:
             st.markdown(f"{len(manual_open)} control(s) this program does not fix need your choice in **Fixes**.")
-        st.download_button('Round report', round_report(hardening, rounds, latest, manual=manual),
+        st.download_button('Round report', round_report(hardening, rounds, latest, manual=manual,
+                                                        register=_register_rows()),
                            icon=':material/download:',
                            file_name='cis-round-' + target.hostname + '-' + myt(latest['created_at'], '%Y-%m-%dT%H%M')
                            + '.html', mime='text/html', key='agentic_report',
@@ -1519,7 +1520,7 @@ def _show_completed(hardening, rounds, latest, target, completion, choices):
                + '. This session is closed (read-only); a new check starts a new session.', icon=':material/verified:')
     with st.container(horizontal=True, vertical_alignment='center'):
         st.download_button('Completion report', round_report(hardening, rounds, latest, manual=choices,
-                                                             completion=completion),
+                                                             completion=completion, register=_register_rows()),
                            icon=':material/download:', mime='text/html', key='agentic_completion_report',
                            file_name='cis-completion-' + target.hostname + '-'
                            + myt(completion['completed_at'], '%Y-%m-%dT%H%M') + '.html',
@@ -2537,17 +2538,30 @@ def _ubuntu_phase_lines(events, remediation_seconds=None):
     return lines
 
 
-def _ubuntu_live_register(backend, connection):
-    """Module 3: which of the 30 controls were proven on this server, read-only, from its stored approvals, receipts
-    and verification scans, with each row's evidence and a way back to the round where it was proven or tried."""
+def _register_note():
+    from tools.live_validation_register import NOTE
+    return NOTE + ' From the stored records only; nothing here can be edited.'
+
+
+def _register_rows():
+    """The connected Windows server's live-validation register for its round reports, or None without a backend."""
+    backend = active_backend(st.session_state)
+    return backend.live_validation(st.session_state[CONNECTION_KEY]) if backend else None
+
+
+def live_register(backend, connection):
+    """Module 3, on both systems' Overview (Windows: administrator, 14 November 2026): which controls were proven on
+    this server, read-only, from its stored approvals, outcomes and verification scans, with each row's evidence and
+    a way back to the round where it was proven or tried. The same table and words on Windows and Ubuntu."""
     from tools.live_validation_register import summary
     rows = backend.live_validation(connection)
+    ubuntu = backend.session.identity.platform == 'ubuntu'
+    key = 'ubuntu_register' if ubuntu else 'agentic_register'
     with st.expander('Live validation register: ' + summary(rows) + ' on '
                      + md_escape(backend.session.identity.hostname), icon=':material/fact_check:'):
-        st.caption('"Validated live": an approved fix was applied on this server and the automatic verification scan '
-                   'read the control Compliant. "Fixture-tested only": no live outcome is recorded, whatever the '
-                   'fixture tests show. From the stored records only; nothing here can be edited.')
-        titles = {c: t for c, t in ((cid, ctl.title) for cid, ctl in _ubuntu_titles().items())}
+        st.caption(_register_note())
+        titles = ({cid: ctl.title for cid, ctl in _ubuntu_titles().items()} if ubuntu
+                  else {c.control_id: c.title for c in _windows_titles()})
         st.dataframe([{'Control': r['control_id'], 'Title': titles.get(r['control_id'], ''), 'Status': r['status'],
                        'Proven (MYT)': myt(r['evidence']['time']) if r['evidence'] else '—',
                        'Approver': (r['evidence'] or {}).get('approver') or '—',
@@ -2557,23 +2571,42 @@ def _ubuntu_live_register(backend, connection):
         if not linked:
             return
         with st.container(horizontal=True, vertical_alignment='bottom'):
-            chosen = st.selectbox('Round where a control was proven or tried', list(linked), key='ubuntu_register_round',
+            chosen = st.selectbox('Round where a control was proven or tried', list(linked), key=key + '_round',
                                   width=320)
 
-            def open_round(evidence=None):
-                evidence = linked[st.session_state['ubuntu_register_round']]
-                workflow = evidence['workflow']
-                rounds = backend.assessment_rounds(connection, workflow)
-                st.session_state[WORKFLOW_KEY] = workflow
+            def open_round():
+                evidence = linked[st.session_state[key + '_round']]
+                (_ubuntu_open_round if ubuntu else _windows_open_round)(backend, connection, evidence)
                 st.session_state[GO_AGENTIC] = True  # shown on Agentic hardening (the register is on Overview)
-                st.session_state.pop(UBUNTU_CONFIRM, None)
-                st.session_state.pop(UBUNTU_ROUND_VIEW, None)
-                for n, (ref, at) in enumerate(rounds, 1):
-                    if ref.record_id == evidence['round_id'] and len(rounds) > 1:
-                        st.session_state[UBUNTU_ROUND_VIEW] = (f'Round {n} · {myt(at)}'
-                                                               + (' (latest)' if n == len(rounds) else ''))
-            st.button('Open the round', key='ubuntu_register_open', on_click=open_round,
+            st.button('Open the round', key=key + '_open', on_click=open_round,
                       help='Shows the session and round in which ' + md_escape(chosen) + ' was proven or last tried.')
+
+
+def _ubuntu_open_round(backend, connection, evidence):
+    workflow = evidence['workflow']
+    rounds = backend.assessment_rounds(connection, workflow)
+    st.session_state[WORKFLOW_KEY] = workflow
+    st.session_state.pop(UBUNTU_CONFIRM, None)
+    st.session_state.pop(UBUNTU_ROUND_VIEW, None)
+    for n, (ref, at) in enumerate(rounds, 1):
+        if ref.record_id == evidence['round_id'] and len(rounds) > 1:
+            st.session_state[UBUNTU_ROUND_VIEW] = f'Round {n} · {myt(at)}' + (' (latest)' if n == len(rounds) else '')
+
+
+def _windows_open_round(backend, connection, evidence):
+    """As Resume earlier session, then that round chosen in the Round list (it is one of this registration's)."""
+    s = backend.session
+    binding = backend.ledger.resume(evidence['workflow'], 'windows', s.target_id, s.registration_epoch)
+    backend.check(connection, binding.workflow_session_id)
+    st.session_state[WORKFLOW_KEY] = binding.workflow_session_id
+    st.session_state[SESSION] = binding.backend_session_id
+    _reset_view()
+    st.session_state[ROUND_VIEW] = evidence['round_id']
+
+
+def _windows_titles():
+    from .server2022_catalogue import CATALOGUE
+    return CATALOGUE
 
 
 def _ubuntu_titles():
