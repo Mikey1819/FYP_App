@@ -1,8 +1,10 @@
-"""Live-validation register for the 30 Ubuntu controls, derived from stored records only (task 17).
+"""Live-validation register, derived from stored records only (task 17). The same rules and words for both systems:
+the 30 Ubuntu controls and the 32 Windows controls (each backend's live_validation gathers its own records).
 
-A control is "Validated live" only when an administrator-approved fix was applied on the VM and the automatic
-verification scan read the control Compliant. Restores are reported beside it. Everything is read from temporary
-copies of the local stores; the stores and the VM are never opened for writing.
+A control is "Validated live" only when an administrator-approved fix was applied on the server and the automatic
+verification scan read the control Compliant. Restores from before 12 November 2026 are listed by this command-line
+tool beside it (the program no longer restores a control on either system). Everything is read from temporary copies
+of the local stores; the stores and the VM are never opened for writing.
 
 Usage (from the app directory):
   ..\\.venv-integration\\Scripts\\python.exe -B -m tools.live_validation_register            # print markdown
@@ -39,17 +41,24 @@ def _describe(receipt, verification):
 
 APPLIED = ('applied', 'reconciled_applied')
 NOT_FIXES = ('recovery.', 'maintenance.', 'acceptance.')  # restores and auxiliary steps are never a control's fix
-STATUSES = ('Validated live', 'Validated live and restored', 'Applied, not verified', 'Refused', 'Fixture-tested only')
+MANUAL = 'Manual on the server'
+# What the statuses mean, in the same words on both systems' Overview and round reports.
+NOTE = ('"Validated live": an approved fix was applied on this server and the automatic verification scan read the '
+        'control Compliant. "Fixture-tested only": no live outcome is recorded, whatever the fixture tests show. '
+        '"Manual on the server": this program never changes the control.')
+STATUSES = ('Validated live', 'Applied, not verified', 'Refused', 'Fixture-tested only', MANUAL)
 
 
-def register(controls, *, decisions, receipts, verifications):
+def register(controls, *, decisions, receipts, verifications, automated=None):
     """One row per control: status, the fix that proves it (or the latest attempt), the latest restore, and that fix's
     evidence (time, approver, request, round, workflow), from approved decisions and their receipts.
 
     A control is validated live when any approved fix of it was applied and the verification scan read it Compliant;
-    a later failed attempt never hides that proof. It is "validated live and restored" when an applied restore came
-    after the proving fix. Without any live outcome (no fix, or approved but never executed) it is fixture-tested
-    only, whatever its fixture tests show."""
+    a later failed attempt never hides that proof, nor does a later restore (no longer offered on either system, 12
+    November 2026). Without any live outcome (no fix, or approved but never executed) it is fixture-tested only,
+    whatever its fixture tests show; or, when `automated` (the controls this program has a fix for) leaves it out,
+    "Manual on the server": this program never changes it (administrator, 14 November 2026: the same words on both
+    systems)."""
     final, rows = _final(receipts), []
     when = lambda d: (final.get(d['request_id']) or {}).get('completed_at', '')  # noqa: E731
     for cid in controls:
@@ -64,11 +73,9 @@ def register(controls, *, decisions, receipts, verifications):
         receipt = final.get(fix['request_id']) if fix else None
         restore = restores[-1] if restores else None
         if fix is None:
-            status = 'Fixture-tested only'
+            status = MANUAL if automated is not None and cid not in automated else 'Fixture-tested only'
         elif proven:
-            restored = (restore is not None and final[restore['request_id']]['outcome'] in APPLIED
-                        and when(restore) > when(fix))
-            status = 'Validated live and restored' if restored else 'Validated live'
+            status = 'Validated live'
         elif receipt['outcome'] in APPLIED or receipt['outcome'] == 'unresolved':
             status = 'Applied, not verified'  # applied without a Compliant scan, or its outcome is not known
         else:
@@ -84,8 +91,8 @@ def register(controls, *, decisions, receipts, verifications):
 
 
 def summary(rows):
-    """"N of M validated live": a restored control was validated live too."""
-    validated = sum(r['status'] in ('Validated live', 'Validated live and restored') for r in rows)
+    """"N of M validated live"."""
+    validated = sum(r['status'] == 'Validated live' for r in rows)
     return '%d of %d validated live' % (validated, len(rows))
 
 

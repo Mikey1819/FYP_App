@@ -1862,7 +1862,8 @@ class UbuntuBackend(BoundBackend):
                     if controls_of.get(request_id) in statuses:
                         verifications[request_id] = statuses[controls_of[request_id]]
         ordered = sorted(_controls(), key=lambda c: [int(x) for x in c.split('.')])
-        return register(ordered, decisions=decisions, receipts=receipts, verifications=verifications)
+        return register(ordered, decisions=decisions, receipts=receipts, verifications=verifications,
+                        automated=_fixed_controls())  # as on Windows: a control without a fix is Manual on the server
 
     def pending_reboot(self, connection_session_id):
         """The approved reboot still running on this server (from the stored receipts; no SSH), or None: while it is
