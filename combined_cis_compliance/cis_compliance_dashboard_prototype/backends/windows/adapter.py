@@ -13,6 +13,7 @@ from hardening.import_storage import ImportedEvidenceStore
 from hardening.manual_controls import AUTOMATED, MANUAL_FIX, PROGRAM_FIX
 from hardening.remediation import RemediationStore, _same_value
 from hardening.risk import analyse, BASELINE_VERSION, rule_text
+from hardening.round_report import shown
 from hardening.winrm_channel import ChannelError, LiveScanner
 from system.contracts import (AssessmentMode, AssessmentSummary, Capabilities, ComparisonResult, ComplianceStatus,
     ControlRow, DecisionResult, FindingRow, HistoryRow, OperationState, ProposalRow, RecordRef, ResultRow,
@@ -291,7 +292,7 @@ class WindowsBackend(BoundBackend):
             counts.non_compliant, counts.unknown, counts.errors, results[0].control.catalogue_version,
             results[0].evidence.collected_at.isoformat())
         controls = tuple(ControlRow(r.control.control_id, r.control.title, r.control.area, r.control.profile,
-            r.control.source_reference, ComplianceStatus(r.status.value), 'applicable', repr(r.evidence.value),
+            r.control.source_reference, ComplianceStatus(r.status.value), 'applicable', shown(r.evidence.value, r.status.value),
             rule_text(r.control.rule), evidence_references=(self._ref(scan_id),),
             fix=PROGRAM_FIX if r.control.control_id in AUTOMATED else MANUAL_FIX) for r in results)
         ranked = analyse(record, self.engine.history.previous_records(run_id))

@@ -1420,9 +1420,14 @@ def _show_results(hardening, assessment_round, state):
         changed = [c for c in hardening.changes(assessment_round['framework_run_id'], verification['framework_run_id'])
                    if c['change'] != 'Unchanged']
         st.markdown('**Configuration changes found by the verification rescan**')
-        st.dataframe([{'Control': c['control_id'], 'Title': c['title'], 'Before': repr(c['before']),
-                       'After': repr(c['after']), 'Change': c['change']} for c in changed]
+        st.dataframe([{'Control': c['control_id'], 'Title': c['title'], 'Before': _setting(c['before']),
+                       'After': _setting(c['after']), 'Change': c['change']} for c in changed]
                      or [{'Change': 'No changes detected'}], hide_index=True)
+
+
+def _setting(value):
+    """An absent policy reads as Not configured, as in the Controls and Risk ranking tabs."""
+    return 'Not configured' if value is None else repr(value)
 
 
 def _compact(value, limit=240):

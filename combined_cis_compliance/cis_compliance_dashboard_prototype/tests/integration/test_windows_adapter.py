@@ -31,6 +31,9 @@ class WindowsAdapterTests(unittest.TestCase):
             fix={c.control_id:c.fix for c in snapshot.controls}
             self.assertEqual({c for c,f in fix.items() if f=='Manual: not automated'},{'9.2.1','9.2.2','9.3.1','9.3.2'})
             self.assertEqual(sum(f=='Program fix' for f in fix.values()),28)
+            observed={c.control_id:c.observed for c in snapshot.controls}
+            self.assertEqual(observed['9.3.1'],'Not configured')  # An absent policy (D5), as in the Risk ranking tab.
+            self.assertNotIn('None',observed.values())
             self.assertEqual(snapshot.proposals,())
             self.assertEqual(snapshot.events,())
             self.assertEqual(vm.writes,[])
