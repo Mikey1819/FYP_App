@@ -168,6 +168,12 @@ class MaintenanceUiTests(FixUiTests):
             self.assertEqual(controls(app)['1.5.1'], 'Compliant')
             self.assertTrue(line(app)[0].startswith('Newest scan of this round: the verification rescan after the fixes'),
                             line(app))
+            # Results, as on Windows: "Execution results" by control and fix, never the internal proposal ID.
+            self.assertIn('**Execution results**', [m.value for m in app.markdown])
+            rows = [r for frame in app.dataframe for r in frame.value.to_dict('records') if 'Execution' in r]
+            self.assertEqual([(r['Control'], r['Fix'], r['Execution']) for r in rows],
+                             [('1.5.1', 'TEST-ONLY fixture value', 'Applied')])
+            self.assertEqual(list(rows[0]), ['Control', 'Fix', 'Execution', 'Verification', 'Detail'])
 
 
 class MaintenanceNeedsTests(unittest.TestCase):

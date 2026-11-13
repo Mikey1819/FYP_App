@@ -1795,12 +1795,28 @@ def _ubuntu_show_agent_log(snapshot):
     st.caption('Every tool call was chosen by the agent and checked by code; rejected calls had no effect.')
 
 
+# Ubuntu execution states in the shared words. Any other state is a refusal before the change (refusal_detail).
+UBUNTU_EXECUTION = {'applied': 'Applied', 'reconciled_applied': 'Applied', 'rolled_back': 'Rolled back',
+                    'running': 'Running', 'skipped': 'Skipped', 'unresolved': 'Outcome uncertain'}
+
+
+def _ubuntu_results(snapshot):
+    """The Ubuntu results in the Windows columns: the control and the fix, not the internal proposal ID."""
+    proposals = {p.reference: p for p in snapshot.proposals}
+    rows = []
+    for r in snapshot.results:
+        p = proposals.get(r.proposal_reference)
+        rows.append({'Control': (p.control_id if p and p.control_id else '—'), 'Fix': p.title if p else '—',
+                     'Execution': UBUNTU_EXECUTION.get(r.execution_state, 'Not applied'),
+                     'Verification': r.verification_status.value if r.verification_status else 'Not verified',
+                     'Detail': r.detail})
+    return rows
+
+
 def _ubuntu_review_line(review):
     """The Orchestrator's next-step decision after the remediation phase, or (`fallback`) that the remaining fixes
     then ran without AI, as the Windows page shows its outcome."""
-    text = md_escape(review['reason']) if review['next_step'] == 'fallback' \
-        else 'Orchestrator review: ' + md_escape(review['reason'])
-    (st.success if review['next_step'] == 'finish' else st.info)(text)
+    review_line(review['next_step'], review['reason'])
 
 
 def _ubuntu_show_fixes(backend, connection, snapshot, capabilities, editable=True):
@@ -2000,13 +2016,12 @@ def _ubuntu_show_controls(backend, connection, workflow, snapshot):
 def _ubuntu_show_results(backend, connection, workflow, snapshot):
     """As the Windows Results tab: the round's Orchestrator review, the execution results (or the Windows message
     while nothing ran), then the configuration changes the verification scan found."""
-    from system.ui.components import render_results_table
     review = backend.remediation_review(connection, workflow, snapshot.current_round_reference) \
         if workflow and snapshot.current_round_reference else None
     if review:
         _ubuntu_review_line(review)
-    if snapshot.results:
-        render_results_table(snapshot)
+    if snapshot.results or review:  # Once a remediation phase ran, as on Windows: its rows, or that nothing ran.
+        execution_results(_ubuntu_results(snapshot))
     else:
         planned = any(p.kind == 'control_remediation' for p in snapshot.proposals)
         st.info('Nothing has been executed for this round yet.' if planned else 'Nothing to execute in this round.')
