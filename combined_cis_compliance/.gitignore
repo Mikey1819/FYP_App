@@ -13,3 +13,22 @@ dist/
 store-backups/
 restored-data/
 crosscheck*.json
+
+# Project-process and report documents: kept privately, never published (removed 13 November 2026).
+/PROGRESS.md
+/AGENTS.md
+/docs/archive
+/docs/report
+/docs/evaluation
+/docs/figures
+/docs/vm/VM_TRIAL_RUNBOOK.md
+/cis_compliance_dashboard_prototype/baseline_manifest.json
+/cis_compliance_dashboard_prototype/docs/BASELINE.md
+/cis_compliance_dashboard_prototype/docs/INTEGRATION_PROGRESS.md
+/cis_compliance_dashboard_prototype/docs/REPORT_CHANGE_LOG.md
+/cis_compliance_dashboard_prototype/docs/authorized-ui-changes.patch
+/cis_compliance_dashboard_prototype/docs/baseline-edit-report.json
+/cis_compliance_dashboard_prototype/docs/baseline-theme-supplement.json
+/cis_compliance_dashboard_prototype/docs/evaluation
+/cis_compliance_dashboard_prototype/docs/handover
+/cis_compliance_dashboard_prototype/docs/inputs
