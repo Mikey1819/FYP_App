@@ -189,8 +189,13 @@ class AgenticPageTests(unittest.TestCase):
         self.assertEqual(app.session_state[agentic_view.TAB], 'Results')
         # Stored outcome text is Markdown-escaped on the page: it is data, not formatting.
         self.assertTrue(any(md_escape('Next step (next round)') in i.value for i in app.info))
-        verdicts = [row for frame in app.dataframe for row in frame.value.to_dict('records') if 'Verdict' in row]
-        self.assertEqual([v['Verdict'] for v in verdicts], ['Verified compliant'])
+        # As on Ubuntu: "Orchestrator review: ...", then "Execution results" in plain words, by control and fix.
+        self.assertTrue(any(i.value.startswith('Orchestrator review: ') for i in app.info))
+        self.assertIn('**Execution results**', [m.value for m in app.markdown])
+        rows = [row for frame in app.dataframe for row in frame.value.to_dict('records') if 'Execution' in row]
+        self.assertEqual([(r['Control'], r['Execution'], r['Verification'], r['Detail']) for r in rows],
+                         [('1.2.2', 'Applied', 'Compliant', 'Applied; fresh verification: Compliant.')])
+        self.assertEqual(list(rows[0]), ['Control', 'Fix', 'Execution', 'Verification', 'Detail'])
         self.assertIn('Run next round', [b.label for b in app.button])
         # The Controls tab shows the server after the fix (the verification rescan), not only the round's first scan.
         controls = {r['Control']: r for frame in app.dataframe for r in frame.value.to_dict('records')
@@ -418,6 +423,37 @@ class StepBadgeTests(unittest.TestCase):
         steps = _steps(dict(framework_run_id=None, outcome={'outcome': 'incomplete', 'model_unavailable': True}),
                        {}, None)
         self.assertEqual(set(steps.values()), {'pending'})
+
+
+def _nothing_executed_page():
+    from hardening.agentic_view import execution_results
+    execution_results([])
+
+
+class ResultsWordingTests(unittest.TestCase):
+    """The Results tab says the same thing in the same words on both pages (user request 13 Nov)."""
+
+    def test_nothing_executed_is_said_in_words_not_as_a_table(self):
+        app = AppTest.from_function(_nothing_executed_page).run()
+        self.assertEqual([i.value for i in app.info], ['Nothing was executed in this round.'])
+        self.assertEqual(len(app.dataframe), 0)
+
+    def test_every_windows_verdict_reads_as_execution_and_verification(self):
+        from hardening.agentic_view import _windows_result
+        row = lambda verdict, control='1.2.2': _windows_result(dict(control_id=control, action_id='REM-1.2.2',
+                                                                     verdict=verdict))
+        cases = {'Verified compliant': ('Applied', 'Compliant'),
+                 'Verification failed': ('Applied', 'Non-Compliant'),
+                 'Refused before execution: approval expired': ('Not applied', 'Not verified'),
+                 'Unresolved: outcome uncertain (channel lost); rescan to observe, never retry blindly':
+                     ('Outcome uncertain', 'Not verified'),
+                 'Unresolved: failed (Access is denied.)': ('Failed', 'Not verified')}
+        for verdict, expected in cases.items():
+            got = row(verdict)
+            self.assertEqual((got['Execution'], got['Verification']), expected, verdict)
+            self.assertNotEqual(got['Fix'], '—')  # The fix's name from the library, not its ID.
+        scan = row('Verification scan unavailable: unreachable', control=None)
+        self.assertEqual((scan['Control'], scan['Execution'], scan['Verification']), ('—', '—', 'Not verified'))
 
 
 if __name__ == '__main__':

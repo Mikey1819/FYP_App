@@ -1367,6 +1367,45 @@ def _show_assessment(runtime, run_id):
                'Unknown and Error are never counted as passes.')
 
 
+# The Results tab, the same on both pages: the Orchestrator's review, then one row per executed fix in plain words.
+NOTHING_EXECUTED = 'Nothing was executed in this round.'
+APPLIED_DETAIL = 'Applied; fresh verification: {}.'
+NOT_COMPLIANT_AFTER = ' No automatic retry; review before any new plan.'
+
+
+def review_line(next_step, reason):
+    """The Orchestrator's review after the remediation phase (or, `fallback`, that the fixes ran without AI)."""
+    text = md_escape(reason) if next_step == 'fallback' else 'Orchestrator review: ' + md_escape(reason)
+    {'finish': st.success, 'next_round': st.info, 'fallback': st.info}.get(next_step, st.warning)(text)
+
+
+def execution_results(rows):
+    """One row per executed fix: Control, Fix, Execution, Verification, Detail; or say that nothing ran."""
+    if not rows:
+        st.info(NOTHING_EXECUTED)
+        return
+    st.markdown('**Execution results**')
+    st.dataframe(rows, hide_index=True)
+
+
+def _windows_result(v):
+    """A Windows verdict (one stored sentence) in the shared columns."""
+    verdict = v['verdict']
+    if not v['control_id']:  # The verification scan itself could not run.
+        execution, verification, detail = '—', 'Not verified', verdict
+    elif verdict == 'Verified compliant':
+        execution, verification, detail = 'Applied', 'Compliant', APPLIED_DETAIL.format('Compliant')
+    elif verdict == 'Verification failed':
+        execution, verification = 'Applied', 'Non-Compliant'
+        detail = APPLIED_DETAIL.format('Non-Compliant') + NOT_COMPLIANT_AFTER
+    else:
+        execution = {'refused': 'Not applied', 'uncertain': 'Outcome uncertain'}.get(verdict_kind(verdict), 'Failed')
+        verification, detail = 'Not verified', verdict
+    action = LIBRARY.get(v.get('action_id'))
+    return {'Control': v['control_id'] or '—', 'Fix': action.title if action else '—', 'Execution': execution,
+            'Verification': verification, 'Detail': detail}
+
+
 def _show_results(hardening, assessment_round, state):
     verification = state['verification']
     if not verification:
@@ -1375,11 +1414,8 @@ def _show_results(hardening, assessment_round, state):
         return
     outcome = verification.get('outcome')
     if outcome:
-        show = {'finish': st.success, 'next_round': st.info, 'fallback': st.info}.get(outcome['outcome'], st.warning)
-        show(md_escape(outcome['reason']))
-    st.markdown('**Verdicts**')
-    st.dataframe([{'Control': v['control_id'], 'Action': v['action_id'], 'Verdict': v['verdict']}
-                  for v in verification['verdicts']] or [{'Verdict': 'Nothing was executed'}], hide_index=True)
+        review_line(outcome['outcome'], outcome['reason'])
+    execution_results([_windows_result(v) for v in verification['verdicts']])
     if verification['framework_run_id']:
         changed = [c for c in hardening.changes(assessment_round['framework_run_id'], verification['framework_run_id'])
                    if c['change'] != 'Unchanged']

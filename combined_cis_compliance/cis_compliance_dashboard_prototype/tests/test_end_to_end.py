@@ -118,8 +118,8 @@ class EndToEndTests(unittest.TestCase):
         self.assertEqual(self.server.vm.writes, [])
         app = self.ok(app.button(key='agentic_execute').click().run())
         self.assertEqual(self.server.vm.writes, ['1.2.2'])
-        verdicts = [row for frame in app.dataframe for row in frame.value.to_dict('records') if 'Verdict' in row]
-        self.assertEqual([v['Verdict'] for v in verdicts], ['Verified compliant'])
+        rows = [row for frame in app.dataframe for row in frame.value.to_dict('records') if 'Execution' in row]
+        self.assertEqual([(r['Control'], r['Execution'], r['Verification']) for r in rows], [('1.2.2', 'Applied', 'Compliant')])
         # The Controls tab (through the backend) shows the verification rescan: 1.2.2 is compliant now, not only
         # once the hardening session is completed.
         controls = {r['Control']: r for frame in app.dataframe for r in frame.value.to_dict('records')
