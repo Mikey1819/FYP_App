@@ -5,6 +5,9 @@ sets the same keys at runtime with fixed `sysctl -w key=value` argument lists. N
 A request is not eligible when a canonically later sysctl source or UFW's sysctl file would set one of
 the keys to another value (the benchmark warns later files override earlier ones), or when the managed
 file holds content this family did not write. The runner keeps the exact before-state for recovery.
+The drop-in is shared by several controls (and 1.5.3's fs.suid_dumpable), so each control's state covers only
+its own keys in it (administrator request 2026-11-11): a fix on another key never makes it stale, the fixes can be
+approved and executed together, and a restore puts back only this control's keys (the file goes when none is left).
 """
 import hashlib
 import json
@@ -98,29 +101,45 @@ class SysctlFamily:
             raise ValueError('Managed sysctl file holds content this family did not write')
         return data, values
 
+    @staticmethod
+    def _render(values):
+        return HEADER + b''.join(('%s = %s\n' % (k, values[k])).encode('ascii') for k in sorted(values))
+
     def _content(self, params):
         _, values = self._managed()
-        values = dict(values, **{k: str(v) for k, v in params['keys'].items()})
-        return HEADER + b''.join(('%s = %s\n' % (k, values[k])).encode('ascii') for k in sorted(values))
+        return self._render(dict(values, **{k: str(v) for k, v in params['keys'].items()}))
+
+    @staticmethod
+    def _own(data, keys):
+        """This control's part of the shared drop-in: its keys' values (None when absent). Content this family did
+        not write is kept as a digest, so it still changes the state (and check_eligible refuses it)."""
+        if data is None:
+            return {'keys': {k: None for k in sorted(keys)}}
+        try:
+            values = parse_conf(data)
+        except (ValueError, UnicodeDecodeError):
+            return {'foreign': _sha(data)}
+        if not data.startswith(HEADER) or not set(values) <= ALL_KEYS:
+            return {'foreign': _sha(data)}
+        return {'keys': {k: values.get(k) for k in sorted(keys)}}
 
     def read_state(self, params):
         config = {}
         for path in self.system.config_paths():
+            if path == MANAGED:
+                continue  # shared by other controls: only this control's keys in it count (below)
             data = self.system.read_config(path)
             config[path] = _sha(data) if data is not None else 'missing'
         ufw_path = self.system.ufw_sysctl_path()
         ufw = self.system.read_config(ufw_path) if ufw_path else None
-        managed = self.system.read_config(MANAGED)
-        state = {'config': config, 'managed': managed.decode('utf-8') if managed is not None else None,
+        state = {'config': config, 'managed': self._own(self.system.read_config(MANAGED), params['keys']),
                  'ufw': _sha(ufw) if ufw is not None else None,
                  'runtime': {k: self.system.runtime(k) for k in sorted(params['keys'])}}
         return json.dumps(state, sort_keys=True, separators=(',', ':')).encode('utf-8')
 
     def expected_after(self, params, before):
         state = json.loads(before)
-        content = self._content(params)
-        state['config'][MANAGED] = _sha(content)  # listed by systemd-sysctl once it exists
-        state['managed'] = content.decode('utf-8')
+        state['managed'] = {'keys': {k: str(params['keys'][k]) for k in sorted(params['keys'])}}
         state['runtime'] = {k: params['keys'][k] for k in sorted(params['keys'])}
         return json.dumps(state, sort_keys=True, separators=(',', ':')).encode('utf-8')
 
@@ -150,12 +169,26 @@ class SysctlFamily:
             self.system.set_runtime(key, params['keys'][key])
 
     def restore(self, params, before):
-        """Approved recovery only: the managed file (or its absence) and runtime values as recorded before."""
+        """Approved recovery only: this control's keys in the managed file (absent ones removed, the file removed when
+        no key is left) and their runtime values, as recorded before. Other controls' keys stay as they are now.
+        A before-state recorded by the earlier whole-file version is put back whole, as that version did."""
         state = json.loads(before)
-        if state['managed'] is None:
+        recorded = state['managed']
+        if isinstance(recorded, dict) and 'keys' in recorded:
+            _, values = self._managed()
+            for key, value in recorded['keys'].items():
+                if value is None:
+                    values.pop(key, None)
+                else:
+                    values[key] = value
+            if values:
+                self.system.write_managed(self._render(values))
+            else:
+                self.system.remove_managed()
+        elif recorded is None:
             self.system.remove_managed()
         else:
-            self.system.write_managed(state['managed'].encode('utf-8'))
+            self.system.write_managed(recorded.encode('utf-8'))
         for key in sorted(params['keys']):
             self.system.set_runtime(key, state['runtime'][key])
 

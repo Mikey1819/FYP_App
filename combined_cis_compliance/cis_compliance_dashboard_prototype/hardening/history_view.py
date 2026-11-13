@@ -11,6 +11,7 @@ from .remediation import RemediationStore
 from .ui import FULL, md_escape, myt
 from system.history import active_history
 from .server_picker import choose_server
+from .overview_view import no_scan_note
 
 def _label(run):
     return f"{myt(run['created_at'], FULL)} MYT · {run['run_id'][:8]}"
@@ -31,14 +32,22 @@ def render_history(database_path: Path, servers_path: Path | None = None):
         if choice is not None and choice.platform == 'ubuntu':
             from system.ui.components import render_history_rows
             if choice.reader is not None:
+                rows = choice.reader.history(choice.reader.session.target_id, limit=1000)
+                if not rows:
+                    no_scan_note('ubuntu', choice.machine_identity, choice.hostname)  # as Overview (2026-11-13)
+                    return
                 st.caption(md_escape(choice.hostname) + ' · CIS Ubuntu Linux 22.04 LTS v2.0.0'
                            + ('' if choice.connected else ' · read-only, not connected'))
-                render_history_rows(choice.reader, choice.reader.history(choice.reader.session.target_id, limit=1000))
+                render_history_rows(choice.reader, rows)
             return
         backend, shared_rows = (active_history(st.session_state, limit=1000) if choice is None or choice.connected
                                 else (None, ()))
         if backend and backend.session.identity.platform != 'windows':  # Connected Ubuntu, not in the dropdown.
             from system.ui.components import render_history_rows
+            if not shared_rows:
+                identity = backend.session.identity
+                no_scan_note('ubuntu', getattr(identity, 'machine_identity', '') or '', getattr(identity, 'hostname', None))
+                return
             st.caption(md_escape(backend.session.identity.hostname) + ' · CIS Ubuntu Linux 22.04 LTS v2.0.0')
             render_history_rows(backend, shared_rows)
             return
@@ -51,8 +60,11 @@ def render_history(database_path: Path, servers_path: Path | None = None):
             targets = {t: name for t, name in targets.items() if t == 'windows:' + choice.machine_identity}
         elif backend:
             targets = {t: name for t, name in targets.items() if t == backend.session.target_id}
+        here = (('windows', choice.machine_identity) if choice is not None else
+                ('windows', backend.session.identity.machine_identity) if backend else None)
+        name = choice.hostname if choice is not None else (backend.session.identity.hostname if backend else None)
         if not targets:
-            st.info('No assessments yet for this server. Run an agentic round first.')
+            no_scan_note(*(here or ('windows', '')), name)
             return
         target = (next(iter(targets)) if choice is not None else
                   st.selectbox('Server', list(targets), format_func=lambda t: f'{targets[t]} ({t.removeprefix("windows:")})',
@@ -62,7 +74,7 @@ def render_history(database_path: Path, servers_path: Path | None = None):
             allowed = {r.run_reference.record_id for r in shared_rows}
             runs = [r for r in runs if r['run_id'] in allowed]
             if not runs:
-                st.info('No assessments yet for this verified target and registration epoch.')
+                no_scan_note(*(here or ('windows', '')), name)
                 return
         # Rounds record drift as they scan; this fills in runs recorded before the page existed. Idempotent, and done
         # once per browser session, because comparing every run on every page view grows with the history.

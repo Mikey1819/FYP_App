@@ -19,10 +19,10 @@ class AnalysisTruthTests(base.AgentRoundTests):
     def analysis(self, flags, triage):
         return [call('read_ranking'), call('submit_analysis', flags=flags, gap_triage=triage)]
 
-    def run_with(self, flags, triage, ranking):
+    def run_with(self, flags, triage, ranking, fix_failed=()):
         clients = team([call('delegate_scanner'), call('delegate_analysis')], scanner_ok(), self.analysis(flags, triage))
         result = self.run_round(clients, collect=self.collect_with(failing=('1.5.1', '5.1.20')),
-                                rank=lambda run_id, ev: ranking)
+                                rank=lambda run_id, ev: ranking, fix_failed=fix_failed)
         return result, self.events(result['children']['analysis'])
 
     def test_the_live_submission_is_accepted_without_the_untrue_flag_or_the_non_gap_triage(self):
@@ -42,7 +42,8 @@ class AnalysisTruthTests(base.AgentRoundTests):
     def test_true_flags_are_kept(self):
         flags = [{'control_id': '1.5.1', 'flag_code': 'persistent_failure'}, {'control_id': '5.1.20', 'flag_code': 'affects_remote_access'}]
         triage = [{'control_id': '2.4.1.2', 'triage_code': 'manual_review'}]
-        result, _ = self.run_with(flags, triage, [finding('5.1.20', 1), finding('1.5.1', 2, D=3)])
+        # persistent_failure is true once an applied fix of 1.5.1 did not verify (2026-11-13; D=3 alone is not enough).
+        result, _ = self.run_with(flags, triage, [finding('5.1.20', 1), finding('1.5.1', 2, D=3)], fix_failed={'1.5.1'})
         self.assertEqual(result['analysis']['flags'], flags)
 
     def test_risk_flags_are_dropped_while_risk_is_withheld(self):

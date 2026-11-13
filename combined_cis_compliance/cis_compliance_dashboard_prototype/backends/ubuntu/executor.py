@@ -25,19 +25,33 @@ class ExecutionResult:
     receipt_raw: bytes | None = None
 
 
+NO_RECORD = '0' * 64  # the runner's request digest when it holds no copy of the request at all
+
+
+def receipt_matches(receipt, request_id, request_sha256):
+    """The receipt answers exactly this request. The one exception: the runner has no record of the request at all
+    (live 13 November 2026: the VM was restored from a snapshot after the fix was sent), so it can only say "never
+    claimed", without the request's digest. Only that answer is accepted for it."""
+    if receipt['request_id'] != request_id:
+        return False
+    return receipt['request_sha256'] == request_sha256 or (
+        (receipt['request_sha256'], receipt['outcome'], receipt['code']) == (NO_RECORD, 'refused', 'not_claimed'))
+
+
 def _trusted(raw, approved):
     receipt = parse_receipt(raw)
-    if (receipt['request_id'], receipt['request_sha256']) != (approved.request['request_id'], approved.sha256):
+    if not receipt_matches(receipt, approved.request['request_id'], approved.sha256):
         raise ValueError('Receipt belongs to another request')
     return receipt
 
 
-def execute(approved, *, ledger, binding, operation_id, dispatch, now):
+def execute(approved, *, ledger, binding, operation_id, dispatch, now, stack=False):
     request = verify(approved, now)
     if (binding.platform, binding.target_id, binding.registration_epoch, binding.workflow_session_id) != (
             'ubuntu', request['target_id'], request['registration_epoch'], request['workflow_session_id']):
         raise ValueError('Approved request belongs to another workflow, target or registration epoch')
-    owner, state = ledger.claim(binding, operation_id, 'execution', {'request_sha256': approved.sha256}, mutation=True)
+    owner, state = ledger.claim(binding, operation_id, 'execution', {'request_sha256': approved.sha256}, mutation=True,
+                                stack=stack)  # stack: a commit-confirm change on others waiting (2026-11-13)
     if not owner:
         return ExecutionResult(state.operation_id, state.state, None)
     try:

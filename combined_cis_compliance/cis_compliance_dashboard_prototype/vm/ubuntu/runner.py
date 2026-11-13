@@ -3,6 +3,13 @@
 At most one forward execution per request. The persistent fence (`active`) is created atomically and
 removed only after a clean terminal outcome; a crash, exception or unexpected after-state leaves it in
 place, blocking every later request until `reconcile` proves what happened. Nothing expires on time.
+
+One exception (administrator, 13 November 2026, so one fresh login confirms all the SSH/UFW changes of an
+execution): a commit-confirm request may be stacked on commit-confirm changes that are applied and waiting for
+their confirmation. It records the request beneath it (`below`) and takes the fence; each stacked change keeps its
+own rollback timer and before-state. Its fresh read-set check runs after the others were applied, so their files
+are disjoint and their rollbacks independent. When the fence holder settles, the fence passes to the nearest open
+change beneath it, or is removed. Never on a change still running, and never a job or in-session write.
 Python 3.10, standard library only. Families are fixed registered implementations (see families.py).
 """
 from datetime import datetime, timezone
@@ -17,6 +24,18 @@ from .remediation_schema import parse_request, receipt, utc
 # VirtualBox guest clocks drift and are corrected in jumps (live 2026-11-07: >5 s behind, then ~1 s ahead).
 # The host reports offsets above 30 s as a deployment problem; this only tolerates the remainder.
 CLOCK_SKEW_SECONDS = 60
+CLOCK_YEARS = (2026, 2099)  # a laptop time outside these years is a fault, never set
+MAX_STACK = 8  # commit-confirm changes waiting for one confirmation login at most
+LOCK_STALE_SECONDS = 30
+
+
+def _set_system_clock(when):
+    """Set the system clock (UTC, whole seconds) with one fixed command; nothing else changes."""
+    import subprocess
+    result = subprocess.run(('/usr/bin/date', '-u', '--set=@%d' % int(when.timestamp())), capture_output=True,
+                            timeout=20, env={'PATH': '/usr/bin:/bin', 'LC_ALL': 'C'})
+    if result.returncode != 0:
+        raise OSError('date --set failed')
 
 
 def _sha(data):
@@ -35,10 +54,12 @@ def _mode(family):
 
 
 class Runner:
-    def __init__(self, state_dir, families, identity, *, clock=None, require_root_owned=True, launcher=None):
+    def __init__(self, state_dir, families, identity, *, clock=None, require_root_owned=True, launcher=None,
+                 clock_setter=None):
         self.state, self.families, self.identity = Path(state_dir), dict(families), identity
         self.launcher = launcher  # systemd supervision (supervision.py); required only by supervised families
         self.clock = clock or (lambda: datetime.now(timezone.utc))
+        self.clock_setter = clock_setter or _set_system_clock
         if require_root_owned:
             info = self.state.lstat()
             if self.state.is_symlink() or not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o077:
@@ -71,6 +92,87 @@ class Runner:
     def _directory(self, request_id):
         return self.state / 'requests' / request_id
 
+    # ---- the fence: one holder, or commit-confirm changes stacked on waiting ones ------------------
+    def _locked(self, work):
+        """Run `work` holding the short fence lock, so taking, stacking and passing the fence never interleave
+        (the SSH session, the job units and the rollback timers run separately). A lock older than 30 s is left
+        by a crash and is removed."""
+        import time
+        lock = self.state / 'fence.lock'
+        for _ in range(200):
+            try:
+                self._create(lock)
+                break
+            except FileExistsError:
+                try:
+                    if time.time() - lock.stat().st_mtime > LOCK_STALE_SECONDS:
+                        lock.unlink()
+                        continue
+                except FileNotFoundError:
+                    continue
+                time.sleep(0.05)
+        else:
+            raise OSError('Runner fence lock is busy')
+        try:
+            return work()
+        finally:
+            lock.unlink()
+
+    def _holder(self):
+        return self.fence.read_text(encoding='ascii') if self.fence.exists() else None
+
+    def _below(self, request_id):
+        path = self._directory(request_id) / 'below'
+        value = path.read_text(encoding='ascii') if path.exists() else ''
+        return value if re.fullmatch(r'[0-9a-f]{32}', value) else None
+
+    def _waiting_confirmation(self, request_id):
+        """A commit-confirm change applied and waiting for its confirmation, with no decision yet."""
+        directory = self._directory(request_id)
+        job = directory / 'job'
+        return (job.exists() and job.read_bytes() == b'confirm' and (directory / 'awaiting').exists()
+                and not (directory / 'decision').exists() and self._final(directory) is None)
+
+    def _stack(self, request_id, request):
+        """Take the fence above waiting commit-confirm changes; False when this request may not be stacked."""
+        family = self.families.get(request['action']['action_id'])
+        if family is None or _mode(family) != 'confirm':
+            return False
+
+        def work():
+            holder, chain = self._holder(), []
+            current = holder
+            while current is not None and len(chain) <= MAX_STACK:
+                if self._final(self._directory(current)) is None:
+                    chain.append(current)
+                current = self._below(current)
+            if holder is None or not chain or len(chain) >= MAX_STACK or holder == request_id:
+                return False
+            if not all(self._waiting_confirmation(r) for r in chain):
+                return False
+            directory = self._directory(request_id)
+            directory.mkdir(parents=True, exist_ok=True)
+            if (directory / 'claim').exists() or (directory / 'below').exists():
+                return False
+            self._write_atomic(directory / 'below', holder.encode('ascii'))
+            self._write_atomic(self.fence, request_id.encode('ascii'))
+            return True
+        return self._locked(work)
+
+    def _release(self, request_id):
+        """Release the fence if `request_id` holds it: to the nearest open change beneath it, else remove it."""
+        def work():
+            if self._holder() != request_id:
+                return
+            below = self._below(request_id)
+            while below is not None and self._final(self._directory(below)) is not None:
+                below = self._below(below)
+            if below is None:
+                self.fence.unlink()
+            else:
+                self._write_atomic(self.fence, below.encode('ascii'))
+        self._locked(work)
+
     # ---- execution ------------------------------------------------------------------------
     def execute(self, raw):
         started, digest = self._stamp(), _sha(raw) if type(raw) is bytes else '0' * 64
@@ -83,7 +185,8 @@ class Runner:
         try:
             self._create(self.fence, rid.encode('ascii'))
         except FileExistsError:
-            return refuse('target_fenced')
+            if not self._stack(rid, request):
+                return refuse('target_fenced')
         release = True
         try:
             code = self._validate(request)
@@ -156,7 +259,7 @@ class Runner:
             return finish('applied', 'expected_after_state', after)
         finally:
             if release:
-                self.fence.unlink()
+                self._release(rid)
 
     def _validate(self, request):
         machine, hostname = self.identity()
@@ -191,6 +294,20 @@ class Runner:
                 'launcher': bool(launcher is not None and getattr(launcher, 'available', lambda: True)()),
                 'boot_rollback': getattr(launcher, 'boot_rollback_state', lambda: 'unknown')() if launcher else 'unknown'}
 
+    # ---- clock sync (administrator's click) -------------------------------------------------
+    def set_clock(self, laptop_utc):
+        """Set the server's clock to the dashboard laptop's time (UTC), on the administrator's click (administrator
+        request 2026-11-11, as the Windows page does). Changes only the clock. Refused while a change is open (the
+        fence), so no running job, confirmation window or rollback sees the jump. Returns the time before and after."""
+        wanted = utc(laptop_utc)
+        if not CLOCK_YEARS[0] <= wanted.year <= CLOCK_YEARS[1]:
+            raise ValueError('Implausible laptop time')
+        before = self._stamp()
+        if self.fence.exists():
+            return {'outcome': 'refused', 'code': 'change_open', 'before': before, 'after': before}
+        self.clock_setter(wanted)
+        return {'outcome': 'set', 'code': 'clock_set', 'before': before, 'after': self._stamp()}
+
     # ---- read-only preview ----------------------------------------------------------------
     def preview(self, action_id, params):
         """The digests a plan must carry and a sanitized change summary. Reads only; takes no fence."""
@@ -200,7 +317,13 @@ class Runner:
         family.validate(params)
         check = getattr(family, 'check_eligible', None)
         if check is not None:
-            check(params)
+            try:
+                check(params)
+            except ValueError as refusal:
+                # Not eligible on this server now: say why (a fixed sentence the family wrote; printable ASCII, at
+                # most 200 characters) instead of refusing silently, so the dashboard can show it (2026-11-13).
+                reason = ''.join(ch for ch in str(refusal) if ' ' <= ch <= '~')[:200] or 'not eligible'
+                return {'action_id': action_id, 'refused': reason}
         current = family.read_state(params)
         return {'action_id': action_id, 'before_state_sha256': _sha(current),
                 'expected_after_sha256': _sha(family.expected_after(params, current)),
@@ -219,7 +342,7 @@ class Runner:
             from .remediation_schema import parse_receipt
             if parse_receipt(data)['outcome'] != 'unresolved':
                 if holder == request_id:
-                    self.fence.unlink()
+                    self._release(request_id)
                 return data
         if (directory / 'job').exists() and (directory / 'claim').exists():
             supervised = self._supervised_status(request_id)
@@ -229,7 +352,7 @@ class Runner:
         if not (directory / 'claim').exists():
             # Never claimed: nothing was written. A fence left by a crash before the claim is safe to release.
             if holder == request_id:
-                self.fence.unlink()
+                self._release(request_id)
             raw = stored.read_bytes() if stored.exists() else b''
             return receipt(request_id, _sha(raw) if raw else '0' * 64, 'refused', 'not_claimed', None, None, now, now)
         raw = stored.read_bytes()
@@ -237,7 +360,13 @@ class Runner:
         family = self.families.get(request['action']['action_id'])
         if family is None:
             return receipt(request_id, _sha(raw), 'unresolved', 'unknown_action', None, None, now, now)
-        state = _sha(family.read_state(request['parameters']))
+        try:
+            state = _sha(family.read_state(request['parameters']))
+        except Exception:
+            # The state cannot be read now (live 13 November 2026: apt's read-only simulation refuses while dpkg is
+            # interrupted, after a restart during an install). Said as such, nothing settled or re-run; asked again.
+            return receipt(request_id, _sha(raw), 'unresolved', 'state_unreadable', request['before_state_sha256'],
+                           None, now, self._stamp())
         before = request['before_state_sha256']
         if state == before:
             outcome, code = 'reconciled_not_applied', 'before_state'
@@ -248,7 +377,7 @@ class Runner:
         data = receipt(request_id, _sha(raw), outcome, code, before, state, now, self._stamp())
         self._write_atomic(existing, data)
         if outcome != 'unresolved' and holder == request_id:
-            self.fence.unlink()
+            self._release(request_id)
         return data
 
     # ---- systemd-supervised jobs and the commit-confirm watchdog ------------------------------------
@@ -277,8 +406,8 @@ class Runner:
         started = (directory / 'claim').read_text(encoding='ascii')
         data = receipt(request_id, _sha(raw), outcome, code, request['before_state_sha256'], after, started, self._stamp())
         self._write_atomic(directory / 'receipt.json', data)
-        if release and self.fence.exists() and self.fence.read_text(encoding='ascii') == request_id:
-            self.fence.unlink()
+        if release:
+            self._release(request_id)
         return data
 
     def _running(self, request_id, code):

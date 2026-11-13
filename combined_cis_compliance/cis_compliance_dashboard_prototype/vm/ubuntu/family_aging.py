@@ -6,6 +6,9 @@ comply, locked accounts and the password hashes are never touched or read into s
 Lockout guard (5.4.1.1 and 5.4.1.5): no change may leave a changed account's password expired or expiring within
 MARGIN_DAYS, and accounts with a forced change (last change 0) or no last-change date are refused, so the
 management account cannot be locked out by an approved change.
+5.4.1.1 and 5.4.1.3 both edit /etc/login.defs, and all three change /etc/shadow through chage, so each control's
+state covers only its own login.defs line and its own account field (administrator request 2026-11-11): a fix of
+another control never makes it stale, and its restore puts back only its own line and accounts.
 """
 import hashlib
 import json
@@ -98,20 +101,24 @@ class AgingFamily:
         value = login_value(text, self.spec['key'])[1]
         return value, login_value(text, 'PASS_MIN_DAYS')[1] if self.control_id == '5.4.1.1' else -1
 
+    def _set_login(self, text, value):
+        """login.defs with this control's line set to `value`; every other byte unchanged."""
+        row = login_value(text, self.spec['key'])[0]
+        lines = text.splitlines(True)
+        line = lines[row]
+        end = len(line.rstrip('\r\n'))
+        token = line.split()[1]
+        cut = line.rindex(token, 0, end)
+        lines[row] = line[:cut] + str(value) + line[cut + len(token):]
+        return ''.join(lines)
+
     def _edited(self, text):
         value, minimum = self._default(text)
         if good(self.control_id, value, minimum):
             return text
         target = self.spec['target']
         if self.spec['source'] == LOGIN_DEFS:
-            row = login_value(text, self.spec['key'])[0]
-            lines = text.splitlines(True)
-            line = lines[row]
-            end = len(line.rstrip('\r\n'))
-            token = line.split()[1]
-            cut = line.rindex(token, 0, end)
-            lines[row] = line[:cut] + str(target) + line[cut + len(token):]
-            return ''.join(lines)
+            return self._set_login(text, target)
         if text is None:
             return HEADER.decode('utf-8') + 'INACTIVE=%d\n' % target
         row = useradd_value(text)[0]
@@ -127,10 +134,20 @@ class AgingFamily:
 
     def read_state(self, params):
         text = self._read_default()
-        self._default(text)
-        return _dump({'default': text,
+        value, minimum = self._default(text)
+        # login.defs is shared with another control: only this control's line counts. /etc/default/useradd is this
+        # control's alone (5.4.1.5), so it is kept whole.
+        default = {'value': value, 'minimum': minimum} if self.spec['source'] == LOGIN_DEFS else text
+        return _dump({'default': default,
                       'accounts': {r['name']: {'value': r[self.spec['field']], 'minimum': r['minimum']}
                                    for r in self._accounts()}})
+
+    def _default_after(self, default):
+        if isinstance(default, dict):  # login.defs: this control's value only
+            if good(self.control_id, default['value'], default['minimum']):
+                return default
+            return dict(default, value=self.spec['target'])
+        return self._edited(default)
 
     def _changes(self, state):
         return {name: [row['value'], self.spec['target']] for name, row in sorted(state['accounts'].items())
@@ -140,7 +157,7 @@ class AgingFamily:
         state = json.loads(before)
         for name in self._changes(state):
             state['accounts'][name]['value'] = self.spec['target']
-        state['default'] = self._edited(state['default'])
+        state['default'] = self._default_after(state['default'])
         return _dump(state)
 
     def check_eligible(self, params):
@@ -165,8 +182,9 @@ class AgingFamily:
 
     def summary(self, params, before):
         state = json.loads(before)
-        value = self._default(state['default'])[0]
-        edited = self._edited(state['default']) != state['default']
+        default = state['default']
+        value = default['value'] if isinstance(default, dict) else self._default(default)[0]
+        edited = self._default_after(default) != default
         return {'file': self.spec['source'], 'default': [self.spec['key'], value, self.spec['target']] if edited else None,
                 'accounts': self._changes(state), 'command': 'chage ' + self.spec['flag']}
 
@@ -179,17 +197,21 @@ class AgingFamily:
             self.system.write_useradd_defaults(data)
 
     def apply(self, params):
-        state = json.loads(self.read_state(params))
-        edited = self._edited(state['default'])
-        if edited != state['default']:
+        state, text = json.loads(self.read_state(params)), self._read_default()
+        edited = self._edited(text)  # the file as it is now, so another control's edit is kept
+        if edited != text:
             self._write_default(edited)
         for name in self._changes(state):
             self.system.chage(name, self.spec['flag'], self.spec['target'])
 
     def restore(self, params, before):
         state, current = json.loads(before), json.loads(self.read_state(params))
-        if current['default'] != state['default']:
-            self._write_default(state['default'])
+        recorded = state['default']
+        if isinstance(recorded, dict):  # login.defs: only this control's line goes back
+            if current['default']['value'] != recorded['value']:
+                self._write_default(self._set_login(self._read_default(), recorded['value']))
+        elif current['default'] != recorded:  # useradd, or a before-state of the earlier whole-file version
+            self._write_default(recorded)
         for name, row in sorted(state['accounts'].items()):
             if name not in current['accounts']:
                 raise ValueError('An account in the recorded state no longer exists')

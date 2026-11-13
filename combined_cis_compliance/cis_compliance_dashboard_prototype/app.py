@@ -12,7 +12,8 @@ from datetime import datetime, timezone
 
 import streamlit as st
 from hardening import background, reachability
-from hardening.agentic_view import GO_OVERVIEW, render_agentic
+from hardening.agentic_view import (GO_AGENTIC, GO_OVERVIEW, REBOOT_LOGIN, render_agentic, ubuntu_hold_if_restarting,
+                                    ubuntu_restarting)
 from hardening.connection_view import LIVE_TARGET, LOCKED, connected_session, job_key
 from system.config import PATHS
 from tools.baseline import verify_import_origin
@@ -69,6 +70,16 @@ def connected():
     if target is not None:
         return target.hostname, 'windows', target.machine_uuid
     return None
+
+
+def _opened_key(server):
+    """Which server the workspace was opened for. An Ubuntu server keeps its key across the dashboard's own fresh
+    logins (safety check, confirmation, reconnect after a reboot), so they no longer jump to Overview (administrator,
+    13 November 2026); a Windows server keeps the connection key, as before."""
+    session = connected_session()
+    if server[1] == 'ubuntu' and session is not None:
+        return 'ubuntu:' + session.identity.machine_identity
+    return server[2]
 
 
 def _endpoint():
@@ -143,6 +154,7 @@ def _status_panel(server, servers):
                      'can reach this server.')
         if st.button('Disconnect', key='sidebar_disconnect', icon=':material/link_off:', disabled=busy,
                      help=LOCKED if busy else 'End this session with the server. Nothing changes on the server.'):
+            st.session_state.pop(REBOOT_LOGIN, None)  # a deliberate Disconnect never reconnects
             forget_connection(f'Disconnected from {server[0]}. Nothing changed on the server.')
     st.caption('Every change on a server needs your approval.')
     st.caption(f'Supported: {SUPPORTED_SYSTEMS}.')
@@ -151,7 +163,8 @@ def _status_panel(server, servers):
 def main():
     verify_import_origin(PATHS.app)
     PATHS.prepare()
-    server = connected()
+    ubuntu_hold_if_restarting()  # a reboot's dropped link is the restart, not a lost connection (2026-11-13)
+    server = connected() or ubuntu_restarting()
     servers = st.Page(servers_page, title="Servers", icon=":material/dns:", url_path="servers",
                       default=server is None, visibility='visible' if server is None else 'hidden')
     # Not connected: the workspace addresses still exist, but each one only leads back to the Servers page.
@@ -161,13 +174,15 @@ def main():
     pages = st.navigation(workspace + [servers], position='sidebar' if server else 'hidden')
     if server is None:
         st.session_state.pop(OPENED, None)
-    elif st.session_state.get(OPENED) != server[2]:  # Just connected: open the workspace on Overview.
-        st.session_state[OPENED] = server[2]
+    elif st.session_state.get(OPENED) != _opened_key(server):  # Just connected: open the workspace on Overview.
+        st.session_state[OPENED] = _opened_key(server)
         if NOTICE in st.session_state:
             st.session_state[ARRIVED] = st.session_state.pop(NOTICE)
         st.switch_page(workspace[0])
     elif st.session_state.pop(GO_OVERVIEW, False):  # A hardening session was just completed: say so on Overview.
         st.switch_page(workspace[0])
+    elif st.session_state.pop(GO_AGENTIC, False):  # Overview's live validation register: open the chosen round.
+        st.switch_page(workspace[1])
     st.html(CARTOON_CSS)
     state = _reach(server)
     if state and not state['ok']:

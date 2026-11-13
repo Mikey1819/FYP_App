@@ -19,7 +19,9 @@ def _agents(events):
     runs = {}
     for e in events:
         run = runs.setdefault(e.run, {'role': e.role, 'engine': e.provenance, 'status': 'Interrupted',
-                                      'outcome': 'No structured decision', 'calls': 0, 'rejected': 0})
+                                      'outcome': 'No structured decision', 'calls': 0, 'rejected': 0, 'seconds': []})
+        if getattr(e, 'model_seconds', None) is not None:  # module 2: each step's model response time
+            run['seconds'].append(f'{e.model_seconds:.1f}' + (' (retried)' if getattr(e, 'model_retried', False) else ''))
         if e.event_kind == 'tool':
             run['calls'] += 1
         elif e.event_kind == 'tool_rejected':
@@ -28,15 +30,50 @@ def _agents(events):
         elif e.event_kind == 'finished':
             run['status'] = e.result_summary.split(':', 1)[0]
             run['outcome'] = e.reason_code or 'No structured decision'
-    rows = [(r['role'], r['engine'], r['status'], r['outcome'], r['calls'], r['rejected']) for r in runs.values()]
-    return _table(('Agent', 'Engine', 'Status', 'Outcome', 'Tool calls', 'Rejected calls'), rows,
+    rows = [(r['role'], r['engine'], r['status'], r['outcome'], r['calls'], r['rejected'],
+             ', '.join(r['seconds']) or '—') for r in runs.values()]
+    return _table(('Agent', 'Engine', 'Status', 'Outcome', 'Tool calls', 'Rejected calls', 'Model seconds per step'), rows,
                   'No agent runs were stored for this round.')
 
 
-def ubuntu_round_report(snapshot, rounds, review, changes, *, now=None):
+def _register(rows):
+    """Section 7: the live-validation register of this server (tools/live_validation_register.register rows)."""
+    from tools.live_validation_register import summary
+    table = _table(('Control', 'Status', 'Proven or last attempt (MYT, UTC+8)', 'Approver', 'Request', 'Round'),
+                   [(r['control_id'], r['status'],
+                     myt(r['evidence']['time'], FULL) if r['evidence'] else '—',
+                     (r['evidence'] or {}).get('approver') or '—',
+                     (r['evidence'] or {}).get('request_id') or '—',
+                     (r['evidence'] or {}).get('round_id') or '—') for r in rows])
+    return (f'<h2>7. Live validation register</h2><p>{escape(summary(rows))} on this server.</p><p class="muted">'
+            '"Validated live": an administrator-approved fix was applied on this server and the automatic verification '
+            'scan read the control Compliant. "Fixture-tested only": no live outcome is recorded, whatever the fixture '
+            'tests show. Derived from the stored approvals, receipts and verification scans; nothing is typed in.</p>'
+            + table)
+
+
+def _completion(record):
+    """The completion of the hardening session (module 1): who, when, the final scan and each accepted exception."""
+    exceptions = record['exceptions']
+    return ('<h2>Hardening completed</h2><dl>' + ''.join(
+        f'<dt>{escape(k)}</dt><dd>{escape(str(v))}</dd>' for k, v in (
+            ('Completed by', record['operator']), ('Completed (MYT, UTC+8)', myt(record['completed_at'], FULL)),
+            ('Final scan', record['final_run_id']),
+            ('Result', f"{record['compliant']} of {record['total']} controls compliant, {len(exceptions)} accepted as "
+                       'exception(s)'))) + '</dl>'
+            + '<p class="muted">The final read-only scan found every other control compliant. An exception is the '
+              "administrator's decision with its reason; it never counts as compliant.</p>"
+            + _table(('Control', 'Title', 'Status in the final scan', 'Reason', 'Accepted by'),
+                     [(e['control_id'], e['title'], e['status'], e['reason'], e['operator']) for e in exceptions],
+                     'No exceptions: every control was compliant.'))
+
+
+def ubuntu_round_report(snapshot, rounds, review, changes, *, now=None, register=None, completion=None):
     """HTML for one Ubuntu assessment round and, once run, its remediation and verification. `rounds` are the
     workflow's (round reference, started at) pairs, `review` the Orchestrator's next-step decision (or None) and
-    `changes` the verification scan's changed controls (None before a verification scan)."""
+    `changes` the verification scan's changed controls (None before a verification scan). `register`, when given, is
+    the server's live-validation register (module 3), printed as section 7; `completion`, the session's completion
+    record (module 1), printed first."""
     now = now or datetime.now(timezone.utc)
     s, parts = snapshot.summary, []
     round_id = snapshot.current_round_reference.record_id if snapshot.current_round_reference else '—'
@@ -58,6 +95,8 @@ def ubuntu_round_report(snapshot, rounds, review, changes, *, now=None):
               ('Report generated (MYT, UTC+8)', myt(now, FULL))]
     parts.append('<dl>' + ''.join(f'<dt>{escape(k)}</dt><dd>{escape(str(v))}</dd>' for k, v in facts) + '</dl>')
     parts.append(f'<div class="cards">{cards}</div>')
+    if completion is not None:
+        parts.append(_completion(completion))
 
     if snapshot.plan:
         outcome = plan_summary(snapshot)
@@ -123,4 +162,6 @@ def ubuntu_round_report(snapshot, rounds, review, changes, *, now=None):
         ('Control', 'Title', 'Area', 'Status', 'Sub-checks'),
         [(c.control_id, c.title, c.area, c.status.value, c.observed) for c in snapshot.controls],
         'No assessment was collected in this round.'))
+    if register is not None:
+        parts.append(_register(register))
     return _PAGE.format(title=title, body='\n'.join(parts), benchmark=escape(benchmark))

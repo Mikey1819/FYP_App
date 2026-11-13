@@ -89,18 +89,20 @@ class AgentRoundTests(unittest.TestCase):
             return 'run-%d' % len(self.collected), ev
         return collect
 
-    def run_round(self, clients, *, collect=None, goal=None, clock=None, rank=None):
+    def run_round(self, clients, *, collect=None, goal=None, clock=None, rank=None, fix_failed=()):
         from backends.ubuntu.agents import run_agentic_round
         from backends.ubuntu.adapter import _controls
         titles = {cid: c.title for cid, c in _controls().items()}
         kwargs = {} if clock is None else {'clock': clock}
         return run_agentic_round(client_factory=clients.__getitem__, collect=collect or self.collect_with(),
                                  log_store=self.log, target_id=TARGET, titles=titles,
-                                 rank=rank or (lambda run_id, ev: None), goal=goal, **kwargs)
+                                 rank=rank or (lambda run_id, ev: None), goal=goal, fix_failed=frozenset(fix_failed),
+                                 **kwargs)
 
     def events(self, run_id):
+        """The run's own events; the model_timing record stored after it finished (module 2) is left out."""
         from hardening.investigation import InvestigationLog
-        return InvestigationLog(self.log).get(run_id)['events']
+        return [e for e in InvestigationLog(self.log).get(run_id)['events'] if e['kind'] != 'model_timing']
 
     def test_complete_round_delegates_in_order_and_defers_every_finding(self):
         clients = team([call('delegate_scanner'), call('delegate_analysis'),

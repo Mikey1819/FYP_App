@@ -1,7 +1,8 @@
 """Runner entry point: one header line naming a fixed operation, then the operation's payload, on stdin.
 
 Operations: `preview` (read-only), `execute` (exact approved request bytes follow the header), `reconcile`
-(status; never replays) and `confirm` (commit-confirm, over a fresh SSH login). systemd units call the runner
+(status; never replays), `confirm` (commit-confirm, over a fresh SSH login) and `set_clock` (the server clock set
+to the laptop's UTC time on the administrator's click; refused while a change is open). systemd units call the runner
 with argv instead: `job <id>`, `rollback <id>` and `boot-rollback` (see supervision.py). Only the result document is written to stdout; any failure writes one fixed stderr line.
 """
 import json
@@ -16,7 +17,7 @@ LIMIT = REQUEST_LIMIT + 4096
 STATE = '/var/lib/fyp-hardening/runner'
 REFUSED = b'fyp-hardening: runner refused\n'
 HEADERS = {'preview': {'op', 'action_id', 'parameters'}, 'execute': {'op'}, 'reconcile': {'op', 'request_id'},
-           'confirm': {'op', 'request_id'}, 'probe': {'op'}}
+           'confirm': {'op', 'request_id'}, 'probe': {'op'}, 'set_clock': {'op', 'utc'}}
 UNIT_OPS = ('job', 'rollback')  # argv-only, from systemd units; the sudo rule allows the runner no arguments
 
 
@@ -92,6 +93,10 @@ def main(stdin=None, stdout=None, stderr=None, *, runner_factory=None, argv=None
             result = canonical(runner.probe())
         elif header['op'] == 'execute':
             result = runner.execute(payload)
+        elif header['op'] == 'set_clock':
+            if payload or type(header['utc']) is not str:
+                raise ValueError('Invalid clock request')
+            result = canonical(runner.set_clock(header['utc']))
         else:
             if payload or type(header['request_id']) is not str or not re.fullmatch('[0-9a-f]{32}', header['request_id']):
                 raise ValueError('Invalid reconcile request')

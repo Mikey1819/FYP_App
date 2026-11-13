@@ -42,7 +42,8 @@ class WindowsParityTests(views.RoundViewTests):
             self.assertEqual(list(summary['Agent']), ['AI Agent Orchestrator', 'Scanner Agent', 'Analysis Agent'])
             self.assertEqual(len(log.expander), 3)
             self.assertEqual(log.expander[0].label, 'AI Agent Orchestrator: 3 tool calls, completed')
-            self.assertEqual(list(log.expander[0].dataframe[0].value.columns), STEP_COLUMNS)
+            # The Windows step columns, plus each step's model response time (module 2, Ubuntu only, 12 November).
+            self.assertEqual(list(log.expander[0].dataframe[0].value.columns), STEP_COLUMNS + ['Model seconds'])
             self.assertEqual(list(log.expander[0].dataframe[0].value['Event'])[-1], 'Finished')
             self.assertIn('Every tool call was chosen by the agent and checked by code; rejected calls had no effect.',
                           [c.value for c in log.caption])

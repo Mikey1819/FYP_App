@@ -22,12 +22,14 @@ class ExecutionBatchTests(unittest.TestCase):
     def run_batch(self, outcomes):
         from backends.ubuntu.adapter import UbuntuBackend
         backend = UbuntuBackend.__new__(UbuntuBackend)
-        dispatched, verified = [], []
+        dispatched, verified, applied = [], [], []
         store = N(proposals=lambda binding, round_id: BATCH)
 
-        def dispatch(store_, binding, p, operation_id):
+        def dispatch(store_, binding, p, operation_id, **_):
             rid = json.loads(p.approved_raw)['request_id']
             dispatched.append(rid)
+            if outcomes[rid] == 'completed':
+                applied.append(rid)
             return N(state=outcomes[rid])
 
         def verify(store_, binding, latest, applied, state):
@@ -35,7 +37,9 @@ class ExecutionBatchTests(unittest.TestCase):
             return state
         with mock.patch.multiple(backend, check=lambda *a: 'binding', _store=lambda: store, create=True,
                                  _latest=lambda *a: N(round_id='r'), _dispatch_one=dispatch, _verify=verify,
-                                 _agent_skipped=lambda *a: {}), \
+                                 _agent_skipped=lambda *a: {}, _waits=lambda p: None, _refuse_completed=lambda b: None,
+                                 _continuable=lambda *a: ({}, ()), _unverified=lambda *a: list(applied),
+                                 ledger=mock.Mock(**{'claim.return_value': (False, None)})), \
                 mock.patch('backends.ubuntu.adapter.execution_gate', return_value=()):
             handle = backend.execute_approved('c', 'w', 'round', tuple(outcomes), True, 'op')
         return handle.state, dispatched, verified
@@ -48,12 +52,14 @@ class ExecutionBatchTests(unittest.TestCase):
         self.assertEqual(state, 'refused')  # the page still says that not everything applied
 
     def test_an_uncertain_outcome_still_stops_the_batch(self):
-        for uncertain in ('unresolved', 'running'):
+        # Unresolved stops for a person: the scan covers what applied. Running waits: the one scan of the execution
+        # follows once it has settled (13 November 2026).
+        for uncertain, scans in (('unresolved', [['a151']]), ('running', [])):
             with self.subTest(outcome=uncertain):
                 state, dispatched, verified = self.run_batch(
                     {'a151': 'completed', 'a153': uncertain, 'a331': 'completed', 'a523': 'completed'})
                 self.assertEqual(dispatched, ['a151', 'a153'])
-                self.assertEqual((state, verified), (uncertain, [['a151']]))
+                self.assertEqual((state, verified), (uncertain, scans))
 
 
 class StaleRefusalWordingTests(unittest.TestCase):

@@ -203,28 +203,13 @@ class SetupPageTests(unittest.TestCase):
         self.assertFalse(list(app.error), [e.value for e in app.error])
         return app
 
-    def test_set_up_copies_files_built_for_this_server_and_shows_one_command(self):
+    def test_the_servers_page_has_no_set_up_section(self):
+        """13 November 2026: the pairing helper sets the server up before it shows the code, so the Servers page no
+        longer offers Set up this server (the manual bundle stays, as a documented alternative)."""
         app = self.page()
-        self.assertIn('Set up Ubuntu', [h.value for h in app.subheader])
-        self.assertEqual(sum('Missing' in m.value for m in app.markdown), 1)  # One status block listing the three.
-        app = self.ok(app.button(key='servers_setup').click().run())
-        files = self.channel.uploaded[0]
-        self.assertIn(f'"{MACHINE_ID}"'.encode(), files['setup.sh'])
-        self.assertIn(b'vboxuser ALL=(root) NOPASSWD', files['sudoers/fyp-hardening'])
-        self.assertEqual(app.code[0].value, f'sudo bash /home/vboxuser/{SETUP_FOLDER}/setup.sh')
-        # After the administrator ran it on the server: Check again reads the status afresh.
-        self.state.update(openscap=True, collector=True, runner=True)
-        app = self.ok(app.button(key='servers_setup_check').click().run())
-        self.assertEqual(self.backends[-1].refreshes, 1)
-        self.assertTrue(any('This server is set up' in s.value for s in app.success))
+        self.assertFalse([h.value for h in app.subheader if h.value.startswith('Set up')])
         self.assertNotIn('servers_setup', [b.key for b in app.button])
-
-    def test_a_connection_that_stopped_answering_is_explained_not_a_crash(self):
-        import paramiko
-        app = self.page()
-        self.state['fail'] = paramiko.SSHException('Timeout opening channel.')  # As seen live after a VM restart.
-        app = self.ok(app.run())
-        self.assertTrue(any('stopped answering' in w.value for w in app.warning), [w.value for w in app.warning])
+        self.assertEqual(self.channel.uploaded, [])
 
     def test_a_closed_connection_is_disconnected_and_explained(self):
         app = self.page()
@@ -234,11 +219,6 @@ class SetupPageTests(unittest.TestCase):
         self.assertTrue(any('was lost' in w.value for w in app.warning), [w.value for w in app.warning])
         self.assertEqual(app.title[0].value, 'Servers')
 
-    def test_nothing_is_offered_for_a_server_that_is_already_set_up(self):
-        self.state.update(openscap=True, collector=True, runner=True)
-        app = self.page()
-        self.assertTrue(any('Execution acceptance' in s.value for s in app.success))
-        self.assertEqual(self.channel.uploaded, [])
 
 
 if __name__ == '__main__':

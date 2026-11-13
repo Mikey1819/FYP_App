@@ -88,6 +88,32 @@ class AgingCase(unittest.TestCase):
         with self.assertRaises(ValueError):self.family(system).check_eligible(self.PARAMS)
 
 
+class SharedLoginDefsTests(unittest.TestCase):
+    """Administrator request 2026-11-11: 5.4.1.1 and 5.4.1.3 both edit /etc/login.defs; each control's state covers
+    only its own line (and its own account field), so both can be planned together, applied in turn and restored
+    alone."""
+
+    def test_both_plan_together_apply_in_turn_and_restore_alone(self):
+        from vm.ubuntu.family_aging import AgingFamily
+        system = FakeAgingSystem()
+        maxdays, warn = AgingFamily('5.4.1.1', system), AgingFamily('5.4.1.3', system)
+        p1, p3 = {'maxdays': 365}, {'warndays': 7}
+        b1, b3 = maxdays.read_state(p1), warn.read_state(p3)
+        e1, e3 = maxdays.expected_after(p1, b1), warn.expected_after(p3, b3)
+        maxdays.apply(p1)
+        self.assertEqual(warn.read_state(p3), b3)  # 5.4.1.1 edited login.defs: 5.4.1.3 is still exact
+        warn.check_eligible(p3)
+        warn.apply(p3)
+        self.assertEqual((maxdays.read_state(p1), warn.read_state(p3)), (e1, e3))
+        self.assertEqual(system.defs, LOGIN_DEFS.replace(b'PASS_MAX_DAYS\t99999', b'PASS_MAX_DAYS\t365')
+                         .replace(b'PASS_WARN_AGE\t5', b'PASS_WARN_AGE\t7'))
+        maxdays.restore(p1, b1)  # only PASS_MAX_DAYS (and the accounts 5.4.1.1 changed) go back
+        self.assertEqual((maxdays.read_state(p1), warn.read_state(p3)), (b1, e3))
+        self.assertEqual(system.defs, LOGIN_DEFS.replace(b'PASS_WARN_AGE\t5', b'PASS_WARN_AGE\t7'))
+        warn.restore(p3, b3)
+        self.assertEqual(system.defs, LOGIN_DEFS)
+
+
 class MaxDaysTests(AgingCase):
     CONTROL, PARAMS = '5.4.1.1', {'maxdays': 365}
 

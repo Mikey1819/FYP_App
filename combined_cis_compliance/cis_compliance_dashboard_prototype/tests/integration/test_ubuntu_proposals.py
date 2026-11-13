@@ -138,9 +138,13 @@ class EligibleFixTests(unittest.TestCase):
                                          rank=lambda r, e: None, eligible={'1.5.1': 'fixture.file_value.v1'})
             fix = {'control_id': '1.5.1', 'decision': 'fix', 'action_id': 'fixture.file_value.v1', 'reason_code': 'highest_risk'}
             self.assertEqual(round_with([fix])['plan']['fixes'], [fix])
-            for bad in (dict(fix, action_id='ubuntu.1.5.1.v1'), dict(fix, control_id='5.1.20'),
-                        dict(fix, reason_code='no_registered_action')):
+            for bad in (dict(fix, action_id='ubuntu.1.5.1.v1'), dict(fix, reason_code='no_registered_action')):
                 self.assertIsNone(round_with([bad])['plan'])
+            # A fix for a control without a registered action (5.1.20, also deferred) is recorded and left out, not a
+            # refused plan (live 2026-11-13 05:36; test_ubuntu_auto_steps_1113): 1.5.1 is still proposed by default.
+            plan = round_with([dict(fix, control_id='5.1.20')])['plan']
+            self.assertEqual([f['control_id'] for f in plan['fixes']], ['1.5.1'])
+            self.assertEqual(plan['ignored'], [{'control_id': '5.1.20', 'reason_code': 'fix_without_action'}])
         finally:
             case.doCleanups()
 
@@ -271,46 +275,29 @@ class BackendRemediationTests(StoreFixture):
         snap = backend.snapshot('c', workflow)
         self.assertEqual((snap.results[0].verification_status, snap.step_states[5]), (None, 'pending'))
 
-    def test_applied_fix_can_be_restored_through_a_separately_approved_recovery_proposal(self):
+    def test_an_applied_fix_cannot_be_restored_from_the_host(self):
+        """Task 8 (administrator, 12 November): no per-control restore on Ubuntu, as on Windows; the host cannot plan,
+        approve or dispatch one. The server's own rollbacks (commit-confirm timer, boot rollback, the safety check's
+        rollback test) are unchanged."""
         from unittest import mock
+        from backends.ubuntu.actions import AUXILIARY
         from system.contracts import AuxiliaryKind, RecoveryInput
         from tests.integration.test_ubuntu_live_path import open_gate
+        self.assertNotIn('recovery.restore.v1', AUXILIARY)
         backend = self.backend(self.FIX)
         handle, snap = self.round(backend)
         workflow, fix = handle.binding.workflow_session_id, snap.proposals[0]
         backend.decide('c', workflow, fix.reference, True, 'fixture-operator', '', 'op-d')
         request_id = backend.snapshot('c', workflow).proposals[0].approved_request_id
         before = backend.snapshot('c', workflow).proposals[0].before_state_sha256
-        inputs = RecoveryInput(request_id, before, 'restore_before_state')
-        with self.assertRaises(ValueError):  # nothing applied yet: nothing to restore
-            backend.request_auxiliary('c', workflow, AuxiliaryKind.RECOVERY, fix.reference, inputs, 'op-early')
         with mock.patch('backends.ubuntu.adapter.execution_gate', return_value=()), open_gate():
             backend.execute_approved('c', workflow, snap.current_round_reference, (request_id,), True, 'op-exec')
-            self.assertEqual((self.work / 'alpha').read_bytes(), b'new')
-            with self.assertRaises(ValueError):  # wrong backup digest
+            with self.assertRaisesRegex(ValueError, 'not offered'):
                 backend.request_auxiliary('c', workflow, AuxiliaryKind.RECOVERY, fix.reference,
-                                          RecoveryInput(request_id, 'f' * 64, 'restore_before_state'), 'op-bad')
-            ref = backend.request_auxiliary('c', workflow, AuxiliaryKind.RECOVERY, fix.reference, inputs, 'op-aux')
-            rows = {p.reference: p for p in backend.snapshot('c', workflow).proposals}
-            self.assertEqual((rows[ref].kind, rows[ref].action_id, rows[ref].eligible_commands),
-                             ('recovery', 'recovery.restore.v1', ('approve', 'reject')))
-            with self.assertRaises(ValueError):  # not approved yet
-                backend.dispatch_auxiliary('c', workflow, ref, 'op-dispatch-early')
-            backend.decide('c', workflow, ref, True, 'fixture-operator', 'Undo for the demo', 'op-d2')
-            # The recovery proposal never joins the CIS fix set.
-            self.assertEqual(backend.execute_approved('c', workflow, snap.current_round_reference, (request_id,), True,
-                                                      'op-exec-again').state, 'completed')
-            result = backend.dispatch_auxiliary('c', workflow, ref, 'op-dispatch')
-            self.assertEqual(result.state, 'completed')
-            again = backend.dispatch_auxiliary('c', workflow, ref, 'op-dispatch-2')
-            self.assertEqual(again.state, 'completed')
-        self.assertEqual((self.work / 'alpha').read_bytes(), b'old')
-        self.assertEqual(len([c for c in self.channel.runner_calls if c.startswith(b'{"op":"execute"}')]), 2)
-        results = {r.proposal_reference: r for r in backend.snapshot('c', workflow).results}
-        self.assertEqual(results[ref].execution_state, 'applied')
-        with self.assertRaises(ValueError):  # a restore is not itself restorable
-            backend.request_auxiliary('c', workflow, AuxiliaryKind.RECOVERY, ref,
-                                      RecoveryInput(request_id, before, 'restore_before_state'), 'op-loop')
+                                          RecoveryInput(request_id, before, 'restore_before_state'), 'op-aux')
+        self.assertEqual(len(backend.snapshot('c', workflow).proposals), 1)  # no restore proposal was stored
+        self.assertEqual((self.work / 'alpha').read_bytes(), b'new')
+        self.assertEqual(len([c for c in self.channel.runner_calls if c.startswith(b'{"op":"execute"}')]), 1)
 
     def test_a_reboot_naming_no_applied_change_is_refused(self):
         # Superseded "reboot unsupported": maintenance.reboot.v1 exists, but only to complete applied changes.

@@ -189,9 +189,13 @@ def _fill(text, values):
     return text
 
 
-def build(out=DEFAULT, *, machine_id, hostname, user):
+SCRIPTS = ('install.sh', 'uninstall.sh', 'install-runner.sh', 'uninstall-runner.sh', 'setup.sh')
+
+
+def write_template(out):
+    """The bundle's files with the server's placeholders left in (@MACHINE_ID@, @HOSTNAME@, @USER@) and no SHA256SUMS:
+    the payload the Ubuntu pairing helper carries (tools/build_ubuntu_helper.py) and fills on the server itself."""
     from vm.ubuntu.provenance import HELPER_FILES
-    values = target_values(machine_id, hostname, user)
     out = Path(out)
     if out.exists():
         shutil.rmtree(out)
@@ -214,20 +218,31 @@ def build(out=DEFAULT, *, machine_id, hostname, user):
         raise ValueError('Generated tailoring differs from the pinned hash; refusing to build')
     (out / 'share' / 'fyp-selected-tailoring.xml').write_bytes(tailoring)
     (out / 'sudoers').mkdir()
-    (out / 'sudoers' / 'fyp-hardening').write_bytes(_fill(SUDOERS, values).encode('ascii'))
-    (out / 'sudoers' / 'fyp-hardening-runner').write_bytes(_fill(RUNNER_SUDOERS, values).encode('ascii'))
+    (out / 'sudoers' / 'fyp-hardening').write_bytes(SUDOERS.encode('ascii'))
+    (out / 'sudoers' / 'fyp-hardening-runner').write_bytes(RUNNER_SUDOERS.encode('ascii'))
     (out / 'systemd').mkdir()
     (out / 'systemd' / 'fyp-hardening-boot-rollback.service').write_bytes(BOOT_ROLLBACK_UNIT.encode('ascii'))
-    (out / 'install.sh').write_bytes(_fill(INSTALL, values).encode('ascii'))
-    (out / 'uninstall.sh').write_bytes(_fill(UNINSTALL, values).encode('ascii'))
-    (out / 'install-runner.sh').write_bytes(_fill(INSTALL_RUNNER, values).encode('ascii'))
-    (out / 'uninstall-runner.sh').write_bytes(_fill(UNINSTALL_RUNNER, values).encode('ascii'))
-    (out / 'setup.sh').write_bytes(_fill(SETUP, values).encode('ascii'))
-    scripts = ('install.sh', 'uninstall.sh', 'install-runner.sh', 'uninstall-runner.sh', 'setup.sh')
-    files = sorted(p for p in out.rglob('*') if p.is_file() and p.name not in scripts)
+    for name, text in zip(SCRIPTS, (INSTALL, UNINSTALL, INSTALL_RUNNER, UNINSTALL_RUNNER, SETUP)):
+        (out / name).write_bytes(text.encode('ascii'))
+    return out
+
+
+def fill(out, values):
+    """Put one server's checked values into the sudo rules and scripts, then write SHA256SUMS of every other file.
+    The Ubuntu pairing helper does the same on the server (fill_bundle); a test keeps the two identical."""
+    out = Path(out)
+    for path in sorted(out.rglob('*')):
+        if path.is_file() and (path.parent.name == 'sudoers' or path.name in SCRIPTS):
+            path.write_bytes(_fill(path.read_bytes().decode('ascii'), values).encode('ascii'))
+    files = sorted(p for p in out.rglob('*') if p.is_file() and p.name not in SCRIPTS + ('SHA256SUMS',))
     sums = ''.join(f'{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.relative_to(out).as_posix()}\n' for p in files)
     (out / 'SHA256SUMS').write_bytes(sums.encode('ascii'))
     return out
+
+
+def build(out=DEFAULT, *, machine_id, hostname, user):
+    values = target_values(machine_id, hostname, user)
+    return fill(write_template(out), values)
 
 
 def main(argv=None):

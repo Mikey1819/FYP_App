@@ -56,11 +56,12 @@ When you have finished with the server, click **Revert changes** in the helper. 
 **Ubuntu Server**
 
 1. In the program, open **Servers** and click **Download pairing helper (.py)**. Copy it to the server.
-2. On the server, run `sudo python3 fyp-pair-ubuntu.py`. A code appears.
+2. On the server, run `sudo python3 fyp-pair-ubuntu.py`. It first sets the server up (the scanner, and the program's own fix runner), then shows a code.
 3. In the program, type the code, click **Find**, then enter the server's account and password.
-4. The first time only: click **Set up this server** and run the one command it shows on the server.
+4. The first time, open **Agentic hardening** and answer the two **Server decisions** (whether UFW manages the firewall, and how to handle avahi-daemon). They are kept for this server.
+5. Before the first fixes, click **Run safety check** there. It tests, with a harmless marker file, that a change can be confirmed and also undone automatically on this server. It takes about a minute and is asked for again only after a new pairing helper.
 
-The server is then saved under **My servers**. Next time, pick it there and enter the password (passwords are never stored).
+The server is then saved under **My servers**. Next time, pick it there and enter the password (passwords are never stored). Run the pairing helper again when you get a newer version of it, or after restoring a snapshot (see below).
 
 ## Harden a server
 
@@ -73,6 +74,8 @@ The server is then saved under **My servers**. Next time, pick it there and ente
 
 A few Windows firewall settings are never changed by the program, because changing them remotely could cut its own connection. The **Fixes** tab shows how to set them yourself, or you can accept them as an exception.
 
+On Ubuntu, nothing has to be typed on the server during hardening. Changes to SSH and the firewall are confirmed by the program over a new login (proof that it can still connect); if that fails, the server undoes them by itself within 10 minutes. Some fixes depend on others (for example the firewall rules on enabling the firewall), so they are proposed in the next round.
+
 **Overview** shows a summary of the server, and **History** shows how its settings changed over time.
 
 ## Testing on a virtual machine or a real server
@@ -80,12 +83,14 @@ A few Windows firewall settings are never changed by the program, because changi
 ### On a virtual machine (best for trying it out)
 
 1. Install Windows Server 2022 or Ubuntu 22.04 in VirtualBox (or another virtualisation program).
-2. Set the virtual machine's network adapter to **Host-only**. The laptop and the virtual machine can then always reach each other, and the address does not change. (**Bridged** also works, but the address may change when the laptop joins another network; then simply pair again.)
+2. Set the virtual machine's network adapter to **Host-only**. The laptop and the virtual machine can then always reach each other, and the address does not change. (**Bridged** also works, but the address may change when the laptop joins another network; then simply pair again.) For **Ubuntu**, add a second adapter set to **NAT**: some fixes install packages (AppArmor, auditd) and need the internet.
 3. **Take a snapshot before you start.** Hardening really changes the settings, so the snapshot is your way back.
 4. Pair and harden the virtual machine as described above.
 5. To start again from a clean state, restore the snapshot.
 
-After restoring a snapshot the virtual machine's clock is often wrong. The program notices this and offers **Sync server clock**: one click fixes it.
+After restoring a snapshot the virtual machine's clock is often wrong. The program notices this and offers **Sync server clock to this laptop**: one click fixes it.
+
+**Ubuntu snapshots:** after a restore, run the pairing helper again on the server (it brings the program's tools back up to date). Ubuntu also starts installing its own updates a few minutes after a restore, which can take 30 minutes or more; while they run, the package fixes are refused with "apt is busy". Wait until `systemctl is-active apt-daily-upgrade.service` on the server says `inactive` before starting a round. To avoid this wait every time, let the updates finish once and take a new snapshot. Do not restore a snapshot while a fix is still running.
 
 ### On a real server
 

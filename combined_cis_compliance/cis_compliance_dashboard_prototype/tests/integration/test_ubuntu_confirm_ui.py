@@ -71,15 +71,18 @@ class ConfirmUiTests(FixUiTests):
             app.button(key='ubuntu_execute').click().run()
             self.assertFalse(list(app.error), [e.value for e in app.error])
             app.run()
-            [status] = keyed('ubuntu_status_')
-            rid = status.key.removeprefix('ubuntu_status_')
+            # While the job runs, the page shows the running animation and checks it by itself (2026-11-13).
+            self.assertEqual(keyed('ubuntu_status_'), [])
             self.assertEqual(keyed('ubuntu_confirm_change_'), [])  # still running: nothing to confirm yet
+            [rid] = list(self.launcher.active)
             self.runner().run_job(rid)
             self.launcher.active.discard(rid)
-            status.click().run()
             app.run()
             [confirm] = keyed('ubuntu_confirm_change_')
-            self.assertIn('reconnect', ' '.join(w.value for w in app.warning).lower())
+            # No remembered login here, so the dashboard cannot confirm by itself and says what to do (task 6).
+            warning = ' '.join(w.value for w in app.warning).lower()
+            self.assertIn('could not confirm it by itself', warning)
+            self.assertIn('connect to the server again', warning)
             confirm.click().run()  # the same login that dispatched the change proves nothing
             self.assertIn('fresh login', ' '.join(e.value for e in app.error).lower())
             app.button(key='agentic_disconnect').click().run()
@@ -155,15 +158,15 @@ class ConfirmUiTests(FixUiTests):
             app.button(key='ubuntu_execute_review').click().run()
             app.button(key='ubuntu_execute').click().run()
             self.assertFalse(list(app.error), [e.value for e in app.error])
-            [status] = keyed('ubuntu_status_')
-            rid = status.key.removeprefix('ubuntu_status_')
+            [rid] = list(self.launcher.active)
             self.runner().run_job(rid)  # The job ran on the server; it now waits for confirmation.
             self.launcher.active.discard(rid)
             app.run()  # The watcher reads the status and confirms over its own fresh login, then redraws the page.
+            app.run()
             self.assertFalse(list(app.error), [e.value for e in app.error])
             self.assertEqual(keyed('ubuntu_confirm_change_'), [])
             self.assertNotEqual(app.session_state[CONNECTION_KEY], first)  # A new login, not the old one.
-            self.assertTrue(any('confirmed after a fresh login' in s.value for s in app.success), [s.value for s in app.success])
+            # No message since 13 November 2026 (the page stays as it is; the fix card shows the result).
         self.assertEqual((self.work / 'alpha').read_bytes(), b'new')
         self.assertEqual(len([c for c in self.runner_calls() if c.startswith(b'{"op":"confirm"')]), 1)
         for database in self.root.rglob('*.sqlite3'):

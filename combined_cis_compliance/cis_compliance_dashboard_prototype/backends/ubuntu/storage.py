@@ -480,9 +480,9 @@ class UbuntuStore:
         if decision is None or decision['decision'] != 'approved':
             raise ValueError('Only an approved proposal can have an execution receipt')
         approved = bytes(decision['payload'])
+        from .executor import receipt_matches
         receipt = parse_receipt(raw)
-        if (receipt['request_id'], receipt['request_sha256']) != (json.loads(approved)['request_id'],
-                                                                  hashlib.sha256(approved).hexdigest()):
+        if not receipt_matches(receipt, json.loads(approved)['request_id'], hashlib.sha256(approved).hexdigest()):
             raise ValueError('Receipt belongs to another request')
         receipt_id = hashlib.sha256(raw).hexdigest()
         with self._db(2) as db, db:

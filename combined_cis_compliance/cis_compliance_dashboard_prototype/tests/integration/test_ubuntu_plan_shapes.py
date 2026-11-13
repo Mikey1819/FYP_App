@@ -12,8 +12,9 @@ LIVE_0711 = {'defers': {'control_id': ['5.1.20', '4.1.4'], 'reason_code': ['high
                        {'action_id': 'ubuntu.4.1.4.v1', 'control_id': '4.1.4', 'reason_code': 'highest_risk'}]}
 
 
-def submit(arguments):
+def submit(arguments, fix_failed=()):
     tools = tools_for(LIVE_FAILING, ELIGIBLE)
+    tools.rounds.fix_failed = frozenset(fix_failed)  # review deferrals of fixable controls stand only with this fact
     tools.call('submit_plan', {'target_id': 'ubuntu:fixture', **arguments})
     return tools.rounds.plan
 
@@ -42,7 +43,8 @@ class PlanShapeTests(unittest.TestCase):
 
     def test_parallel_lists_are_read_as_entries(self):
         plan = submit({'defers': {'control_id': ['5.1.20', '4.1.4'],
-                                  'reason_code': ['needs_manual_review', 'needs_manual_review']}})
+                                  'reason_code': ['needs_manual_review', 'needs_manual_review']}},
+                      fix_failed={'5.1.20', '4.1.4'})
         self.assertEqual([d['control_id'] for d in plan['decisions']], ['5.1.20', '4.1.4'])
 
     def test_parallel_lists_of_different_lengths_are_refused(self):

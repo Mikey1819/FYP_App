@@ -41,15 +41,15 @@ class FakeFirewall:
         if tuple(args) == ('disable',):
             self.active = False
             return
-        delete = args[0] == 'delete'
-        for key, line in TUPLES[tuple(args[1:] if delete else args)]:
+        delete, prepend = args[0] == 'delete', args[0] == 'prepend'  # `ufw prepend`: to the top of each list
+        for key, line in TUPLES[tuple(args[1:] if delete or prepend else args)]:
             rules = getattr(self, key)
             if key == 'rules6' and not self.ipv6:
                 continue
             if delete:
                 rules.remove(line)
             elif line not in rules:
-                rules.append(line)
+                rules.insert(0, line) if prepend else rules.append(line)
 
 
 class Case(unittest.TestCase):
@@ -125,9 +125,9 @@ class EnableTests(Case):
         family.restore(self.PARAMS, before)
         self.assertEqual(family.read_state(self.PARAMS), before)
 
-    def test_never_enabled_without_an_ssh_allow_rule_or_when_not_installed(self):
-        for system in (FakeFirewall(active=False, rules4=()),
-                       FakeFirewall(active=False, unit={'load': 'not-found', 'enabled': 'not-found', 'active': 'inactive'}),
+    def test_never_enabled_when_not_installed_or_already_on(self):
+        # Without an SSH allow rule it now adds `ufw allow 22/tcp` itself (test_ubuntu_auto_steps_1113, 2026-11-13).
+        for system in (FakeFirewall(active=False, unit={'load': 'not-found', 'enabled': 'not-found', 'active': 'inactive'}),
                        FakeFirewall()):  # already enabled and active: nothing to do
             with self.subTest(unit=system.unit, rules=system.rules4), self.assertRaises(ValueError):
                 self.family(system).check_eligible(self.PARAMS)

@@ -206,7 +206,7 @@ def _package_specs():
             if type(candidate) is not dict or candidate != params:
                 raise ValueError('Only the CIS package set for this control is managed')
         action_id = 'ubuntu.%s.v1' % control_id
-        specs[action_id] = ActionSpec(action_id, 1, IMPLEMENTATION_SHA256, (control_id,), validate, 900,
+        specs[action_id] = ActionSpec(action_id, 1, IMPLEMENTATION_SHA256, (control_id,), validate, 1800,
                                       propose=propose, title=titles[control_id],
                                       recovery={'kind': 'restore_backup', 'scope': ['dpkg:' + n for n in spec['packages']]})
     return specs
@@ -292,7 +292,7 @@ def _ufw_spec():
         title='Add the CIS UFW loopback rules (confirm after reconnect)', recovery={'kind': 'restore_backup', 'scope': scope}),
             'ubuntu.4.1.3.v1': ActionSpec(
         'ubuntu.4.1.3.v1', 1, IMPLEMENTATION_SHA256, ('4.1.3',), validate_enable, 120, propose=propose_enable,
-        title='Enable the ufw service and firewall, only with an SSH allow rule (confirm after reconnect)',
+        title='Enable the ufw service and firewall, adding an SSH allow rule first if none (confirm after reconnect)',
         recovery={'kind': 'restore_backup', 'scope': scope + ['systemd:ufw.service']}),
             'ubuntu.4.1.7.v1': ActionSpec(
         'ubuntu.4.1.7.v1', 1, IMPLEMENTATION_SHA256, ('4.1.7',), validate, 120, propose=propose,
@@ -414,10 +414,11 @@ def _service_specs():
 
 
 def _avahi_mask_spec():
-    """Host spec for 2.1.2 with avahi-daemon kept: proposed only on a machine whose retention decision is registered
-    (system.config.UBUNTU_AVAHI_RETENTION), with the package installed and both units read."""
+    """Host spec for 2.1.2 with avahi-daemon kept: proposed only on a machine whose retention decision is 'mask'
+    (registered in code, or recorded on the Ubuntu page: server_decisions), with the package installed and both units
+    read."""
     import json
-    from system.config import UBUNTU_AVAHI_RETENTION
+    from .server_decisions import decision
     from system.contracts import ComplianceStatus
     from vm.ubuntu.family_service import IMPLEMENTATION_SHA256, MASK_SPECS
     units = MASK_SPECS['2.1.2']
@@ -428,7 +429,7 @@ def _avahi_mask_spec():
         if result is None or result.status is not ComplianceStatus.NON_COMPLIANT:
             return None
         doc = json.loads(evidence.raw)
-        if UBUNTU_AVAHI_RETENTION.get(doc.get('machine_id')) != 'mask':
+        if decision(doc.get('machine_id'), 'avahi_2_1_2') != 'mask':
             return None
         facts = doc['observations'][cid]
         if facts.get('package.avahi-daemon', {}).get('value') != 'installed' or any(
@@ -450,14 +451,6 @@ FAMILIES = dict(_sysctl_specs(), **_core_spec(), **_auth_specs(), **_aging_specs
                 **_grub_spec(), **_cron_spec())
 
 
-def _restore_spec():
-    from backends.ubuntu.catalogue import EXPECTED_IDS
-    from vm.ubuntu.family_restore import ACTION_ID, IMPLEMENTATION_SHA256, validate_params
-    return ActionSpec(ACTION_ID, 1, IMPLEMENTATION_SHA256, tuple(sorted(EXPECTED_IDS)), validate_params, 60,
-                      title='Restore the exact state recorded before an applied fix',
-                      recovery={'kind': 'manual_console', 'scope': ['VM console and recovery snapshot']})
-
-
 def _acceptance_spec():
     from vm.ubuntu.family_acceptance import IMPLEMENTATION_SHA256, MARKER
 
@@ -476,7 +469,7 @@ def _maintenance_specs():
         return lambda params: cls(None).validate(params)
     return {
         'maintenance.apt_refresh.v1': ActionSpec(
-            'maintenance.apt_refresh.v1', 1, IMPLEMENTATION_SHA256, ('maintenance',), validator(AptRefreshFamily), 600,
+            'maintenance.apt_refresh.v1', 1, IMPLEMENTATION_SHA256, ('maintenance',), validator(AptRefreshFamily), 1800,
             title='Refresh package lists (apt-get update; installs nothing)',
             recovery={'kind': 'manual_console', 'scope': ['No configuration change: nothing to restore']}),
         'maintenance.reboot.v1': ActionSpec(
@@ -487,7 +480,9 @@ def _maintenance_specs():
 
 
 # Auxiliary operations: same approval/runner protocol, never counted as CIS control families.
-AUXILIARY = {'recovery.restore.v1': _restore_spec(), 'acceptance.marker.v1': _acceptance_spec(), **_maintenance_specs()}
+# No per-control restore (administrator, 12 November 2026: as on Windows). The runner on the server still registers
+# recovery.restore.v1 (unchanged, so no new setup is needed), but the host can no longer plan, approve or send one.
+AUXILIARY = {'acceptance.marker.v1': _acceptance_spec(), **_maintenance_specs()}
 
 
 @dataclass(frozen=True)

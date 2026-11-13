@@ -1,9 +1,22 @@
-"""Approved restore (recovery.restore.v1) of an applied request to its exact before-state. TEST-ONLY families."""
+"""The runner's restore operation (recovery.restore.v1) of an applied request to its exact before-state.
+
+Since task 8 (administrator, 12 November 2026) the host no longer plans, approves or dispatches a per-control restore
+(as on Windows). The runner on the server keeps the family unchanged, so no new setup is needed; these tests build a
+TEST-ONLY host spec for it and check the runner still refuses anything but an exact restore. TEST-ONLY families."""
 from datetime import timedelta
 import json
 import unittest
 from tests.integration.runner_fixture import sha
 from tests.integration.test_ubuntu_runner import Fixture, NOW
+
+
+def restore_spec():
+    """TEST-ONLY: the host spec the program used before task 8, to reach the runner's restore family directly."""
+    from backends.ubuntu.actions import ActionSpec
+    from backends.ubuntu.catalogue import EXPECTED_IDS
+    from vm.ubuntu.family_restore import ACTION_ID, IMPLEMENTATION_SHA256, validate_params
+    return ActionSpec(ACTION_ID, 1, IMPLEMENTATION_SHA256, tuple(sorted(EXPECTED_IDS)), validate_params, 60,
+                      title='TEST-ONLY restore', recovery={'kind': 'manual_console', 'scope': ['VM console']})
 
 
 class RestoreFixture(Fixture):
@@ -13,14 +26,17 @@ class RestoreFixture(Fixture):
         return original
 
     def restore_request(self, original, runner=None):
-        from backends.ubuntu.actions import AUXILIARY, plan_action
+        from backends.ubuntu.actions import plan_action
         from backends.ubuntu.approvals import approve
         from datetime import datetime
         runner = runner or self.runner(clock=lambda: NOW + timedelta(minutes=2))
         params = {'restores_request_id': original.request['request_id'], 'restores_request_sha256': original.sha256}
         preview = runner.preview('recovery.restore.v1', params)
+        if 'refused' in preview:  # since 2026-11-13 an ineligible restore says why instead of failing silently
+            raise ValueError(preview['refused'])
         r = original.request
-        plan = plan_action(AUXILIARY['recovery.restore.v1'], families=AUXILIARY, parameters=params,
+        spec = restore_spec()
+        plan = plan_action(spec, families={spec.action_id: spec}, parameters=params,
                            **{k: r[k] for k in ('target_id', 'registration_epoch', 'hostname', 'machine_id',
                                                 'workflow_session_id', 'round_id', 'evidence_sha256', 'control_id',
                                                 'predicate_id')},
@@ -62,7 +78,10 @@ class RestoreTests(RestoreFixture):
         self.runner().execute(original.raw)
         runner = self.runner(clock=lambda: NOW + timedelta(minutes=2))
         params = {'restores_request_id': original.request['request_id'], 'restores_request_sha256': 'f' * 64}
-        with self.assertRaises(ValueError):runner.preview('recovery.restore.v1', params)
+        # Other bytes than the applied request: not eligible, and since 2026-11-13 the preview says so (no plan).
+        refused = runner.preview('recovery.restore.v1', params)
+        self.assertIn('refused', refused)
+        self.assertNotIn('before_state_sha256', refused)
         with self.assertRaises(ValueError):runner.preview('recovery.restore.v1', dict(params, extra=1))
 
 

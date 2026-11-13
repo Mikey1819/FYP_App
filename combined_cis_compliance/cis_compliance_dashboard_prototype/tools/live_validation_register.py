@@ -37,31 +37,56 @@ def _describe(receipt, verification):
     return text + (', verification: ' + verification if verification else '')
 
 
+APPLIED = ('applied', 'reconciled_applied')
+NOT_FIXES = ('recovery.', 'maintenance.', 'acceptance.')  # restores and auxiliary steps are never a control's fix
+STATUSES = ('Validated live', 'Validated live and restored', 'Applied, not verified', 'Refused', 'Fixture-tested only')
+
+
 def register(controls, *, decisions, receipts, verifications):
-    """One row per control: status, latest fix and latest restore, from approved decisions and their receipts."""
+    """One row per control: status, the fix that proves it (or the latest attempt), the latest restore, and that fix's
+    evidence (time, approver, request, round, workflow), from approved decisions and their receipts.
+
+    A control is validated live when any approved fix of it was applied and the verification scan read it Compliant;
+    a later failed attempt never hides that proof. It is "validated live and restored" when an applied restore came
+    after the proving fix. Without any live outcome (no fix, or approved but never executed) it is fixture-tested
+    only, whatever its fixture tests show."""
     final, rows = _final(receipts), []
+    when = lambda d: (final.get(d['request_id']) or {}).get('completed_at', '')  # noqa: E731
     for cid in controls:
         mine = [d for d in decisions if d['control_id'] == cid]
-        when = lambda d: (final.get(d['request_id']) or {}).get('completed_at', '')  # noqa: E731
-        fixes = sorted((d for d in mine if d['action_id'].startswith('ubuntu.')), key=when)
-        restores = sorted((d for d in mine if d['action_id'].startswith('recovery.')), key=when)
-        fix = fixes[-1] if fixes else None
+        fixes = sorted((d for d in mine if not d['action_id'].startswith(NOT_FIXES) and d['request_id'] in final),
+                       key=when)
+        restores = sorted((d for d in mine if d['action_id'].startswith('recovery.') and d['request_id'] in final),
+                          key=when)
+        proven = [d for d in fixes if final[d['request_id']]['outcome'] in APPLIED
+                  and verifications.get(d['request_id']) == 'Compliant']
+        fix = proven[-1] if proven else (fixes[-1] if fixes else None)
         receipt = final.get(fix['request_id']) if fix else None
-        verified = verifications.get(fix['request_id']) if fix else None
-        if fix is None:
-            status = 'Not run live'
-        elif receipt is not None and receipt['outcome'] in ('applied', 'reconciled_applied'):
-            status = 'Validated live' if verified == 'Compliant' else 'Applied, not verified Compliant'
-        elif receipt is None:
-            status = 'Approved, not executed'
-        else:
-            status = 'Attempted, not applied'
         restore = restores[-1] if restores else None
+        if fix is None:
+            status = 'Fixture-tested only'
+        elif proven:
+            restored = (restore is not None and final[restore['request_id']]['outcome'] in APPLIED
+                        and when(restore) > when(fix))
+            status = 'Validated live and restored' if restored else 'Validated live'
+        elif receipt['outcome'] in APPLIED or receipt['outcome'] == 'unresolved':
+            status = 'Applied, not verified'  # applied without a Compliant scan, or its outcome is not known
+        else:
+            status = 'Refused'
         rows.append({'control_id': cid, 'status': status, 'attempts': len(fixes),
-                     'fix': _describe(receipt, verified) if fix else '',
+                     'fix': _describe(receipt, verifications.get(fix['request_id'])) if fix else '',
                      'restore': _describe(final.get(restore['request_id']), verifications.get(restore['request_id']))
-                     if restore else ''})
+                     if restore else '',
+                     'evidence': {'time': receipt['completed_at'], 'approver': fix.get('approver'),
+                                  'request_id': fix['request_id'], 'round_id': fix.get('round_id'),
+                                  'workflow': fix.get('workflow')} if fix else None})
     return rows
+
+
+def summary(rows):
+    """"N of M validated live": a restored control was validated live too."""
+    validated = sum(r['status'] in ('Validated live', 'Validated live and restored') for r in rows)
+    return '%d of %d validated live' % (validated, len(rows))
 
 
 def _copy(path, folder):
@@ -84,7 +109,8 @@ def collect_records():
                 continue
             data = json.loads(payload)
             decisions.append({'request_id': data['request_id'], 'control_id': data['control_id'],
-                              'action_id': data['action']['action_id']})
+                              'action_id': data['action']['action_id'], 'approver': data.get('approver'),
+                              'round_id': data.get('round_id'), 'workflow': data.get('workflow_session_id')})
         receipts = [json.loads(p) for (p,) in agentic.execute('SELECT payload FROM rem_receipts')]
         controls_of = {d['request_id']: d['control_id'] for d in decisions}
         verifications = {}
@@ -119,7 +145,7 @@ def markdown(rows):
              'scans (temporary copies; nothing typed in). "Validated live" means an administrator-approved fix was '
              'applied on FYP-Ubuntu2204 and the automatic verification scan read the control Compliant. Every other '
              'control is unvalidated live, whatever its fixture tests show.', '',
-             'Summary: ' + ', '.join('%s %d' % (k, v) for k, v in sorted(counts.items())), '',
+             'Summary: ' + summary(rows) + ' (' + ', '.join('%s %d' % (k, v) for k, v in sorted(counts.items())) + ')', '',
              '| Control | Status | Fix attempts | Latest fix | Latest restore |', '| --- | --- | --- | --- | --- |']
     lines += ['| %s | %s | %d | %s | %s |' % (r['control_id'], r['status'], r['attempts'], r['fix'] or '-',
                                               r['restore'] or '-') for r in rows]

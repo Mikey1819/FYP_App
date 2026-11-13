@@ -26,13 +26,14 @@ def names(event_list, kind='tool'):
 
 
 class AssessmentFeatureTests(base.AgentRoundTests):
-    def round_with(self, clients, *, collect=None, rank=None, history=None):
+    def round_with(self, clients, *, collect=None, rank=None, history=None, fix_failed=()):
         from backends.ubuntu.agents import run_agentic_round
         from backends.ubuntu.adapter import _controls
         return run_agentic_round(client_factory=clients.__getitem__, collect=collect or self.collect_with(),
                                  log_store=self.log, target_id=TARGET,
                                  titles={cid: c.title for cid, c in _controls().items()},
-                                 rank=rank or (lambda run_id, ev: None), history=history)
+                                 rank=rank or (lambda run_id, ev: None), history=history,
+                                 fix_failed=frozenset(fix_failed))
 
     def test_the_scanner_inspects_observations_as_code_written_states_only(self):
         # At most three controls per Scanner run (MAX_OBSERVATIONS); the fourth is refused.
@@ -71,8 +72,9 @@ class AssessmentFeatureTests(base.AgentRoundTests):
         analysis = [call('read_ranking'), call('submit_analysis', flags=[], gap_triage=[
             {'control_id': '2.4.1.2', 'triage_code': 'manual_review'}, {'control_id': '1.5.4', 'triage_code': 'rescan'}])]
         clients = team([call('delegate_scanner'), call('delegate_analysis')], scanner_ok(), analysis)
+        # persistent_failure needs an applied fix that did not verify (2026-11-13), not just an earlier failure (D=3).
         result = self.round_with(clients, collect=self.collect_with(errors=True),
-                                 rank=lambda r, e: [finding('5.1.20', 1), finding('1.5.1', 2, D=3)])
+                                 rank=lambda r, e: [finding('5.1.20', 1), finding('1.5.1', 2, D=3)], fix_failed={'1.5.1'})
         ranking = next(e['data']['result'] for e in self.events(result['children']['analysis'])
                        if e['kind'] == 'tool' and e['data']['name'] == 'read_ranking')
         codes = {f['control_id']: f['attention_codes'] for f in ranking['findings']}
@@ -193,8 +195,9 @@ class RemediationPhaseTests(unittest.TestCase):
         return run_remediation_phase(phase, client_factory=clients.__getitem__)
 
     def events(self, run_id):
+        """The run's own events; the model_timing record stored after it finished (module 2) is left out."""
         from hardening.investigation import InvestigationLog
-        return InvestigationLog(self.log).get(run_id)['events']
+        return [e for e in InvestigationLog(self.log).get(run_id)['events'] if e['kind'] != 'model_timing']
 
     def test_a_full_phase_executes_in_the_agents_order_verifies_and_finishes(self):
         result = self.run_phase(
@@ -259,6 +262,31 @@ class RemediationPhaseTests(unittest.TestCase):
                 self.assertEqual(result['remediation']['not_attempted'], ['5.2.3'])
                 self.assertEqual(result['review']['reason_code'], code)
                 self.assertEqual(self.verified, [])  # nothing applied: no verification is offered
+
+    def test_fixes_that_wait_run_after_the_others_whatever_order_the_agent_gives(self):
+        """Problem 5 (live 11 Nov): the agent put the SSH fix first; it waited for its confirmation and the other
+        approved fixes never ran. Code runs the fixes that wait (a supervised job, a confirmation after a fresh login)
+        after those that do not, and refuses a list that would start with one while others are still ready."""
+        waiting = [dict(REQUESTS[0], waits='confirm'), dict(REQUESTS[1], waits=None), dict(REQUESTS[2], waits='job')]
+        result = self.run_phase(
+            self.phase(requests=waiting, outcomes={'r414': ('running', 'job_started')}),
+            [call('delegate_remediation'), call('delegate_verification'),
+             call('submit_review', next_step='remediation_review', reason_code='awaiting_confirmation')],
+            [call('precheck'), call('execute_fixes', control_ids=['1.5.1']),
+             call('execute_fixes', control_ids=['1.5.1', '4.1.4', '5.2.3']), call('report_results')],
+            scanner_ok()[:2] + [call('handoff_verification', reason='done')])
+        # The first list held only a fix that waits while 5.2.3 was ready: refused, nothing ran. The second ran in
+        # code's order: 5.2.3, then the job (4.1.4), which waits, so the confirm fix (1.5.1) stays for later.
+        self.assertEqual(self.executed, ['r523', 'r414'])
+        self.assertEqual(result['remediation']['not_attempted'], ['1.5.1'])
+        rejected = [e['data']['error'] for e in self.events(result['children']['remediation'])
+                    if e['kind'] == 'tool_rejected']
+        self.assertTrue(any('5.2.3' in error and 'first' in error for error in rejected), rejected)
+        listed = [e['data'] for e in self.events(result['children']['remediation']) if e['kind'] == 'tool']
+        precheck = next(e['result'] for e in listed if e['name'] == 'precheck')
+        self.assertEqual({r['control_id']: r['waits'] for r in precheck['requests']},
+                         {'1.5.1': 'confirmation after a fresh login', '5.2.3': 'no',
+                          '4.1.4': 'supervised job'})
 
     def test_verification_comes_first_and_a_review_code_must_be_true(self):
         result = self.run_phase(
@@ -334,7 +362,9 @@ class AgenticExecutionTests(unittest.TestCase):
             backend, create=True, check=lambda *a: 'binding', _store=lambda: store, model_probe=lambda: model,
             _latest=lambda *a: N(round_id='r', evidence_sha256='d'), _agent_skipped=lambda *a: dict(skipped or {}),
             _evidence=lambda *a: 'evidence', _findings=lambda *a: (), _verify=verify,
-            _unverified=lambda *a: list(unverified), session=N(target_id=TARGET), model_client_factory=None)
+            _unverified=lambda *a: list(unverified), session=N(target_id=TARGET), model_client_factory=None,
+            ledger=mock.Mock(**{'claim.return_value': (False, None)}), _waits=lambda proposal: None,
+            _refuse_completed=lambda binding: None)
         return backend, patches, run_phase
 
     def execute(self, backend, patches, run_phase):
@@ -364,7 +394,7 @@ class AgenticExecutionTests(unittest.TestCase):
         backend, patches, _ = self.backend(skipped={'a151': 'the approval has expired'})
         dispatched = []
         with patches, mock.patch.object(backend, '_dispatch_one', create=True,
-                                        new=lambda s, b, p, o: dispatched.append(p.proposal_id) or N(state='completed')), \
+                                        new=lambda s, b, p, o, **_: dispatched.append(p.proposal_id) or N(state='completed')), \
                 mock.patch('backends.ubuntu.adapter.execution_gate', return_value=()):
             backend.execute_approved('c', 'w', 'round', ('a151', 'a523'), True, 'op')
         self.assertEqual(dispatched, ['p-a523'])

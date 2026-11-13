@@ -40,6 +40,37 @@ class AuditPrerequisiteTests(unittest.TestCase):
                 self.assertEqual(FAMILIES['ubuntu.%s.v1' % cid].propose(cid, ev), params)
 
 
+class AuditdOrderTextTests(unittest.TestCase):
+    """Task 4 (administrator's choice, 12 November): the controls that need auditd say they are planned after 6.3.1.1
+    installs it, instead of the generic "No registered fix applies"; the next round plans them (the Orchestrator's
+    review already recommends it: next_round / unblocked_findings)."""
+    NEEDS_AUDITD = ('6.3.1.2', '6.3.3.4', '6.3.3.6', '6.3.3.8')
+
+    def rows(self, failing):
+        from backends.ubuntu.adapter import _controls, _plan_rows
+        from tests.integration.test_ubuntu_risk import evidence
+        plan = {'fixes': [{'control_id': '6.3.1.1', 'decision': 'fix', 'reason_code': 'highest_risk'}]
+                if '6.3.1.1' in failing else [], 'decisions': [],
+                'deferred_by_code': [{'control_id': c, 'reason_code': 'no_registered_action'}
+                                     for c in failing if c != '6.3.1.1']}
+        return {r.control_id: r for r in _plan_rows({'plan': plan}, evidence(list(failing)), _controls())}
+
+    def test_while_auditd_is_missing_they_say_they_follow_6_3_1_1(self):
+        rows = self.rows(('6.3.1.1',) + self.NEEDS_AUDITD)
+        for cid in self.NEEDS_AUDITD:
+            with self.subTest(control=cid):
+                self.assertEqual(rows[cid].decision, 'Deferred (by the app)')
+                self.assertIn('Planned after 6.3.1.1 installs auditd', rows[cid].reason)
+                self.assertIn('next round', rows[cid].reason)
+        self.assertEqual(rows['6.3.1.1'].decision, 'Fix proposed')
+
+    def test_with_auditd_installed_the_usual_reason_stays(self):
+        rows = self.rows(self.NEEDS_AUDITD)  # 6.3.1.1 is compliant: auditd is there, so something else blocks them
+        for cid in self.NEEDS_AUDITD:
+            with self.subTest(control=cid):
+                self.assertEqual(rows[cid].reason, 'No registered fix applies in the current state')
+
+
 class MissingFixPlanCardTests(unittest.TestCase):
     def test_a_planned_fix_without_a_stored_plan_says_the_preview_failed(self):
         from system.ui.components import plan_cards

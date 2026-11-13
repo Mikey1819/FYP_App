@@ -33,7 +33,10 @@ class PlanHonestyTests(unittest.TestCase):
         rejected = [e['data'] for e in events if e['kind'] == 'tool_rejected']
         self.assertEqual(len(rejected), 1)
         self.assertIn('1.5.1', rejected[0]['error'])
-        self.assertEqual(result['plan']['decisions'], manual)
+        # Since 2026-11-13 a review deferral of a fixable control with no failed fix behind it still gets its card.
+        self.assertEqual(result['plan']['decisions'], [other])
+        self.assertIn({'control_id': '1.5.1', 'decision': 'fix', 'action_id': ELIGIBLE['1.5.1'],
+                       'reason_code': 'review_unsupported'}, result['plan']['fixes'])
 
     def test_no_registered_action_stays_valid_for_a_control_without_one(self):
         true = [{'control_id': '5.1.20', 'decision': 'defer', 'reason_code': 'no_registered_action'}]
@@ -93,8 +96,13 @@ class PlanTableTests(unittest.TestCase):
         self.assertTrue(row.title)
 
     def test_a_deferral_shows_its_reason_in_words(self):
-        snap = self.snapshot([{'control_id': '1.5.1', 'decision': 'defer', 'reason_code': 'needs_manual_review'}])
-        row = next(r for r in snap.plan if r.control_id == '1.5.1')
+        # A stored deferral (rounds before 2026-11-13 hold such deferrals of fixable controls) reads in words.
+        from backends.ubuntu.adapter import _plan_rows, _controls
+        from types import SimpleNamespace as N
+        from system.contracts import ComplianceStatus
+        evidence = N(assessments=[N(control_id='1.5.1', status=ComplianceStatus.NON_COMPLIANT)])
+        plan = {'fixes': [], 'decisions': [{'control_id': '1.5.1', 'decision': 'defer', 'reason_code': 'needs_manual_review'}]}
+        row = _plan_rows({'plan': plan}, evidence, _controls())[0]
         self.assertEqual((row.decision, row.reason), ('Deferred', 'Needs human review before any change'))
 
     def test_an_empty_plan_proposes_every_registered_fix_it_did_not_defer(self):

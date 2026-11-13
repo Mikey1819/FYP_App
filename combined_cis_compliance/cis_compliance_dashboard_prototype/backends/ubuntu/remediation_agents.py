@@ -14,9 +14,9 @@ The backend supplies a `Phase`: the open approved requests and four callables (p
 """
 import time
 
-from hardening.investigation import Coordinator, Limits
+from hardening.investigation import Limits
 from system.contracts import ComplianceStatus
-from .agents import (COMMON, ORCHESTRATOR, ORCHESTRATOR_REQUEST_SECONDS, PHASE_SECONDS, SCANNER, ScannerTools, _Labelled,
+from .agents import (COMMON, coordinate, ORCHESTRATOR, ORCHESTRATOR_REQUEST_SECONDS, PHASE_SECONDS, SCANNER, ScannerTools,
                      _Round, _tool)
 
 REMEDIATION = 'remediation'
@@ -38,9 +38,14 @@ NEXT_STEP = {
                            'verification_unavailable': 'no verification scan covers {unverified} yet',
                            'fix_refused': 'the server refused {refused}; nothing was written for it',
                            'uncertain_outcome': 'the outcome of {uncertain} is uncertain; check its status first',
-                           'awaiting_confirmation': '{running} waits for confirmation after reconnecting, or for '
-                                                    'the reboot',
+                           'awaiting_confirmation': '{running} waits for its confirmation over a fresh login (the '
+                                                    'dashboard does this by itself), or for the reboot',
                            'remediation_incomplete': '{not_attempted} was not attempted'}}
+# What a fix waits for once the server has run it (the family's supervision). Nothing more runs while one waits, so
+# code runs the fixes that wait after those that do not: problem 5 (live 11 November), where an SSH fix ran first and
+# the other approved fixes never did.
+WAITS = {None: 'no', 'job': 'supervised job', 'confirm': 'confirmation after a fresh login'}
+WAIT_ORDER = {None: 0, 'job': 1, 'confirm': 2}
 FACT_LISTS = ('failed', 'unverified', 'refused', 'uncertain', 'running', 'not_attempted', 'remaining', 'unblocked')
 
 REMEDIATION_PROMPT = COMMON + (
@@ -48,7 +53,7 @@ REMEDIATION_PROMPT = COMMON + (
     'or write commands. 1) Call precheck to check the server read-only (list_approved is optional). 2) Decide each '
     'request once: skip_fix (with a reason_code from its skip_codes) every request precheck shows not ready, and '
     'execute_fixes with the ready ones in the order you choose (the listed order unless a prerequisite needs another '
-    'first). Execution pauses after a refused fix: judge whether the remaining requests would fail the same way, then '
+    'first); code runs the fixes that wait (waits is not "no") after the others. Execution pauses after a refused fix: judge whether the remaining requests would fail the same way, then '
     'continue with execute_fixes or call stop_execution. After must_stop execute nothing more. 3) Finish with '
     'report_results (target_id only: code records every result).')
 REVIEW_PROMPT = COMMON + (
@@ -60,7 +65,8 @@ REVIEW_PROMPT = COMMON + (
 
 class Phase:
     """What the backend hands the remediation phase. `requests`: the open approved fixes in plan order, as dicts with
-    request_id, control_id, action_id, title, expires_at and rank (or None). `precheck(request_id)` returns the
+    request_id, control_id, action_id, title, expires_at, rank (or None) and optionally waits (None, 'job' or
+    'confirm': what the fix waits for after it ran). `precheck(request_id)` returns the
     read-only facts {expired, precondition_changed, preview_refused} and raises only when the server cannot be reached;
     `execute(request_id)` dispatches once and returns (state, code), state one of KIND; `skip(request_id, reason)`
     records a durable skip; `verify(request_ids)` runs and records the verification scan, returning (run_id,
@@ -159,7 +165,10 @@ class RemediationTools(_PhaseTools):
     def _row(self, request_id):
         r = self.requests[request_id]
         return {'control_id': r['control_id'], 'action_id': r['action_id'], 'title': r['title'], 'rank': r['rank'],
-                'approval_expires_at': r['expires_at']}
+                'approval_expires_at': r['expires_at'], 'waits': WAITS[r.get('waits')]}
+
+    def _wait(self, request_id):
+        return WAIT_ORDER[self.requests[request_id].get('waits')]
 
     def _open_request(self, control_id):
         request_id = self.request_for.get(control_id) if type(control_id) is str else None
@@ -181,7 +190,7 @@ class RemediationTools(_PhaseTools):
             self.facts[request_id] = {k: bool(facts.get(k)) for k in ('precondition_changed', 'expired',
                                                                      'preview_refused')}
             ready = not any(self.facts[request_id].values())
-            rows.append({'control_id': r['control_id'], 'ready': ready,
+            rows.append({'control_id': r['control_id'], 'ready': ready, 'waits': WAITS[r.get('waits')],
                          **({} if ready else {'skip_codes': self._skip_codes(request_id)})})
         return {'state': 'checked', 'requests': rows}
 
@@ -199,6 +208,16 @@ class RemediationTools(_PhaseTools):
                 raise ValueError(f"{control_id} is not ready ({', '.join(c for c, v in facts.items() if v)}); "
                                  'use skip_fix')
             request_ids.append(request_id)
+        # The fixes that wait run last (stable: the agent's order within each kind), and none may start while a ready
+        # fix that does not wait is left out of the list: nothing more would run until it settles.
+        request_ids.sort(key=self._wait)
+        if self._wait(request_ids[0]):
+            ready = [r['control_id'] for i, r in self.open().items() if i not in request_ids and not self._wait(i)
+                     and i in self.facts and not any(self.facts[i].values())]
+            if ready:
+                raise ValueError('Execute the fixes that do not wait first (' + ', '.join(ready) + '): nothing more '
+                                 'runs while ' + self.requests[request_ids[0]]['control_id'] + ' waits for '
+                                 + WAITS[self.requests[request_ids[0]].get('waits')])
         results = []
         for request_id in request_ids:
             if self.stopped or (results and results[-1]['result'] == 'refused'):
@@ -308,9 +327,9 @@ class ReviewTools(_PhaseTools):
         seconds = int(min(seconds, self.remaining()))
         if seconds < 5:
             raise ValueError('Phase deadline reached; no further delegation')
-        child = Coordinator(_Labelled(self.client_factory(role)), tools, clock=self.phase.clock,
-                            limits=Limits(steps=steps, calls=calls, seconds=seconds,
-                                          request_seconds=min(request, seconds), invalid=2)).run()
+        child = coordinate(self.client_factory(role), tools, clock=self.phase.clock,
+                           limits=Limits(steps=steps, calls=calls, seconds=seconds,
+                                         request_seconds=min(request, seconds), invalid=2))
         return child['run_id'], child['events'][-1]['data']
 
     def applied(self):
@@ -425,13 +444,45 @@ class ReviewTools(_PhaseTools):
         raise ValueError('Tool is outside this agent role')
 
 
+def settled_review(*, results, status, unverified, remaining):
+    """The next step once every fix of an execution has settled, decided by code from the recorded outcomes and the
+    final verification scan (administrator, 13 November 2026): the Orchestrator's own review was written while a fix
+    still waited ("waits for its confirmation over a fresh login"), and the dashboard then carried on by itself.
+    `results`: control -> applied / refused / uncertain; `status`: control -> status in the final scan;
+    `unverified`: applied controls no scan covered; `remaining`: failures a registered fix can still plan."""
+    kinds = {k: sorted(c for c, v in results.items() if v == k) for k in ('applied', 'refused', 'uncertain')}
+    if not status:  # no final scan stored: every applied fix is unverified, none has failed
+        unverified = set(unverified) | set(kinds['applied'])
+    facts = {'failed': [c for c in kinds['applied'] if c not in unverified and status.get(c) != 'Compliant'],
+             'unverified': sorted(unverified), 'refused': kinds['refused'], 'uncertain': kinds['uncertain'],
+             'running': [], 'not_attempted': [], 'remaining': sorted(remaining), 'unblocked': []}
+    order = (('remediation_review', 'verification_failed', facts['failed']),
+             ('remediation_review', 'verification_unavailable', facts['unverified']),
+             ('remediation_review', 'fix_refused', facts['refused']),
+             ('remediation_review', 'uncertain_outcome', facts['uncertain']),
+             ('next_round', 'remaining_findings', facts['remaining']),
+             ('finish', 'all_verified', kinds['applied']))
+    step, code = next(((s, c) for s, c, true in order if true), ('finish', 'nothing_executed'))
+    parts = ['Every approved fix of this execution has run.']
+    for kind, words in (('applied', 'Applied'), ('refused', 'Refused by the server (nothing written)'),
+                        ('uncertain', 'Outcome uncertain')):
+        if kinds[kind]:
+            parts.append(words + ': ' + ', '.join(kinds[kind]) + '.')
+    if status and kinds['applied']:
+        parts.append('Final verification scan: ' + '; '.join(f'{c} {status.get(c, "not assessed")}'
+                                                             for c in kinds['applied']) + '.')
+    sentence = NEXT_STEP[step][code].format(**{k: ', '.join(facts[k]) for k in FACT_LISTS})
+    parts.append('Next step (' + step.replace('_', ' ') + '): ' + sentence + '.')
+    return {'next_step': step, 'reason_code': code, 'reason': ' '.join(parts)}
+
+
 def run_remediation_phase(phase, *, client_factory):
     """One remediation phase. Returns the review's run, the Remediation Agent's recorded results, the verification
     scan (if any) and the next-step decision (None when the Orchestrator stopped without one)."""
     tools = ReviewTools(phase, client_factory)
-    result = Coordinator(_Labelled(client_factory(ORCHESTRATOR)), tools, clock=phase.clock,
-                         limits=Limits(steps=8, calls=10, seconds=PHASE_SECONDS,
-                                       request_seconds=ORCHESTRATOR_REQUEST_SECONDS, invalid=3)).run()
+    result = coordinate(client_factory(ORCHESTRATOR), tools, clock=phase.clock,
+                        limits=Limits(steps=8, calls=10, seconds=PHASE_SECONDS,
+                                      request_seconds=ORCHESTRATOR_REQUEST_SECONDS, invalid=3))
     return {'orchestrator_run_id': result['run_id'], 'status': result['events'][-1]['data']['status'],
             'remediation': tools.remediation, 'verification': tools.verification, 'review': tools.terminal_outcome,
             'children': dict(tools.children)}

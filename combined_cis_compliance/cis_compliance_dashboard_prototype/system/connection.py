@@ -96,7 +96,12 @@ class ConnectionService:
                 return ConnectionResult('disconnected', diagnostic_code=discovery.code, detail=discovery.detail)
             target = None
             if discovery.transport == 'ssh':
-                channel = self._ssh_factory(request, credentials, self.ledger.known_fingerprint(request.endpoint))
+                # A re-pair by code vouches for the key in its signed answer: the login must find exactly that key,
+                # even where this laptop recorded another one (a restored or reinstalled server; 2026-11-13). Without
+                # a pairing, the recorded key stays the only one accepted.
+                known = (None if paired and credentials.confirmed_fingerprint
+                         else self.ledger.known_fingerprint(request.endpoint))
+                channel = self._ssh_factory(request, credentials, known)
                 identity = channel.verify_identity(request)
                 if identity.platform != 'ubuntu' or identity.os_version != '22.04' or identity.transport != 'ssh':
                     raise VerificationRefused(f'After login the server reports {identity.platform[:20]} '
@@ -121,7 +126,10 @@ class ConnectionService:
                     f'The machine that accepted the login is {identity.hostname[:63]} (ID {identity.machine_identity}),'
                     f' not {request.expected_hostname[:63]} (ID {request.expected_machine_identity[:64]}), the one '
                     'that answered the pairing code or was saved.')
-            target_id, epoch = self.ledger.register(identity, request.endpoint, readdress=paired)
+            target_id, epoch = self.ledger.register(
+                identity, request.endpoint, readdress=paired,
+                key_confirmed=bool(paired and credentials.confirmed_fingerprint
+                                   and credentials.confirmed_fingerprint == identity.host_fingerprint))
             if self.ledger.owned_elsewhere(target_id, epoch):
                 raise PendingChangeElsewhere('pending change elsewhere')
             session = VerifiedSession(uuid4().hex, identity, target_id, epoch, credentials.username,

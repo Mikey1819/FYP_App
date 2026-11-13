@@ -258,6 +258,8 @@ class AgentEvent:
     phase: str = ''  # 'Assessment phase' or 'Remediation phase', as the Windows Agent log groups its agents
     tool_calls: int | None = None  # on the run's finished event only
     duration_seconds: float | None = None  # on the run's finished event only
+    model_seconds: float | None = None  # Ubuntu: the model's response time of the step that produced this event
+    model_retried: bool = False  # Ubuntu: that step's request timed out once and was retried (module 2)
 
 
 @dataclass(frozen=True)

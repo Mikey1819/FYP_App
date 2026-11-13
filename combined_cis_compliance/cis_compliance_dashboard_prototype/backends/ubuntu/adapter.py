@@ -34,24 +34,52 @@ def _controls():
 
 
 REFUSAL_DETAIL = {
+    'not_eligible': ("Not applied: the server's own check refused it just before writing (for a package fix, usually "
+                     "apt busy with Ubuntu's automatic updates). Nothing was written; the next round plans it again."),
+    'not_claimed': ('Not applied: the server has no record of this request (it was restored from a snapshot or reset '
+                    'after the fix was sent), so nothing of it is on the server now. Nothing more of this execution runs '
+                    'by itself; start a new round to plan the open controls again.'),
+    'before_state': ('Not applied: the job ended and nothing changed on the server (its state is the same as before). '
+                     'For a package install this is usually the package lock held by Ubuntu\'s automatic updates, or '
+                     'a download that failed; a new round plans it again.'),
     'stale_read_set': ('Not applied (stale_read_set): what this plan was approved against has changed since, usually '
                        'because another fix in this round changed the same file first. Nothing was written. Start a new '
                        'round to re-plan it, then approve and execute it on its own.')}
 
 
+def _scoped_files():
+    """Shared files whose fixes check and restore only their own part (keys, lines, account fields), so a fix of one
+    control never makes another stale and they can be approved and executed together (administrator request
+    2026-11-11). UFW's files are not here: enabling the firewall depends on the allow rules."""
+    from vm.ubuntu.family_aging import LOGIN_DEFS
+    from vm.ubuntu.family_auth import SUDO_MANAGED
+    from vm.ubuntu.family_ssh import MANAGED as SSHD_MANAGED
+    from vm.ubuntu.family_sysctl import MANAGED as SYSCTL_MANAGED
+    return frozenset({SYSCTL_MANAGED, SSHD_MANAGED, SUDO_MANAGED, LOGIN_DEFS, '/etc/shadow'})
+
+
 def _files(payload):
-    return {s for s in payload['fields']['recovery']['scope'] if not s.startswith('runtime:')}
+    return {s for s in payload['fields']['recovery']['scope'] if not s.startswith('runtime:')} - _scoped_files()
+
+
+# 4.1.4 and 4.1.7 each check and restore only their own part of UFW's files (family_ufw, 13 November 2026), so the
+# two may be approved and executed together; enabling UFW (4.1.3) still reads every rule.
+UFW_SCOPED = frozenset({'4.1.4', '4.1.7'})
+UFW_FILES = frozenset({'/etc/default/ufw', '/etc/ufw/user.rules', '/etc/ufw/user6.rules'})
 
 
 def shared_file_conflict(payload, proposals):
     """The control of an approved, not yet executed fix that restores a file this proposal also restores, or None.
     Such fixes cannot run in one execution: the second is refused stale once the first changes the file (live
-    2026-11-07 13:44). Restores and maintenance are not counted."""
+    2026-11-07 13:44). Restores and maintenance are not counted, nor files whose fixes are scoped per control."""
     files = _files(payload)
     for other in proposals:
         action = other.payload['action']['action_id']
+        shared = files & _files(other.payload)
+        if {payload['fields']['control_id'], other.payload['fields']['control_id']} <= UFW_SCOPED:
+            shared -= UFW_FILES
         if (other.payload['proposal_id'] != payload['proposal_id'] and other.decision == 'approved' and not other.receipts
-                and action.startswith('ubuntu.') and files & _files(other.payload)):
+                and action.startswith('ubuntu.') and shared):
             return other.payload['fields']['control_id']
     return None
 
@@ -103,6 +131,7 @@ class DeploymentStatus:
     ok: bool
     reasons: tuple
     runner_digest: str | None
+    clock_offset: float | None = None  # seconds the server clock runs ahead (negative: behind); None if unmeasured
 
 
 @dataclass(frozen=True)
@@ -144,6 +173,24 @@ def _execution_operation(request_id):
     return 'ubuntu-execute:' + request_id
 
 
+def _utcnow():
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc)
+
+
+def _registered_waits():
+    """Action ID -> what its fix waits for after the server ran it ('job', 'confirm'), from the same family classes
+    the runner on the server registers (their `supervision`); fixes that finish at once are absent."""
+    global _WAITS
+    if _WAITS is None:
+        from vm.ubuntu.families import build
+        _WAITS = {aid: f.supervision for aid, f in build(None).items() if getattr(f, 'supervision', None)}
+    return _WAITS
+
+
+_WAITS = None
+
+
 def accepted_engine_version():
     return json.loads(LOCK.read_text(encoding='utf-8'))['openscap_version']
 
@@ -152,6 +199,62 @@ def accepted_engine_version():
 def _risk_policy():
     from .risk import load_policy
     return load_policy()
+
+
+AUDITD_PACKAGE = '6.3.1.1'
+NEEDS_AUDITD = frozenset({'6.3.1.2', '6.3.3.4', '6.3.3.6', '6.3.3.8'})
+AUDITD_WAIT = ('Planned after 6.3.1.1 installs auditd: its fix needs auditd on the server, so the next round after '
+               '6.3.1.1 is applied plans it')
+
+
+def _step_times(events):
+    """Event index -> (model seconds, retried) for the first event each model request produced (module 2). The n-th
+    `request` event of a run matches the n-th entry of its `model_timing` record."""
+    timing = next((e['data'].get('steps', ()) for e in events if e['kind'] == 'model_timing'), ())
+    found, request, waiting = {}, 0, False
+    for index, event in enumerate(events):
+        if event['kind'] == 'request':
+            request, waiting = request + 1, True
+        elif event['kind'] != 'model_timing' and waiting:
+            waiting = False
+            if request <= len(timing):
+                found[index] = (timing[request - 1]['seconds'], bool(timing[request - 1]['retried']))
+    return found
+
+
+def _fix_failed(register_rows):
+    """Controls whose approved fix was applied on this server and did not verify Compliant: the one fact that makes
+    persistent_failure true and lets a needs_manual_review deferral stand (2026-11-13)."""
+    return frozenset(r['control_id'] for r in register_rows if r['status'] == 'Applied, not verified')
+
+
+# Settled without a verification scan: a restore, and the package-list refresh, which sets nothing a control checks
+# (administrator, 13 November 2026: the Maintenance box waited for a full scan after apt-get update).
+NO_SCAN_AFTER = ('recovery.', 'maintenance.apt_refresh.')
+
+
+def execution_seconds(starts, first_dispatches, scans):
+    """Seconds from the start of an execution (its first agent run or dispatch) to its last verification scan, from
+    the stored ISO times; None before anything ran or before a scan (administrator, 13 November 2026: the page said
+    "Remediation took 2 min 29 s", the agents' own time, for an execution of about 10 minutes)."""
+    from datetime import datetime
+    begun = [datetime.fromisoformat(t) for t in list(starts) + list(first_dispatches)]
+    if not begun:
+        return None
+    ended = [t for t in (datetime.fromisoformat(s) for s in scans) if t >= min(begun)]
+    return (max(ended) - min(begun)).total_seconds() if ended else None
+
+
+def _refusal_hint(why):
+    """What the administrator can do about a known refusal reason (empty when nothing specific is known)."""
+    if 'unavailable from the configured sources' in why or 'apt could not plan' in why:
+        return (' Click Refresh package lists in the Maintenance box (the server needs internet for apt: a NAT adapter '
+                'beside the host-only one), then run the next round.')
+    if 'No SSH allow rule' in why:
+        # The server runs an older helper: since 13 November 4.1.3 adds the SSH rule itself.
+        return (' The server runs an older helper; run the new fyp-pair-ubuntu.py on it (sudo python3 '
+                'fyp-pair-ubuntu.py), which lets 4.1.3 add the SSH allow rule itself, then run the next round.')
+    return ''
 
 
 def _plan_rows(details, evidence, catalogue):
@@ -165,6 +268,18 @@ def _plan_rows(details, evidence, catalogue):
                     for e in plan.get('decisions', ())})
     decided.update({e['control_id']: ('Deferred (by the app)', DEFER_REASONS[e['reason_code']])
                     for e in plan.get('deferred_by_code', ()) if e['reason_code'] in DEFER_REASONS})
+    # The server's reason a planned fix got no plan, with what to do for the known cases (2026-11-13).
+    for cid, why in (details.get('preview_refused') or {}).items():
+        if cid in decided and decided[cid][0] == 'Fix proposed':
+            decided[cid] = ('Fix proposed', decided[cid][1] + ' · The server refused its read-only check: ' + why
+                            + '.' + _refusal_hint(why))
+    # Task 4: the auditd service and audit-rule fixes are planned from a read-only preview on a server that has auditd,
+    # so while 6.3.1.1 (install auditd) fails they cannot be planned in this round. Say so, instead of the generic code.
+    failing = {a.control_id for a in evidence.assessments if a.status is ComplianceStatus.NON_COMPLIANT}
+    if AUDITD_PACKAGE in failing:
+        for e in plan.get('deferred_by_code', ()):
+            if e['control_id'] in NEEDS_AUDITD and e['reason_code'] == 'no_registered_action':
+                decided[e['control_id']] = ('Deferred (by the app)', AUDITD_WAIT)
     missing = ('Not decided', 'The planner left it out of its plan') if plan else (
         'No plan', 'The round stopped before the planner submitted a plan')
     flags = {}
@@ -580,11 +695,12 @@ class UbuntuBackend(BoundBackend):
                 elif last['outcome'] == 'unresolved':
                     detail = 'Outcome unknown; reconcile before any further change.'
                 elif (last['outcome'], last['code']) == ('running', 'awaiting_reboot'):
-                    detail = ('Reboot scheduled. The connection drops; connect again when the server is back, then Check status: '
-                              'the new boot ID is verified and a fresh scan follows.')
+                    detail = ('Reboot scheduled. The connection drops while the server restarts; the page reconnects by '
+                              'itself when it is back, verifies the new boot ID, and a fresh scan follows.')
                 elif (last['outcome'], last['code']) == ('running', 'awaiting_confirmation'):
-                    detail = ('Applied and waiting for confirmation. Disconnect, connect to the server again (a fresh login '
-                              'proves SSH still works), then confirm before the rollback timer restores it.')
+                    detail = ('Applied and waiting for confirmation: the dashboard confirms it over a fresh SSH login by '
+                              'itself (that login proves SSH still works); without it the server restores the '
+                              'before-state.')
                 elif last['outcome'] == 'running':
                     detail = 'Running under systemd supervision (' + last['code'] + '); check its status.'
                 elif last['outcome'] == 'rolled_back':
@@ -639,7 +755,8 @@ class UbuntuBackend(BoundBackend):
                 for run_id in [details['orchestrator_run_id'], *details['children'].values()]]
         for run, phase in runs + [(r, 'Remediation phase') for r in (self._phase_runs(store, round_id) if round_id else [])]:
             run_id = run['run_id']
-            for event in run['events']:
+            times = _step_times(run['events'])
+            for index, event in enumerate(run['events']):
                 data, kind = event['data'], event['kind']
                 if kind == 'tool':
                     summary, code = json.dumps(data.get('result'), sort_keys=True)[:300], ''
@@ -657,7 +774,8 @@ class UbuntuBackend(BoundBackend):
                                        json.dumps(data.get('arguments', {}), sort_keys=True)[:300], summary, code,
                                        event['created_at'], f"{run['provenance']} ({run['model']})", phase,
                                        data.get('tool_calls') if finished else None,
-                                       data.get('duration_seconds') if finished else None))
+                                       data.get('duration_seconds') if finished else None,
+                                       *times.get(index, (None, False))))
         return tuple(sorted(rows, key=lambda r: r.timestamp))
 
     # ---- closed commands --------------------------------------------------------------------
@@ -677,6 +795,7 @@ class UbuntuBackend(BoundBackend):
     def start_round(self, connection_session_id, workflow_session_id, goal, mode, operation_id):
         """Read-only deterministic assessment: one helper invocation, validated and stored, at most once per operation."""
         binding = self.check(connection_session_id, workflow_session_id)
+        self._refuse_completed(binding)
         if goal:  # disabled by the administrator (2026-11-07) and due for removal
             raise ValueError('Round goals are disabled for Ubuntu. No scan was run.')
         gate = assessment_gate()
@@ -687,7 +806,9 @@ class UbuntuBackend(BoundBackend):
             raise ValueError('The local model is unavailable: start Ollama with qwen3:8b, then start the round again. '
                              'No scan was run.')
         if self._collector_installed() is False:
-            raise ValueError('This server is not set up yet: the FYP helper is not installed. Open Servers and click Set up this server. '
+            raise ValueError('This server is not set up yet: the FYP helper is not installed. On the server, run '
+                             'sudo python3 fyp-pair-ubuntu.py (download it from Servers; it sets the server up before '
+                             'showing a code), then reconnect. '
                              'No scan was run.')
         s = self.session
         if binding is None:
@@ -717,7 +838,7 @@ class UbuntuBackend(BoundBackend):
         """One read-only helper invocation, validated and stored before it is used."""
         request, expected = self._collection_request(uuid4().hex)
         message = json.dumps({'request': request, 'scap_engine_version': accepted_engine_version(),
-                              'registered_firewall_manager': self.registered_firewall_manager},
+                              'registered_firewall_manager': self.firewall_manager()},
                              sort_keys=True, separators=(',', ':')).encode('ascii')
         run = store.start_run(self.session.channel.invoke_helper(message), expected, binding)
         return run.run_id, self._evidence(store, run.digest)
@@ -751,15 +872,49 @@ class UbuntuBackend(BoundBackend):
                     if a.control_id == control_id]
         result = run_agentic_round(client_factory=self.model_client_factory, collect=collect, log_store=store.agent_log(),
                                    target_id=self.session.target_id, titles={c: x.title for c, x in _controls().items()},
-                                   rank=rank, goal=goal, eligible=self._eligible, history=history)
+                                   rank=rank, goal=goal, eligible=self._eligible, history=history,
+                                   fix_failed=_fix_failed(self.live_validation(self.session.connection_session_id)))
         if result['run_id'] is None:
             raise ValueError(f"The agentic round stopped before an assessment was collected ({result['status']}). Its agent "
                              'log is kept; start the round again.')
         details = {k: result[k] for k in ('orchestrator_run_id', 'children', 'scanned_runs', 'status', 'analysis', 'plan', 'goal')}
+        # Each planned fix's read-only preview runs before the round is recorded, so a refusal's reason is kept with
+        # the round and shown (2026-11-13: two package fixes stayed without a plan and the page could not say why).
+        previews, refused = {}, {}
+        for fix in (result['plan'] or {}).get('fixes', []):
+            preview, reason = self._preview(fix, result['evidence'])
+            if preview is None:
+                refused[fix['control_id']] = reason
+            else:
+                previews[fix['control_id']] = preview
+        if refused:
+            details['preview_refused'] = refused
         round_id = store.record_round(binding, result['run_id'], mode='agentic', details=details)
         for fix in (result['plan'] or {}).get('fixes', []):
-            self._propose(store, binding, round_id, result['evidence'], fix)
+            if fix['control_id'] in previews:
+                self._propose(store, binding, round_id, result['evidence'], fix, preview=previews[fix['control_id']])
         return round_id
+
+    def _preview(self, fix, evidence):
+        """(preview, None) when the server accepts the planned fix's read-only check, else (None, why): the runner's
+        own reason when it gives one, otherwise what is known."""
+        from vm.ubuntu.remediation_schema import canonical
+        spec = self.families[fix['action_id']]
+        params = spec.propose(fix['control_id'], evidence)
+        header = canonical({'op': 'preview', 'action_id': spec.action_id, 'parameters': params})
+        try:
+            preview = json.loads(self.session.channel.invoke_runner(header + b'\n'))
+        except (OSError, TimeoutError):
+            return None, 'the server did not answer the read-only check'
+        except ValueError:
+            return None, ('the server refused it without a reason (a fix runner from before 13 November 2026: run '
+                          'the helper on the server again)')
+        if type(preview) is not dict or preview.get('action_id') != spec.action_id:
+            return None, 'the server answered for another fix'
+        if 'refused' in preview:
+            reason = ''.join(ch for ch in str(preview['refused']) if ' ' <= ch <= '~')[:200]
+            return None, reason or 'not eligible'
+        return preview, None
 
     # ---- remediation proposals, decisions and gated execution --------------------------------
     def _eligible(self, evidence):
@@ -772,16 +927,18 @@ class UbuntuBackend(BoundBackend):
                     eligible[cid] = action_id
         return eligible
 
-    def _propose(self, store, binding, round_id, evidence, fix):
-        """Read-only target preview, then a stored deterministic plan. A failed preview creates no proposal."""
+    def _propose(self, store, binding, round_id, evidence, fix, *, preview=None):
+        """Read-only target preview (or the one just taken), then a stored deterministic plan. A failed preview creates
+        no proposal."""
         from vm.ubuntu.remediation_schema import canonical
         from .actions import plan_action
         spec = self.families[fix['action_id']]
         params = spec.propose(fix['control_id'], evidence)
         header = canonical({'op': 'preview', 'action_id': spec.action_id, 'parameters': params})
         try:
-            preview = json.loads(self.session.channel.invoke_runner(header + b'\n'))
-            if type(preview) is not dict or preview.get('action_id') != spec.action_id:
+            if preview is None:
+                preview = json.loads(self.session.channel.invoke_runner(header + b'\n'))
+            if type(preview) is not dict or preview.get('action_id') != spec.action_id or 'refused' in preview:
                 raise ValueError('Preview for another action')
             s = self.session
             plan = plan_action(spec, families=self.families, parameters=params, target_id=s.target_id,
@@ -812,6 +969,7 @@ class UbuntuBackend(BoundBackend):
         binding = self.check(connection_session_id, workflow_session_id, proposal_ref)
         if binding is None:
             raise ValueError('A workflow is required to decide')
+        self._refuse_completed(binding)
         store = self._store()
         latest = self._latest(store, binding)
         payload = store._proposal(binding, proposal_ref.record_id)
@@ -894,6 +1052,7 @@ class UbuntuBackend(BoundBackend):
         (the administrator's choice): sequentially in plan order, stopping at the first uncertain outcome. The same
         executor, ledger claim and runner checks guard both, and a fix is never dispatched twice."""
         binding = self.check(connection_session_id, workflow_session_id, round_ref)
+        self._refuse_completed(binding)
         gate = execution_gate(self)
         if gate:
             raise ValueError(gate[0])
@@ -906,22 +1065,149 @@ class UbuntuBackend(BoundBackend):
         if not requests or set(expected_approved_request_ids) != set(requests):
             raise ValueError('The approved set changed or is empty; review the current approvals. No write was dispatched.')
         skipped = self._agent_skipped(store, latest.round_id, proposals)  # closed by the Remediation Agent: never run
+        if any(not p.receipts and rid not in skipped for rid, p in requests.items()):
+            self._record_execution(binding, latest, requests, operation_id)
+        return self._run_requests(store, binding, latest, requests, skipped, deterministic, round_ref, operation_id)
+
+    def _execution_command(self, latest, requests):
+        return {'round_id': latest.round_id, 'requests': sorted(requests)}
+
+    def _record_execution(self, binding, latest, requests, operation_id):
+        """The administrator confirmed executing exactly this approved set: recorded, so the fixes left waiting behind
+        a fix that waits may continue once it settles (continue_execution). Only the digest is kept; the same set
+        executed again is the same record. A workflow still busy is left unrecorded: nothing then continues."""
+        try:
+            owner, _ = self.ledger.claim(binding, 'ubuntu-execution-set:' + operation_id, 'execution_set',
+                                         self._execution_command(latest, requests))
+        except ValueError:
+            return
+        if owner:
+            self.ledger.transition('ubuntu-execution-set:' + operation_id, 'completed', detail='recorded')
+
+    def _waits(self, proposal):
+        """None, 'job' or 'confirm': what this fix waits for once the server ran it. Registered families answer from
+        the server's registry; a family given to this backend directly (test fixtures) answers from its own class."""
+        action_id = proposal.payload['action']['action_id']
+        kind = _registered_waits().get(action_id)
+        if kind is None:
+            family = getattr(getattr(self.families.get(action_id), 'validate', None), '__self__', None)
+            kind = getattr(family, 'supervision', None)
+        return kind
+
+    def _run_requests(self, store, binding, latest, requests, skipped, deterministic, round_ref, operation_id):
         if not deterministic:
             return self._agentic_execution(store, binding, latest, requests, skipped, round_ref, operation_id)
-        state, applied = 'completed', []
-        for request_id, proposal in requests.items():
+        from .remediation_agents import WAIT_ORDER
+        state, applied, waiting = 'completed', [], False
+        # Nothing more runs while a fix waits (a supervised job, a confirmation after a fresh login), so those run after
+        # the others, in plan order within each kind (problem 5, live 11 November). Commit-confirm changes are the
+        # exception since 13 November 2026: each is sent once the one before it waits for its confirmation, so one
+        # fresh login confirms them all (the runner and the ledger stack them; each keeps its own rollback timer).
+        ordered = sorted(requests.items(), key=lambda item: WAIT_ORDER[self._waits(item[1])])
+        confirms = [rid for rid, p in ordered if not p.receipts and rid not in skipped and self._waits(p) == 'confirm']
+        for request_id, proposal in ordered:
             if proposal.receipts or request_id in skipped:
                 continue  # already dispatched once, or closed unexecuted by the Remediation Agent; never again
-            result = self._dispatch_one(store, binding, proposal, operation_id)
+            confirm_mode = self._waits(proposal) == 'confirm'
+            if waiting and not confirm_mode:
+                break
+            try:
+                result = self._dispatch_one(store, binding, proposal, operation_id, stack=waiting and confirm_mode)
+            except ValueError:
+                if waiting:
+                    break  # not stackable after all: it follows once the waiting ones are confirmed
+                raise
             if result.state == 'completed':
                 applied.append(request_id)
                 continue
             state = result.state
+            if result.state == 'running' and confirm_mode and confirms[-1] != request_id:
+                # Another commit-confirm change follows: wait for this one to apply, then stack the next on it.
+                state = self._await_confirmation(store, binding, proposal)
+                if state == 'awaiting_confirmation':
+                    waiting = True
+                    continue
             if result.state != 'refused':
                 break  # uncertain (unresolved, running): nothing more until it is settled
             # A refusal is definite (nothing was written), so the independent fixes still run. Live 13:44: after 1.5.1
             # changed the shared sysctl file, 1.5.3/3.3.1/3.3.8 were refused stale and 5.2.3 never ran.
-        return RoundHandle(operation_id, binding, round_ref, self._verify(store, binding, latest, applied, state))
+        return RoundHandle(operation_id, binding, round_ref, self._verify_when_settled(store, binding, latest, state))
+
+    @staticmethod
+    def _pause(seconds):
+        import time
+        time.sleep(seconds)
+
+    CONFIRM_WAIT_SECONDS = 120  # for a commit-confirm job to apply before the next one is stacked on it
+
+    def _await_confirmation(self, store, binding, proposal):
+        """Ask the server every second how a just-sent commit-confirm change is doing: 'awaiting_confirmation' once it
+        applied and waits for its fresh-login confirmation (the next one may then be stacked), else the settled state,
+        or 'running' after CONFIRM_WAIT_SECONDS. Reads status only; never dispatches again."""
+        from vm.ubuntu.remediation_schema import canonical, parse_request
+        from .approvals import ApprovedRequest
+        from .executor import reconcile
+        raw = proposal.approved_raw
+        approved = ApprovedRequest(raw, hashlib.sha256(raw).hexdigest(), parse_request(raw))
+        request_id = approved.request['request_id']
+        header = canonical({'op': 'reconcile', 'request_id': request_id})
+        for _ in range(self.CONFIRM_WAIT_SECONDS):
+            self._pause(1)
+            result = reconcile(approved, ledger=self.ledger, operation_id=_execution_operation(request_id),
+                               status=lambda rid: self.session.channel.invoke_runner(header + b'\n'))
+            self._record_status(store, binding, proposal, result)
+            if result.state != 'running':
+                return result.state
+            if result.receipt['code'] == 'awaiting_confirmation':
+                return 'awaiting_confirmation'
+        return 'running'
+
+    # Last outcomes after which the rest of an execution may go on: applied, or refused with nothing written. A change
+    # the server rolled back (no confirmation came) or an unknown outcome stops it: a person looks first.
+    CONTINUE_AFTER = ('applied', 'reconciled_applied', 'refused', 'reconciled_not_applied')
+
+    def _continuable(self, store, binding, latest):
+        """The approved fixes that may continue without a new click (problem 7): the administrator confirmed executing
+        exactly the round's current approved set, a fix of it waited (a supervised job, a confirmation after a fresh
+        login) and has settled, nothing is open or went wrong, and these are neither run, skipped nor expired."""
+        from vm.ubuntu.remediation_schema import utc
+        proposals = store.proposals(binding, latest.round_id)
+        approved = [p for p in proposals
+                    if p.decision == 'approved' and not p.payload['action']['action_id'].startswith(AUXILIARY_PREFIXES)]
+        requests = {json.loads(p.approved_raw)['request_id']: p for p in approved}
+        if not requests or not self.ledger.recorded(binding, 'execution_set', self._execution_command(latest, requests)):
+            return {}, ()
+        if any(p.receipts and p.receipts[-1]['outcome'] not in self.CONTINUE_AFTER for p in approved):
+            return {}, ()
+        if any(p.receipts and p.receipts[-1]['code'] == 'not_claimed' for p in approved):
+            return {}, ()  # the server has no record of a fix that was sent: restored or reset; a person looks first
+        if not any(r['outcome'] == 'running' for p in approved for r in p.receipts):
+            return {}, ()  # nothing waited: a stop for another reason is the administrator's to resolve
+        skipped, now = self._agent_skipped(store, latest.round_id, proposals), _utcnow()
+        return {rid: p for rid, p in requests.items() if not p.receipts and rid not in skipped
+                and utc(json.loads(p.approved_raw)['expires_at']) > now}, skipped
+
+    def continuation(self, connection_session_id, workflow_session_id):
+        """Request IDs of the latest round that continue_execution would send now, in no particular order (read-only)."""
+        binding = self.check(connection_session_id, workflow_session_id)
+        store = self._store() if binding else None
+        rounds = [r for r in store.rounds(binding) if r.kind == 'assessment'] if store else []
+        return tuple(self._continuable(store, binding, rounds[-1])[0]) if rounds else ()
+
+    def continue_execution(self, connection_session_id, workflow_session_id, round_ref, deterministic, operation_id):
+        """Send the rest of an execution once the fix it waited for has settled, without a new click: the same
+        approvals (expired ones are left), the same order rule, one dispatch each under its ledger claim, then a fresh
+        verification scan. None when nothing may continue."""
+        binding = self.check(connection_session_id, workflow_session_id, round_ref)
+        store = self._store()
+        latest = self._latest(store, binding, round_ref)
+        remaining, skipped = self._continuable(store, binding, latest)
+        if not remaining:
+            return None
+        gate = execution_gate(self)
+        if gate:
+            raise ValueError(gate[0])
+        return self._run_requests(store, binding, latest, remaining, skipped, deterministic, round_ref, operation_id)
 
     def _precheck(self, proposal):
         """Read-only readiness of one approved fix, for the Remediation Agent: approval expiry, and a fresh preview
@@ -938,7 +1224,7 @@ class UbuntuBackend(BoundBackend):
         except ValueError:  # The runner refused (non-zero exit) or answered with something that is not JSON.
             facts['preview_refused'] = True
             return facts
-        if type(preview) is not dict or preview.get('action_id') != action:
+        if type(preview) is not dict or preview.get('action_id') != action or 'refused' in preview:
             facts['preview_refused'] = True
         elif (preview.get('before_state_sha256'), preview.get('expected_after_sha256')) != (
                 fields['before_state_sha256'], fields['expected_after_sha256']):
@@ -962,7 +1248,8 @@ class UbuntuBackend(BoundBackend):
         rows = [{'request_id': rid, 'control_id': p.payload['fields']['control_id'],
                  'action_id': p.payload['action']['action_id'], 'title': p.payload['title'],
                  'expires_at': json.loads(p.approved_raw)['expires_at'],
-                 'rank': ranks.get(p.payload['fields']['control_id'])} for rid, p in open_requests.items()]
+                 'rank': ranks.get(p.payload['fields']['control_id']), 'waits': self._waits(p)}
+                for rid, p in open_requests.items()]
 
         def execute(request_id):
             try:
@@ -988,9 +1275,9 @@ class UbuntuBackend(BoundBackend):
         kinds = {r['result'] for r in (result['remediation'] or {}).get('results', ())}
         state = ('unresolved' if 'uncertain' in kinds else 'running' if 'running' in kinds
                  else 'refused' if 'refused' in kinds else 'completed')
-        # A possible write never stays unobserved: applied fixes no verification scan covers get one from code.
-        uncovered = self._unverified(store, binding, latest)
-        return RoundHandle(operation_id, binding, round_ref, self._verify(store, binding, latest, uncovered, state))
+        # A possible write never stays unobserved: applied fixes no verification scan covers get one from code once
+        # the execution has settled (one scan per execution).
+        return RoundHandle(operation_id, binding, round_ref, self._verify_when_settled(store, binding, latest, state))
 
     def remediation_review(self, connection_session_id, workflow_session_id, round_ref=None):
         """The latest remediation phase's next-step decision for the given assessment round (default: the latest),
@@ -1007,7 +1294,8 @@ class UbuntuBackend(BoundBackend):
         runs = self._phase_runs(store, rounds[-1].round_id)
         for run in reversed(runs):
             if run.get('agent_role') == REVIEW_ROLE and run['events']:
-                finished = run['events'][-1]['data']
+                # The run's last own event: a model_timing record (module 2) is stored after it.
+                finished = [e for e in run['events'] if e['kind'] != 'model_timing'][-1]['data']
                 outcome = finished.get('outcome')
                 review = ({'next_step': outcome['outcome'], 'reason_code': outcome['reason_code'],
                            'reason': outcome['reason']} if outcome else
@@ -1015,9 +1303,16 @@ class UbuntuBackend(BoundBackend):
                            'the next step (' + str(finished.get('status')) + ').'})
                 if review['next_step'] is None or review['reason_code'] == 'remediation_incomplete':
                     # Executed by the Remediation Agent: its own recorded execute_fixes results, never model text.
-                    by_agents = {entry.get('control_id') for r in runs if r.get('agent_role') == REMEDIATION
-                                 for e in r['events'] if e['kind'] == 'tool' and e['data'].get('name') == 'execute_fixes'
-                                 for entry in (e['data'].get('result') or {}).get('results', ())}
+                    entries = [entry for r in runs if r.get('agent_role') == REMEDIATION
+                               for e in r['events'] if e['kind'] == 'tool' and e['data'].get('name') == 'execute_fixes'
+                               for entry in (e['data'].get('result') or {}).get('results', ())]
+                    by_agents = {entry.get('control_id') for entry in entries}
+                    if review['reason_code'] == 'remediation_incomplete' and any(
+                            entry.get('result') == 'running' for entry in entries):
+                        # The agent stopped because a fix waited (a supervised job, a confirmation), and the rest ran
+                        # by code under the same approvals: the batched execution's design since 13 November 2026,
+                        # not an early stop. Once it has settled, the outcome is decided again from the final scan.
+                        return self._settled_review(store, binding, rounds[-1]) or review
                     if any(p.receipts and p.payload['fields']['control_id'] not in by_agents
                            and not p.payload['action']['action_id'].startswith(AUXILIARY_PREFIXES)
                            for p in store.proposals(binding, rounds[-1].round_id)):
@@ -1025,8 +1320,43 @@ class UbuntuBackend(BoundBackend):
                                 'reason': 'Executed without AI after the agents stopped early: the remaining approved '
                                           'fixes ran in plan order with the same approvals and server checks, and a '
                                           'fresh verification scan checked the result.'}
+                if review['reason_code'] == 'awaiting_confirmation':
+                    return self._settled_review(store, binding, rounds[-1]) or review
                 return review
         return None
+
+    def _settled_review(self, store, binding, latest):
+        """remediation_agents.settled_review for this round once no approved fix still runs or waits, else None."""
+        from .remediation_agents import settled_review
+        approved = [p for p in store.proposals(binding, latest.round_id) if p.decision == 'approved' and p.receipts
+                    and not p.payload['action']['action_id'].startswith(AUXILIARY_PREFIXES)]
+        if any(p.receipts[-1]['outcome'] in ('running', 'unresolved') for p in approved):
+            return None
+        kind = {'applied': 'applied', 'reconciled_applied': 'applied'}
+        results = {p.payload['fields']['control_id']: kind.get(p.receipts[-1]['outcome'], 'refused') for p in approved}
+        controls = {p.receipts[-1]['request_id']: p.payload['fields']['control_id'] for p in approved}
+        checks = [r for r in store.rounds(binding) if r.kind == 'verification'
+                  and (r.details or {}).get('verifies_round') == latest.round_id]
+        status, remaining = {}, []
+        if checks:
+            evidence = self._evidence(store, checks[-1].evidence_sha256)
+            status = {a.control_id: a.status.value for a in evidence.assessments}
+            remaining = sorted(self._eligible(evidence))
+        unverified = [controls[r] for r in self._unverified(store, binding, latest) if r in controls]
+        return settled_review(results=results, status=status, unverified=unverified, remaining=remaining)
+
+    def execution_time(self, connection_session_id, workflow_session_id, round_ref):
+        """execution_seconds for one assessment round of this workflow, from its stored records (read-only)."""
+        binding = self.check(connection_session_id, workflow_session_id, round_ref)
+        store = self._store() if binding else None
+        if store is None:
+            return None
+        proposals = [p for p in store.proposals(binding, round_ref.record_id) if p.decision == 'approved'
+                     and p.receipts and not p.payload['action']['action_id'].startswith(AUXILIARY_PREFIXES)]
+        scans = [r.created_at for r in store.rounds(binding) if r.kind == 'verification'
+                 and (r.details or {}).get('verifies_round') == round_ref.record_id]
+        return execution_seconds([run['created_at'] for run in self._phase_runs(store, round_ref.record_id)],
+                                 [p.receipts[0]['started_at'] for p in proposals], scans)
 
     def assessment_rounds(self, connection_session_id, workflow_session_id):
         """The workflow's assessment rounds, oldest first, as (round reference, started at), for the page's round
@@ -1085,7 +1415,7 @@ class UbuntuBackend(BoundBackend):
                          factor_reasons=list(finding.derivation_reasons))
         return explain_finding(facts, self.model_client_factory('explanation'), timeout=timeout)
 
-    def _dispatch_one(self, store, binding, proposal, operation_id):
+    def _dispatch_one(self, store, binding, proposal, operation_id, *, stack=False):
         from datetime import datetime, timezone
         from vm.ubuntu.remediation_schema import parse_request
         from .approvals import ApprovedRequest
@@ -1095,7 +1425,7 @@ class UbuntuBackend(BoundBackend):
         result = execute(ApprovedRequest(raw, hashlib.sha256(raw).hexdigest(), parse_request(raw)), ledger=self.ledger,
                          binding=binding, operation_id=_execution_operation(request_id),
                          dispatch=lambda data: self.session.channel.invoke_runner(b'{"op":"execute"}\n' + data),
-                         now=datetime.now(timezone.utc))
+                         now=datetime.now(timezone.utc), stack=stack)
         if result.receipt_raw is not None:
             store.record_receipt(binding, proposal.proposal_id, result.receipt_raw)
         return result
@@ -1125,10 +1455,10 @@ class UbuntuBackend(BoundBackend):
         return {'openscap': openscap, 'collector': bool(self._collector_installed()),
                 'runner': self.deployment_status(connection_session_id).ok}
 
-    def deployment_status(self, connection_session_id):
-        """Read-only probe of the root-owned runner, cached per verified connection."""
+    def deployment_status(self, connection_session_id, *, refresh=False):
+        """Read-only probe of the root-owned runner, cached per verified connection (`refresh` probes again)."""
         self.check(connection_session_id)
-        if self._deployment is None:
+        if refresh or self._deployment is None:
             self._deployment = self._probe_deployment()
         return self._deployment
 
@@ -1136,7 +1466,6 @@ class UbuntuBackend(BoundBackend):
         from vm.ubuntu.provenance import collector_digest
         from .actions import AUXILIARY
         from datetime import datetime, timezone
-        from .ssh_channel import SETUP_FOLDER
         try:
             sent = datetime.now(timezone.utc)
             probe = json.loads(self.session.channel.invoke_runner(b'{"op":"probe"}\n'))
@@ -1148,32 +1477,63 @@ class UbuntuBackend(BoundBackend):
             return DeploymentStatus(False, (self._runner_setup_steps(),), None)
         reasons = []
         if abs(offset) > MAX_CLOCK_OFFSET_SECONDS:
-            reasons.append('The server clock differs from this computer by %d s (more than %d s); fix time sync on the server '
-                           '(timedatectl) and connect again.' % (round(offset), MAX_CLOCK_OFFSET_SECONDS))
+            reasons.append('The server clock differs from this computer by %d s (more than %d s): click Sync server clock '
+                           'to this laptop on Agentic hardening.' % (round(offset), MAX_CLOCK_OFFSET_SECONDS))
         if probe['collector_digest'] != collector_digest(APP / 'vm' / 'ubuntu'):
-            reasons.append('The FYP helper installed on the server differs from this version of the application. Open '
-                           'Servers, click Set up this server, then on the server run: '
-                           f'sudo bash ~/{SETUP_FOLDER}/setup.sh (it says how to replace the older helper), and click '
-                           'Check again.')
+            reasons.append('The FYP helper installed on the server differs from this version of the application. On '
+                           'the server, run this version\'s sudo python3 fyp-pair-ubuntu.py (download it from Servers): '
+                           'it replaces the older tools before showing a code. Then reconnect.')
         expected = {aid: [spec.version, spec.implementation_sha256] for aid, spec in dict(self.families, **AUXILIARY).items()}
         if any(probe['families'].get(aid) != value for aid, value in expected.items()):
             reasons.append('The deployed runner registers different fix families or versions.')
         if probe['launcher'] is not True:
             reasons.append('systemd-run is unavailable on the server, so supervised jobs cannot run.')
         if probe['boot_rollback'] != 'enabled':
-            reasons.append('The fix runner\'s boot rollback unit is not enabled on the server. On the server, run: '
-                           f'cd ~/{SETUP_FOLDER} && sudo bash install-runner.sh (the files come from Set up this '
-                           'server on the Servers page), then click Check again there.')
-        return DeploymentStatus(not reasons, tuple(reasons), probe['collector_digest'])
+            reasons.append('The fix runner\'s boot rollback unit is not enabled on the server. On the server, run '
+                           'sudo python3 fyp-pair-ubuntu.py again (it reinstalls the tools before showing a code), then '
+                           'reconnect.')
+        return DeploymentStatus(not reasons, tuple(reasons), probe['collector_digest'], offset)
+
+    def sync_clock(self, connection_session_id, workflow_session_id, operation_id):
+        """Set the server's clock to this laptop's time on the administrator's click, as the Windows page does
+        (administrator request 2026-11-11). The dashboard's account is not root on Ubuntu, so the root-owned runner's
+        fixed `set_clock` operation does it; the runner refuses while a change is open. Recorded in the ledger as its
+        own operation: the account, and the server's time before and after. The deployment is probed again after."""
+        from datetime import datetime, timezone
+        from vm.ubuntu.remediation_schema import canonical
+        binding = self.check(connection_session_id, workflow_session_id) or self.new_binding(connection_session_id)
+        account = self.session.username
+        owner, _ = self.ledger.claim(binding, operation_id, 'clock_sync', {'intent': operation_id, 'account': account},
+                                     mutation=True)
+        if not owner:
+            raise ValueError('This clock sync was already sent.')
+        try:
+            reported = json.loads(self.session.channel.invoke_runner(
+                canonical({'op': 'set_clock', 'utc': datetime.now(timezone.utc).isoformat()}) + b'\n'))
+            if type(reported) is not dict or set(reported) != {'outcome', 'code', 'before', 'after'}:
+                raise ValueError('the server confirmed the new time in an unexpected form')
+            if reported['outcome'] != 'set':
+                raise ValueError('a change is still open on the server; settle it first' if reported['code'] == 'change_open'
+                                 else 'the server did not set the clock (%s)' % str(reported['code'])[:40])
+            before, after = datetime.fromisoformat(reported['before']), datetime.fromisoformat(reported['after'])
+        except Exception as exc:
+            reason = str(exc)[:200] if isinstance(exc, ValueError) else 'the server did not answer'
+            self.ledger.transition(operation_id, 'refused', detail='Clock not set: ' + reason + '.')
+            raise ValueError('Clock not set: ' + reason + '.') from None
+        finally:
+            self._deployment = None  # measured again on the next look
+        self.ledger.transition(operation_id, 'completed', detail=json.dumps(
+            {'account': account, 'server_before': before.isoformat(), 'server_after': after.isoformat()}))
+        return {'before': before, 'after': after}
 
     def _runner_setup_steps(self):
-        """What to do when the root-owned fix runner does not answer its read-only probe: open Servers and click Set up
-        this server. That panel shows the command to run on the server and Check again (administrator request
-        2026-11-11: only this step here)."""
+        """What to do when the root-owned fix runner does not answer its read-only probe: run the pairing helper on the
+        server, which sets it up before showing a code (since 13 November 2026), then reconnect."""
         host = self.session.identity.hostname
         return (f'The fix runner on {host} is not deployed, or it refused its read-only check (for example after a '
-                'snapshot restore). Fixes and the safety check need it: open Servers, connect to '
-                f'{host} and click Set up this server, then follow the steps shown there.')
+                f'snapshot restore). Fixes and the safety check need it: on {host}, run sudo python3 '
+                'fyp-pair-ubuntu.py (download it from Servers; it sets the server up before showing a code), then '
+                'reconnect.')
 
     def _acceptance_runs(self):
         s = self.session
@@ -1185,13 +1545,11 @@ class UbuntuBackend(BoundBackend):
             return deployment.reasons
         passed = {(r['scenario'], r['outcome']) for r in self._acceptance_runs()
                   if r['runner_digest'] == deployment.runner_digest}
-        reasons = []
-        if ('confirm', 'confirmed') not in passed:
-            reasons.append('Execution acceptance pending: run the confirm scenario (apply, reconnect, confirm).')
-        if ('rollback', 'rolled_back') not in passed:
-            reasons.append('Execution acceptance pending: run the rollback scenario (apply, do not confirm; '
-                           'the timer restores it).')
-        return tuple(reasons)
+        if {('confirm', 'confirmed'), ('rollback', 'rolled_back')} <= passed:
+            return ()
+        # One button runs both tests, so one message (administrator, 13 November 2026).
+        return ('the safety check has not passed yet. Click Run safety check below: it runs the confirm test and the '
+                'rollback test with a harmless marker file, about a minute.',)
 
     def acceptance_complete(self, connection_session_id):
         """Both live scenarios passed for the deployed runner and none is open, so the acceptance panel is not needed.
@@ -1237,10 +1595,17 @@ class UbuntuBackend(BoundBackend):
             raise ValueError(deployment.reasons[0])
         if any(r['outcome'] is None for r in self._acceptance_runs()):
             raise ValueError('An acceptance run is still open; check its status first')
+        if self.ledger.owner(self.session.target_id, self.session.registration_epoch):
+            # Checked before anything is recorded (live 13 November 2026: the run was recorded, then refused by the
+            # open change, and blocked every later safety check).
+            raise ValueError('A change is still open on this server; check its status first (Check status settles '
+                             'it), then run the safety check.')
         s, spec, nonce = self.session, AUXILIARY['acceptance.marker.v1'], uuid4().hex
         params = {'scenario': scenario, 'nonce': nonce}
         preview = json.loads(self.session.channel.invoke_runner(
             canonical({'op': 'preview', 'action_id': spec.action_id, 'parameters': params}) + b'\n'))
+        if type(preview) is not dict or 'refused' in preview:
+            raise ValueError('The server refused the safety check marker: ' + str((preview or {}).get('refused'))[:200])
         binding = self.ledger.assessment_binding('ubuntu', s.target_id, s.registration_epoch, 'acceptance:' + operation_id)
         plan = plan_action(spec, families=AUXILIARY, parameters=params, target_id=s.target_id,
                            registration_epoch=s.registration_epoch, hostname=s.identity.hostname,
@@ -1273,6 +1638,11 @@ class UbuntuBackend(BoundBackend):
         views = []
         for run in self._acceptance_runs():
             receipt = None
+            if run['outcome'] is None and self.ledger.operation_state(
+                    _execution_operation(run['request_id'])).code == 'unknown_operation':
+                # Recorded but never dispatched (its claim was refused): nothing reached the server.
+                self.ledger.settle_acceptance(run['request_id'], 'failed:not_dispatched')
+                run = next(r for r in self._acceptance_runs() if r['request_id'] == run['request_id'])
             if run['outcome'] is None:
                 raw = run['raw']
                 approved = ApprovedRequest(raw, hashlib.sha256(raw).hexdigest(), parse_request(raw))
@@ -1354,6 +1724,160 @@ class UbuntuBackend(BoundBackend):
                                                last['outcome'], last['code']))
         return tuple(found)
 
+    # ---- per-server decisions (2026-11-13) -------------------------------------------------------
+    def firewall_manager(self):
+        """The firewall manager the collector is told this server uses: the code registration given at connect, else
+        the administrator's recorded decision ('ufw'), else None (then no UFW fix is planned)."""
+        from .server_decisions import decision
+        if self.registered_firewall_manager:
+            return self.registered_firewall_manager
+        return 'ufw' if decision(self.session.identity.machine_identity, 'firewall_manager') == 'ufw' else None
+
+    def server_decisions(self, connection_session_id):
+        """Each per-server decision of this server: its value (or None), where it comes from, who and when."""
+        from .server_decisions import CHOICES, ServerDecisions, decision, source, store_path
+        self.check(connection_session_id)
+        machine = self.session.identity.machine_identity
+        recorded = ServerDecisions(store_path()).latest(machine) if store_path().exists() else {}
+        return {key: {'value': decision(machine, key), 'source': source(machine, key),
+                      'operator': (recorded.get(key) or {}).get('operator'),
+                      'decided_at': (recorded.get(key) or {}).get('decided_at')} for key in CHOICES}
+
+    def record_server_decision(self, connection_session_id, key, value, operator):
+        """Record one decision for the connected server (its verified machine ID). A code registration stands."""
+        from .server_decisions import ServerDecisions, source, store_path
+        self.check(connection_session_id)
+        machine = self.session.identity.machine_identity
+        if source(machine, key) == 'code':
+            raise ValueError('This decision is registered in the program for this server and cannot be changed here.')
+        return ServerDecisions(store_path()).record(machine, key, value, operator=operator)
+
+    # ---- Complete hardening (module 1, as on the Windows page) ------------------------------------
+    def _completions(self):
+        from .completion import CompletionStore
+        return CompletionStore(self.database_path.with_name('ubuntu_completion.sqlite3'))
+
+    def _refuse_completed(self, binding):
+        if binding is not None and self._completions().completion(binding.target_id, binding.workflow_session_id):
+            raise ValueError('This hardening session is already completed (read-only). Click New session to check the server '
+                             'again.')
+
+    def completion(self, connection_session_id, workflow_session_id):
+        """This session's completion record, or None (read-only)."""
+        binding = self.check(connection_session_id, workflow_session_id)
+        return self._completions().completion(binding.target_id, workflow_session_id) if binding else None
+
+    def completion_state(self, connection_session_id, workflow_session_id):
+        """What is still open in the newest scan of the session's latest round, and its exceptions (read-only)."""
+        from .completion import open_items
+        binding = self.check(connection_session_id, workflow_session_id)
+        if binding is None:
+            raise ValueError('No hardening session to complete.')
+        snapshot = self.snapshot(connection_session_id, workflow_session_id, newest_scan=True)
+        exceptions = self._completions().exceptions(binding.target_id, workflow_session_id)
+        return {'items': open_items(snapshot.controls, exceptions), 'exceptions': exceptions,
+                'total': len(snapshot.controls), 'scanned_at': snapshot.summary.collected_at if snapshot.summary else None}
+
+    def accept_exception(self, connection_session_id, workflow_session_id, control_id, operator, reason):
+        """Accept one control that is open in the newest scan as an exception of this session, with a reason."""
+        binding = self.check(connection_session_id, workflow_session_id)
+        self._refuse_completed(binding)
+        state = self.completion_state(connection_session_id, workflow_session_id)
+        if control_id not in {i['control_id'] for i in state['items']}:
+            raise ValueError(f'{control_id} is not open in the newest scan, so there is nothing to accept.')
+        rounds = [r for r in self._store().rounds(binding) if r.kind == 'assessment']
+        return self._completions().accept(binding.target_id, workflow_session_id, control_id, operator=operator,
+                                          reason=reason, round_id=rounds[-1].round_id if rounds else None)
+
+    def complete_hardening(self, connection_session_id, workflow_session_id, operator, operation_id):
+        """Run the final read-only scan (claimed like an assessment, recorded as the latest round's newest scan) and
+        complete the session if every control is Compliant or accepted as an exception. Returns completed=False with
+        the open items otherwise. Writes nothing on the server."""
+        from .completion import open_items
+        binding = self.check(connection_session_id, workflow_session_id)
+        if binding is None:
+            raise ValueError('No hardening session to complete.')
+        self._refuse_completed(binding)
+        if not (operator or '').strip():
+            raise ValueError('Type your name first: it is recorded with the completion.')
+        gate = assessment_gate()
+        if gate:
+            raise ValueError(gate[0] + ' No scan was run.')
+        store = self._store()
+        latest = self._latest(store, binding)
+        owner, _ = self.ledger.claim(binding, operation_id, 'assessment', {'intent': operation_id, 'mode': 'final_scan'})
+        if not owner:
+            raise ValueError('This final scan was already started.')
+        try:
+            run_id, evidence = self._collect(store, binding)
+            store.record_round(binding, run_id, mode='deterministic', kind='verification',
+                               details={'verifies_round': latest.round_id, 'request_ids': []})
+        except Exception:
+            self.ledger.transition(operation_id, 'refused', detail='Final scan failed; nothing was changed.')
+            raise
+        self.ledger.transition(operation_id, 'completed', detail=run_id)
+        snapshot = self.snapshot(connection_session_id, workflow_session_id, newest_scan=True)
+        completions = self._completions()
+        exceptions = completions.exceptions(binding.target_id, workflow_session_id)
+        items = open_items(snapshot.controls, exceptions)
+        if items:
+            return {'completed': False, 'items': items, 'run_id': run_id}
+        compliant = sum(c.status.value == 'Compliant' for c in snapshot.controls)
+        accepted = [{'control_id': c.control_id, 'title': c.title, 'status': c.status.value,
+                     'reason': exceptions[c.control_id]['reason'], 'operator': exceptions[c.control_id]['operator']}
+                    for c in snapshot.controls if c.status.value != 'Compliant']
+        completions.complete(binding.target_id, workflow_session_id, operator=operator, final_run_id=run_id,
+                             compliant=compliant, total=len(snapshot.controls), exceptions=accepted)
+        return {'completed': True, 'compliant': compliant, 'total': len(snapshot.controls), 'exceptions': accepted,
+                'run_id': run_id}
+
+    def live_validation(self, connection_session_id):
+        """Module 3: the live-validation register of this server, one row per selected control, from its stored
+        approvals, receipts and verification scans (all workflows of this registration; read-only). The rows are
+        tools.live_validation_register.register rows, the same as the command-line tool prints."""
+        from tools.live_validation_register import register
+        self.check(connection_session_id)
+        store, s = self._store(), self.session
+        decisions, receipts, verifications = [], [], {}
+        for binding in self.ledger.bindings_for_target('ubuntu', s.target_id, s.registration_epoch) if store else ():
+            rounds = store.rounds(binding)
+            controls_of = {}
+            for r in rounds:
+                if r.kind != 'assessment':
+                    continue
+                for p in store.proposals(binding, r.round_id):
+                    if p.decision != 'approved' or not p.approved_raw:
+                        continue
+                    request = json.loads(p.approved_raw)
+                    decisions.append({'request_id': request['request_id'], 'control_id': request['control_id'],
+                                      'action_id': request['action']['action_id'], 'approver': request.get('approver'),
+                                      'round_id': r.round_id, 'workflow': binding.workflow_session_id})
+                    receipts.extend(p.receipts)
+                    controls_of[request['request_id']] = request['control_id']
+            for r in rounds:
+                if r.kind != 'verification':
+                    continue
+                statuses = {a.control_id: a.status.value for a in self._evidence(store, r.evidence_sha256).assessments}
+                for request_id in (r.details or {}).get('request_ids', ()):
+                    if controls_of.get(request_id) in statuses:
+                        verifications[request_id] = statuses[controls_of[request_id]]
+        ordered = sorted(_controls(), key=lambda c: [int(x) for x in c.split('.')])
+        return register(ordered, decisions=decisions, receipts=receipts, verifications=verifications)
+
+    def pending_reboot(self, connection_session_id):
+        """The approved reboot still running on this server (from the stored receipts; no SSH), or None: while it is
+        open, a dropped connection means the server is restarting, and the page reconnects by itself (task 6)."""
+        self.check(connection_session_id)
+        store = self._store()
+        for item in self.pending_supervised(connection_session_id) if store else ():
+            binding = self.ledger.resume(item.workflow_session_id, 'ubuntu', self.session.target_id,
+                                         self.session.registration_epoch)
+            proposal = next((p for p in store.proposals(binding, item.round_reference.record_id) if p.approved_raw
+                             and json.loads(p.approved_raw)['request_id'] == item.request_id), None)
+            if proposal is not None and proposal.payload['action']['action_id'] == 'maintenance.reboot.v1':
+                return item
+        return None
+
     def refresh_execution(self, connection_session_id, workflow_session_id, round_ref, operation_id):
         """Ask the target for the status of running or unresolved requests. Never dispatches a write."""
         from vm.ubuntu.remediation_schema import canonical, parse_request
@@ -1373,12 +1897,10 @@ class UbuntuBackend(BoundBackend):
             self._record_status(store, binding, proposal, result)
             if result.state == 'running':
                 state = 'awaiting_confirmation' if result.receipt['code'] == 'awaiting_confirmation' else 'running'
-            elif result.state == 'completed':
-                if not proposal.payload['action']['action_id'].startswith('recovery.'):
-                    applied.append(request_id)  # CIS fixes and maintenance are followed by a fresh scan
-            elif state == 'completed':
+            elif result.state != 'completed' and state == 'completed':
                 state = result.state
-        return RoundHandle(operation_id, binding, round_ref, self._verify(store, binding, latest, applied, state))
+        # CIS fixes and a reboot are followed by a fresh scan, once per execution (_verify_when_settled).
+        return RoundHandle(operation_id, binding, round_ref, self._verify_when_settled(store, binding, latest, state))
 
     def confirm_change(self, connection_session_id, workflow_session_id, round_ref, request_id, operation_id):
         """Confirm a commit-confirm change over this connection, which must be a login begun after the host saw
@@ -1407,8 +1929,8 @@ class UbuntuBackend(BoundBackend):
         result = confirm(approved, ledger=self.ledger, operation_id=operation,
                          send=lambda rid: self.session.channel.invoke_runner(header + b'\n'))
         self._record_status(store, binding, proposal, result)
-        applied = [request_id] if result.state == 'completed' else []
-        return RoundHandle(operation_id, binding, round_ref, self._verify(store, binding, latest, applied, result.state))
+        return RoundHandle(operation_id, binding, round_ref,
+                           self._verify_when_settled(store, binding, latest, result.state))
 
     def _unverified(self, store, binding, latest):
         """Request IDs of applied fixes and maintenance in this round that no verification scan has covered."""
@@ -1417,7 +1939,7 @@ class UbuntuBackend(BoundBackend):
                    for rid in (r.details or {}).get('request_ids', ())}
         found = []
         for p in store.proposals(binding, latest.round_id):
-            if (p.decision == 'approved' and p.receipts and not p.payload['action']['action_id'].startswith('recovery.')
+            if (p.decision == 'approved' and p.receipts and not p.payload['action']['action_id'].startswith(NO_SCAN_AFTER)
                     and p.receipts[-1]['outcome'] in ('applied', 'reconciled_applied')
                     and p.receipts[-1]['request_id'] not in covered):
                 found.append(p.receipts[-1]['request_id'])
@@ -1443,6 +1965,19 @@ class UbuntuBackend(BoundBackend):
             return RoundHandle(operation_id, binding, round_ref, 'nothing_to_verify')
         return RoundHandle(operation_id, binding, round_ref, self._verify(store, binding, latest, applied, 'completed'))
 
+    def _verify_when_settled(self, store, binding, latest, state):
+        """One verification scan per execution (administrator, 13 November 2026: a full scan after each of the seven
+        fixes that ran one by one took about 6 of 10 minutes). While a fix still runs or waits, or approved fixes of
+        the execution continue, the scan waits; once it has settled, one scan covers every applied fix no scan
+        covered yet. An execution that stops for a person is settled too, so nothing applied stays unobserved."""
+        if state in ('running', 'awaiting_confirmation') or self._continuable(store, binding, latest)[0]:
+            return state
+        if any(p.decision == 'approved' and p.receipts and p.receipts[-1]['outcome'] == 'running'
+               and not p.payload['action']['action_id'].startswith(AUXILIARY_PREFIXES)
+               for p in store.proposals(binding, latest.round_id)):
+            return state  # another change of the execution still waits (a stacked confirmation)
+        return self._verify(store, binding, latest, self._unverified(store, binding, latest), state)
+
     def _verify(self, store, binding, latest, applied, state):
         if applied:
             # Fresh read-only verification with the same predicates; failure leaves Verify pending, never a retry.
@@ -1454,7 +1989,7 @@ class UbuntuBackend(BoundBackend):
                 state = 'verification_pending'  # applied, but no fresh evidence yet; never a retry
         return state
 
-    # ---- auxiliary: approved restore of an applied fix ------------------------------------------
+    # ---- auxiliary: package-list refresh and reboot -----------------------------------------------
     def _request_maintenance(self, binding, kind, inputs, operation_id):
         """Metadata refresh or reboot as an auxiliary proposal of the latest round (approve, then dispatch)."""
         from system.contracts import AuxiliaryKind, MetadataRefreshInput, RebootInput
@@ -1486,6 +2021,8 @@ class UbuntuBackend(BoundBackend):
             canonical({'op': 'preview', 'action_id': spec.action_id, 'parameters': params}) + b'\n'))
         if type(preview) is not dict or preview.get('action_id') != spec.action_id:
             raise ValueError('Maintenance preview for another action')
+        if 'refused' in preview:
+            raise ValueError('The server refused it: ' + str(preview['refused'])[:200])
         if kind is AuxiliaryKind.METADATA_REFRESH and inputs.repository_digest not in (
                 '', preview['summary'].get('repository_digest')):
             raise ValueError('The apt sources changed since they were shown; review the new preview')
@@ -1503,50 +2040,23 @@ class UbuntuBackend(BoundBackend):
         return self._ref(plan.proposal_id)
 
     def request_auxiliary(self, connection_session_id, workflow_session_id, kind, basis, inputs, operation_id):
-        """Recovery of an applied fix, a package-list refresh or a reboot completing applied changes: preview and
-        store an auxiliary proposal of the latest round. Approval and dispatch follow like any other proposal."""
-        from system.contracts import AuxiliaryKind, OperationState, RecoveryInput
-        from vm.ubuntu.remediation_schema import canonical
-        from .actions import AUXILIARY, plan_action
+        """A package-list refresh or a reboot completing applied changes: preview and store an auxiliary proposal of the
+        latest round. Approval and dispatch follow like any other proposal. A per-control restore of an applied fix is
+        not offered (administrator, 12 November 2026: as on Windows); the server's own rollbacks stay."""
+        from system.contracts import AuxiliaryKind, OperationState
         binding = self.check(connection_session_id, workflow_session_id, basis)
         if AuxiliaryKind(kind) in (AuxiliaryKind.METADATA_REFRESH, AuxiliaryKind.REBOOT):
             return self._request_maintenance(binding, AuxiliaryKind(kind), inputs, operation_id)
-        if AuxiliaryKind(kind) is not AuxiliaryKind.RECOVERY:
-            return OperationState(operation_id, 'refused', code='unsupported',
-                                  detail='This auxiliary operation is not implemented for Ubuntu.')
-        if binding is None or type(inputs) is not RecoveryInput or inputs.restoration_choice != 'restore_before_state':
-            raise ValueError('Recovery needs a workflow and the restore_before_state choice')
-        store = self._store()
-        latest = self._latest(store, binding)
-        original = next((p for p in store.proposals(binding, latest.round_id) if p.proposal_id == basis.record_id), None)
-        if (original is None or original.payload['action']['action_id'].startswith('recovery.') or not original.receipts
-                or original.receipts[-1]['outcome'] not in ('applied', 'reconciled_applied')):
-            raise ValueError('Only an applied fix of the latest round can be restored')
-        request = json.loads(original.approved_raw)
-        if (inputs.original_request_id, inputs.backup_manifest_digest) != (request['request_id'], request['before_state_sha256']):
-            raise ValueError('Recovery inputs do not name this fix and its recorded backup')
-        spec = AUXILIARY['recovery.restore.v1']
-        params = {'restores_request_id': request['request_id'],
-                  'restores_request_sha256': hashlib.sha256(original.approved_raw).hexdigest()}
-        preview = json.loads(self.session.channel.invoke_runner(
-            canonical({'op': 'preview', 'action_id': spec.action_id, 'parameters': params}) + b'\n'))
-        if type(preview) is not dict or preview.get('action_id') != spec.action_id:
-            raise ValueError('Restore preview for another action')
-        f = original.payload['fields']
-        plan = plan_action(spec, families=AUXILIARY, parameters=params,
-                           **{k: f[k] for k in ('target_id', 'registration_epoch', 'hostname', 'machine_id',
-                                                'workflow_session_id', 'round_id', 'evidence_sha256', 'control_id',
-                                                'predicate_id')},
-                           before_state_sha256=preview['before_state_sha256'],
-                           expected_after_sha256=preview['expected_after_sha256'],
-                           before_state_collected_at=_host_now(), recovery=spec.recovery,
-                           job_deadline_seconds=spec.max_seconds)
-        store.add_proposal(binding, plan, title='Restore before-state of ' + f['control_id'] + ' (undo '
-                           + original.payload['action']['action_id'] + ')', preview=preview['summary'])
-        return self._ref(plan.proposal_id)
+        if AuxiliaryKind(kind) is AuxiliaryKind.RECOVERY:
+            raise ValueError('A restore of an applied fix is not offered on Ubuntu, as on Windows. A change the server '
+                             'could not confirm is restored by the server itself; otherwise use your own backup of '
+                             'the server.')
+        return OperationState(operation_id, 'refused', code='unsupported',
+                              detail='This auxiliary operation is not implemented for Ubuntu.')
 
     def dispatch_auxiliary(self, connection_session_id, workflow_session_id, proposal_ref, operation_id):
-        """Run one approved recovery proposal once, behind the same gates, then verify with a fresh scan."""
+        """Run one approved maintenance proposal once, behind the same gates, then verify with a fresh scan. Restore
+        proposals stored before 12 November 2026 are history only: their action is no longer registered."""
         binding = self.check(connection_session_id, workflow_session_id, proposal_ref)
         gate = execution_gate(self)
         if gate:
@@ -1554,9 +2064,9 @@ class UbuntuBackend(BoundBackend):
         store = self._store()
         latest = self._latest(store, binding)
         proposal = next((p for p in store.proposals(binding, latest.round_id) if p.proposal_id == proposal_ref.record_id), None)
-        if (proposal is None or not proposal.payload['action']['action_id'].startswith(('recovery.', 'maintenance.'))
+        if (proposal is None or not proposal.payload['action']['action_id'].startswith('maintenance.')
                 or proposal.decision != 'approved'):
-            raise ValueError('Only an approved recovery or maintenance proposal of the latest round can be dispatched')
+            raise ValueError('Only an approved maintenance proposal of the latest round can be dispatched')
         if proposal.receipts:
             return RoundHandle(operation_id, binding, self._ref(latest.round_id), 'completed')  # never twice
         result = self._dispatch_one(store, binding, proposal, operation_id)

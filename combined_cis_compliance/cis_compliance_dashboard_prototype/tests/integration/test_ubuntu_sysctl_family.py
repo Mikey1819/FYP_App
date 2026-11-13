@@ -79,6 +79,62 @@ class SysctlFamilyTests(unittest.TestCase):
         self.family(system).apply(ASLR)
         self.assertEqual(system.files[MANAGED].splitlines()[1:], [b'kernel.randomize_va_space = 2', b'net.ipv4.ip_forward = 0'])
 
+    def test_controls_sharing_the_drop_in_plan_together_apply_in_turn_and_restore_alone(self):
+        """Administrator request 2026-11-11: each control's state covers only its own keys, so a fix on another key
+        of the shared drop-in never makes it stale, and its restore puts back only its own keys."""
+        system = FakeSystem(runtime={'kernel.randomize_va_space': 0, 'net.ipv4.ip_forward': 1,
+                                     'net.ipv6.conf.all.forwarding': 1})
+        aslr, forward = self.family(system, '1.5.1'), self.family(system, '3.3.1')
+        fwd = {'keys': {'net.ipv4.ip_forward': 0, 'net.ipv6.conf.all.forwarding': 0}}
+        b1, b2 = aslr.read_state(ASLR), forward.read_state(fwd)
+        e1, e2 = aslr.expected_after(ASLR, b1), forward.expected_after(fwd, b2)
+        aslr.apply(ASLR)
+        self.assertEqual(forward.read_state(fwd), b2)  # 1.5.1 created the shared file: 3.3.1 is still exact
+        forward.check_eligible(fwd)
+        forward.apply(fwd)
+        self.assertEqual((aslr.read_state(ASLR), forward.read_state(fwd)), (e1, e2))
+        self.assertEqual(system.files[MANAGED].splitlines()[1:], [b'kernel.randomize_va_space = 2',
+                                                                 b'net.ipv4.ip_forward = 0',
+                                                                 b'net.ipv6.conf.all.forwarding = 0'])
+        aslr.restore(ASLR, b1)  # only 1.5.1's key goes back
+        self.assertEqual((aslr.read_state(ASLR), forward.read_state(fwd)), (b1, e2))
+        self.assertEqual(system.files[MANAGED].splitlines()[1:], [b'net.ipv4.ip_forward = 0',
+                                                                 b'net.ipv6.conf.all.forwarding = 0'])
+        forward.restore(fwd, b2)  # the last key gone: the managed file is removed
+        self.assertNotIn(MANAGED, system.files)
+        self.assertEqual(system.runtime_values, {'kernel.randomize_va_space': 0, 'net.ipv4.ip_forward': 1,
+                                                 'net.ipv6.conf.all.forwarding': 1})
+
+    def test_the_runner_executes_two_approvals_on_the_shared_drop_in_in_one_go(self):
+        from backends.ubuntu.actions import ActionPlan, ActionSpec
+        from backends.ubuntu.approvals import approve
+        from vm.ubuntu.runner import Runner
+        from vm.ubuntu.family_sysctl import IMPLEMENTATION_SHA256, validate_params
+        fwd = {'keys': {'net.ipv4.ip_forward': 0, 'net.ipv6.conf.all.forwarding': 0}}
+        system = FakeSystem(runtime={'kernel.randomize_va_space': 0, 'net.ipv4.ip_forward': 1,
+                                     'net.ipv6.conf.all.forwarding': 1})
+        with tempfile.TemporaryDirectory() as folder:
+            families = {cid: self.family(system, cid) for cid in ('1.5.1', '3.3.1')}
+            runner = Runner(folder, {f.action_id: f for f in families.values()}, lambda: IDENTITY, clock=lambda: NOW,
+                            require_root_owned=False)
+            approved = []
+            for (cid, family), params in zip(families.items(), (ASLR, fwd)):  # both planned before either runs
+                preview = runner.preview(family.action_id, params)
+                spec = ActionSpec(family.action_id, 1, IMPLEMENTATION_SHA256, (cid,),
+                                  lambda p, c=cid: validate_params(c, p), 60)
+                fields = dict(target_id='ubuntu:fixture', registration_epoch='epoch', hostname='UBUNTU-FIXTURE',
+                              machine_id='a' * 32, workflow_session_id='1' * 32, round_id='2' * 32,
+                              evidence_sha256='e' * 64, control_id=cid, predicate_id='ubuntu.%s.predicate.v1' % cid,
+                              parameters=params, before_state_sha256=preview['before_state_sha256'],
+                              expected_after_sha256=preview['expected_after_sha256'],
+                              before_state_collected_at=preview['collected_at'],
+                              recovery={'kind': 'restore_backup', 'scope': [MANAGED]}, job_deadline_seconds=60)
+                approved.append(approve(ActionPlan(spec, '%032x' % (len(approved) + 1), fields), 'fixture-operator',
+                                        NOW + timedelta(seconds=1)))
+            outcomes = [json.loads(runner.execute(a.raw))['outcome'] for a in approved]
+        self.assertEqual(outcomes, ['applied', 'applied'])
+        self.assertEqual(len(system.files[MANAGED].splitlines()), 4)  # header and three keys
+
     def test_later_file_or_ufw_override_or_foreign_managed_content_is_not_eligible(self):
         later = FakeSystem(files={'/etc/sysctl.d/99-sysctl.conf': b'kernel.randomize_va_space=0\n'})
         same = FakeSystem(files={'/etc/sysctl.d/99-sysctl.conf': b'kernel.randomize_va_space = 2\n'})

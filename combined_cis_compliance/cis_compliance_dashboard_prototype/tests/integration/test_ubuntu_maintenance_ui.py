@@ -101,6 +101,10 @@ class MaintenanceUiTests(FixUiTests):
             self.assertFalse(list(app.error), [e.value for e in app.error])
             self.run_maintenance(app)
             self.assertNotIn('ubuntu_prepare_refresh', self.keys(app))  # ran once in this round
+            for rid in list(self.launcher.active):  # apt-get update finishes; until then the box says it is running
+                self.runner().run_job(rid)
+                self.launcher.active.discard(rid)
+            app.run()
             self.assertIn('Start a new round', self.text(app))
         self.assertEqual(len([c for c in channel.runner_calls if c.startswith(b'{"op":"execute"}')]), 1)
         self.assertEqual(self.writes(), [])
@@ -133,7 +137,7 @@ class MaintenanceUiTests(FixUiTests):
             app.run()
             self.assertEqual(self.writes(), ['alpha'])
             self.assertNotIn('ubuntu_prepare_refresh', self.keys(app))  # the fix ran: lists were fine
-            self.assertIn('takes full effect after a restart', self.text(app))
+            self.assertIn('The restart is optional', self.text(app))  # wording of 2026-11-13
             self.assertFalse(app.button(key='ubuntu_prepare_reboot').disabled)
             app.button(key='ubuntu_prepare_reboot').click().run()
             self.assertFalse(list(app.error), [e.value for e in app.error])
@@ -188,10 +192,10 @@ class MaintenanceNeedsTests(unittest.TestCase):
         from hardening.agentic_view import _ubuntu_maintenance_needs
         return _ubuntu_maintenance_needs(cards, set(applied))
 
-    def test_registered_controls_are_the_package_installs_and_the_grub_change(self):
+    def test_registered_controls_are_the_package_installs(self):
         from hardening.agentic_view import REBOOT_COMPLETES, REFRESH_HELPS
         self.assertEqual(REFRESH_HELPS, {'1.3.1.1', '6.3.1.1'})  # 1.5.4 purges from the local database
-        self.assertEqual(REBOOT_COMPLETES, {'6.3.1.3'})
+        self.assertEqual(REBOOT_COMPLETES, frozenset())  # 6.3.1.3 complies from the boot entries (2026-11-13)
 
     def test_refresh_follows_a_package_install_that_could_not_be_planned_or_run(self):
         from system.ui.components import NO_PLAN, SKIPPED
@@ -202,6 +206,7 @@ class MaintenanceNeedsTests(unittest.TestCase):
             self.assertEqual(self.needs([self.card('6.3.1.1', state)]), ((), ()), state)
         self.assertEqual(self.needs([self.card('1.5.4', NO_PLAN), self.card('1.5.1', 'Not applied')]), ((), ()))
 
+    @mock.patch('hardening.agentic_view.REBOOT_COMPLETES', frozenset({'6.3.1.3'}))  # the mechanism, kept
     def test_reboot_names_only_the_applied_fixes_that_complete_at_the_next_boot(self):
         cards = [self.card('6.3.1.3', 'Applied, re-scan pending', 'r-grub'),
                  self.card('1.5.1', 'Fixed, re-scan: Compliant', 'r-sysctl')]

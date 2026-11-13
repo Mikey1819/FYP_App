@@ -27,6 +27,9 @@ def disconnect():
     clear_target_state(st.session_state)
 
 
+RESTARTING = 'ubuntu_reboot_login'  # agentic_view.REBOOT_LOGIN: the login kept while an Ubuntu server restarts
+
+
 def connected_session():
     """The verified session of the connected server, or None."""
     service = st.session_state.get(SERVICE_KEY)
@@ -41,6 +44,8 @@ def connected_session():
     alive = getattr(session.channel, 'alive', None)  # SSH only; a WinRM call opens its own connection each time.
     if alive is not None and not alive():
         disconnect()
+        if st.session_state.get(RESTARTING):
+            return None  # an approved reboot: Agentic hardening waits and reconnects by itself (2026-11-13)
         st.warning(f'The connection to {md_escape(session.identity.hostname)} was lost (the server may have '
                    'restarted). Connect again under **Servers > My servers**.')
         return None

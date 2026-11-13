@@ -98,13 +98,17 @@ class AcceptanceUiTests(ConfirmUiTests):
         self.assertEqual(outcomes, [('confirm', 'confirmed'), ('rollback', 'rolled_back')])
         self.assertTrue(self.marker.content.startswith('confirm:'))
 
-    def test_page_runs_both_scenarios_and_the_gate_reasons_disappear(self):
+    def test_only_the_one_button_is_offered(self):
+        """13 November 2026 (administrator): Run safety check runs both tests with its own fresh login, so the separate
+        Run confirm scenario / Run rollback scenario buttons and "Or run each test yourself" are gone."""
         from streamlit.testing.v1 import AppTest
         from tests.integration.test_system_acceptance import existing_page
         from tests.integration.test_ubuntu_agents import call, team, scanner_ok, RankingAware
         from tests.integration.test_ubuntu_live_path import open_gate, TARGET as LIVE
+        from tests.integration.pairing_fixture import SECRET
         from backends.ubuntu.actions import ActionSpec
         from backends.ubuntu.adapter import UbuntuBackend
+        from hardening.reconnect import RECONNECT
         from system.bootstrap import SERVICE_KEY
         from system.connection import ConnectionService
         from system.ledger import CoordinationLedger
@@ -117,70 +121,21 @@ class AcceptanceUiTests(ConfirmUiTests):
             return UbuntuBackend(self.root / 'ubuntu' / 'imports.sqlite3', session=session, ledger=ledger,
                                  families={spec.action_id: spec}, model_client_factory=clients.__getitem__,
                                  model_probe=lambda: True)
-
         service = ConnectionService(ledger, ssh_factory=lambda *a: self.make_channel(), backend_factory=backend_factory)
         app = AppTest.from_function(existing_page, default_timeout=60)
         app.session_state['fixture_database'] = str(self.root / 'windows' / 'imports.sqlite3')
         app.session_state[SERVICE_KEY] = service
-
-        def connect():
-            self.assertEqual(paired_connect(app, platform='ubuntu', hostname=LIVE[1], identity=LIVE[0]).state, 'connected')
-            self.assertFalse(list(app.error), [e.value for e in app.error])
-
-        def keyed(prefix):
-            return [b for b in app.button if b.key and b.key.startswith(prefix)]
-
-        def gate_text():
-            return ' '.join(i.value for i in app.info).lower()
-
         with open_gate():
             app.run()
-            connect()
-            self.assertIn('confirm scenario', gate_text())
-            self.assertTrue(app.button(key='ubuntu_acceptance_confirm').disabled)  # operator name first
-            app.text_input(key='ubuntu_acceptance_operator').input('fixture-operator').run()
-            app.button(key='ubuntu_acceptance_confirm').click().run()
-            self.assertFalse(list(app.error), [e.value for e in app.error])
-            [status] = keyed('ubuntu_acceptance_status_')
-            rid = status.key.removeprefix('ubuntu_acceptance_status_')
-            self.runner().run_job(rid)
-            self.launcher.active.discard(rid)
-            status.click().run()
+            self.assertEqual(paired_connect(app, platform='ubuntu', hostname=LIVE[1], identity=LIVE[0], run=False).state,
+                             'connected')
+            app.session_state[RECONNECT] = dict(host='fixture.invalid', port=22, hostname=LIVE[1], identity=LIVE[0],
+                                                username='fixture-user', password=SECRET, key_path=None, sudo=None)
             app.run()
-            [confirm] = keyed('ubuntu_acceptance_confirm_run_')
-            confirm.click().run()
-            self.assertIn('fresh login', ' '.join(e.value for e in app.error).lower())
-            app.button(key='agentic_disconnect').click().run()
-            connect()
-            keyed('ubuntu_acceptance_confirm_run_')[0].click().run()
-            app.run()
-            self.assertFalse(list(app.error), [e.value for e in app.error])
-            self.assertNotIn('confirm scenario', gate_text())
-            self.assertIn('rollback scenario', gate_text())
-            # Rollback scenario: start it, let the job finish, do NOT confirm; the timer restores it.
-            app.text_input(key='ubuntu_acceptance_operator').input('fixture-operator').run()
-            app.button(key='ubuntu_acceptance_rollback').click().run()
-            [status] = keyed('ubuntu_acceptance_status_')
-            rid = status.key.removeprefix('ubuntu_acceptance_status_')
-            self.runner().run_job(rid)
-            self.launcher.active.discard(rid)
-            status.click().run()
-            app.run()
-            self.assertEqual(keyed('ubuntu_acceptance_confirm_run_'), [])  # never offered for the rollback scenario
-            self.runner().rollback(rid)
-            keyed('ubuntu_acceptance_status_')[0].click().run()  # the operator checks status once the timer fired
-            self.assertFalse(list(app.error), [e.value for e in app.error])
-            self.assertNotIn('not enabled', gate_text())
-            # Both scenarios passed for this runner: the panel is gone (administrator requests 2026-11-08 and
-            # 2026-11-09). A reinstalled runner changes its digest, which makes the check needed, and shown, again.
-            app.run()
-            self.assertEqual([e.label for e in app.expander if 'acceptance' in e.label.lower()], [])
-            self.assertEqual(keyed('ubuntu_acceptance_') + keyed('ubuntu_safety'), [])
-        # The rollback run restored its before-state: the marker the confirmed run left, never its own.
-        self.assertTrue(self.marker.content.startswith('confirm:'))
-        for database in self.root.rglob('*.sqlite3'):
-            self.assertNotIn(b'FIXTURE-SECRET-SENTINEL', database.read_bytes())
-
+            keys = {b.key for b in app.button if b.key}
+            self.assertIn('ubuntu_safety_check', keys)
+            self.assertFalse({'ubuntu_acceptance_confirm', 'ubuntu_acceptance_rollback'} & keys)
+            self.assertNotIn('Or run each test yourself', ' '.join(c.value for c in app.caption))
 
 for _name in [n for n in dir(ConfirmUiTests) if n.startswith('test')]:
     setattr(AcceptanceUiTests, _name, None)  # only the harness is inherited

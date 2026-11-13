@@ -137,13 +137,44 @@ NEW_SERVER = 'overview_new_server'  # Set by pairing when the server is new to t
 
 
 def _new_server_note(platform, machine_identity):
-    """The first-pairing message (both systems), in place of "No assessments yet". True if it was shown."""
+    """The first-pairing message (both systems), in place of "No assessments yet". True if it was shown. Also for a
+    saved server re-paired with a new SSH host key (13 November 2026): the ledger then records it as a new
+    registration with no scan yet, so it reads as a new server, saying why."""
     new = st.session_state.get(NEW_SERVER)
     if not new or new['key'].casefold() != (platform + ':' + machine_identity).casefold():
-        return False
+        return _new_key_note(platform, machine_identity)
     st.success(f"**New server paired: {md_escape(new['hostname'])}** ({md_escape(new['system'])}). This is the first "
                'time it has been paired with this program, so nothing has been scanned yet. Open **Agentic hardening** '
                'and start the first round to see its compliance.', icon=':material/new_releases:')
+    return True
+
+
+def no_scan_note(platform, machine_identity, hostname=None):
+    """What every page shows while a server has no assessment (administrator, 13 November 2026: never "No assessments
+    yet"): the first-pairing message, the re-paired-with-a-new-key message, or otherwise the same new-server message
+    without claiming a first pairing."""
+    if machine_identity and _new_server_note(platform, machine_identity):
+        return
+    system = 'Ubuntu 22.04 LTS' if platform == 'ubuntu' else 'Windows Server 2022'
+    name = f'New server paired: {md_escape(hostname)}' if hostname else 'New server paired'
+    st.success(f'**{name}** ({system}). Nothing has been scanned on it yet. Open **Agentic hardening** and start the '
+               'first round to see its compliance.', icon=':material/new_releases:')
+
+
+def _new_key_note(platform, machine_identity):
+    """The new-server message for a server whose current registration came from a re-pair with a new host key."""
+    from system.bootstrap import SERVICE_KEY
+    ledger = getattr(st.session_state.get(SERVICE_KEY), 'ledger', None)
+    try:
+        record = ledger.registration(platform, machine_identity) if ledger is not None else None
+    except Exception:  # an older ledger, or none: say nothing special
+        record = None
+    if not record or not record.get('key_changed_at'):
+        return False
+    system = 'Ubuntu 22.04 LTS' if platform == 'ubuntu' else 'Windows Server 2022'
+    st.success(f"**New server paired: {md_escape(record['hostname'])}** ({system}). It was re-paired with a new SSH "
+               'host key, so it is recorded as a new registration and nothing has been scanned under it yet. Open '
+               '**Agentic hardening** and start the first round to see its compliance.', icon=':material/new_releases:')
     return True
 
 
@@ -181,10 +212,9 @@ def render_overview(database_path: Path, servers_path: Path | None = None):
             targets = {t: name for t, name in targets.items() if t == backend.session.target_id}
         here = (('windows', choice.machine_identity) if choice is not None else
                 ('windows', backend.session.identity.machine_identity) if backend else None)
+        name = choice.hostname if choice is not None else (backend.session.identity.hostname if backend else None)
         if not targets:
-            if not (here and _new_server_note(*here)):
-                st.info('No assessments yet for this server. Start a round in **Agentic hardening** while connected '
-                        'to it.')
+            no_scan_note(*(here or ('windows', '')), name)
             return
         target = (next(iter(targets)) if choice is not None or len(targets) == 1 else
                   st.selectbox('Server', list(targets), format_func=lambda t: f'{targets[t]} ({t.removeprefix("windows:")})',
@@ -194,8 +224,7 @@ def render_overview(database_path: Path, servers_path: Path | None = None):
             allowed = {r.run_reference.record_id for r in shared_rows}
             runs = [r for r in runs if r['run_id'] in allowed]
             if not runs:
-                if not (here and _new_server_note(*here)):
-                    st.info('No assessments yet for this verified target and registration epoch.')
+                no_scan_note(*(here or ('windows', '')), name)
                 return
         if here:
             _scanned(*here)
@@ -276,16 +305,24 @@ def _ubuntu_area_table(areas):
     return rows
 
 
+def _ubuntu_register(backend, connection):
+    """The live validation register (Ubuntu): which of the 30 controls were proven on this server. Shown on Overview
+    once the server has an assessment; read-only, from the stored records."""
+    from .agentic_view import _ubuntu_live_register
+    if hasattr(backend, 'live_validation'):
+        _ubuntu_live_register(backend, connection)
+
+
 def _render_ubuntu(backend, connection, *, connected=True):
     """The Windows Overview's sections for an Ubuntu 22.04 server, from the Ubuntu backend's read model."""
     data = backend.overview(connection) if hasattr(backend, 'overview') else None
     here = ('ubuntu', getattr(backend.session.identity, 'machine_identity', '') or '')
     if data is None:
-        if not (here[1] and _new_server_note(*here)):
-            st.info('No assessments yet. Open **Agentic hardening** and start a round.')
+        no_scan_note(*here, getattr(backend.session.identity, 'hostname', None))
         return
     _scanned(*here)
     s, previous, ranked = data['summary'], data['previous'], data['findings']
+    _ubuntu_register(backend, connection)  # moved here from Agentic hardening (2026-11-13); needs an assessment
     st.caption(f"{md_escape(backend.session.identity.hostname)} · latest assessment {myt(s.collected_at)} · "
                f"{s.selected} controls · CIS Ubuntu Linux 22.04 LTS v2.0.0, Level 1 Server"
                + ('' if connected else ' · read-only, not connected'))

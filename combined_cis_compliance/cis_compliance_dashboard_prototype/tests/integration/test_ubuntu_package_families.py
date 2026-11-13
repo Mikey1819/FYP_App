@@ -31,7 +31,7 @@ class FakeApt:
         lines = []
         if mode == 'install':
             for name in self._closure(names):
-                if name in self.newer and name in self.installed:
+                if name in self.newer and name in self.installed and self.installed[name] != self.newer[name]:
                     lines.append('Inst %s [%s] (%s Ubuntu:22.04/jammy-updates [amd64])' % (name, self.installed[name], self.newer[name]))
                 elif name not in self.installed:
                     lines.append('Inst %s (%s Ubuntu:22.04/jammy [amd64])' % (name, REPO[name][0]))
@@ -47,6 +47,8 @@ class FakeApt:
     def install(self, names, versions=None):
         self.calls.append(('install', tuple(names)))
         for name in self._closure([n.split('=')[0] for n in names]):
+            if name in self.newer and name in self.installed:
+                self.installed[name] = self.newer[name]  # apt upgrades an installed dependency it needs
             self.installed.setdefault(name, (versions or {}).get(name, REPO[name][0]))
 
     def purge(self, names):
@@ -113,8 +115,8 @@ class AuditdInstallTests(PackageCase):
         self.assertEqual(set(system.installed), {'openssh-server'})
         self.assertIn(('purge', ('libauparse0', 'auditd', 'audispd-plugins')), system.calls)
 
-    def test_upgrades_removals_or_broken_packages_are_refused(self):
-        self.refused(FakeApt(installed={'libauparse0': '1:3.0.6'}, newer={'libauparse0': '1:3.0.7-1build1'}))
+    def test_removals_or_broken_packages_are_refused(self):
+        # Upgrades apt needs are allowed since 13 November 2026 (test_ubuntu_auto_steps_1113).
         self.refused(FakeApt(incomplete={'auditd'}))
         system = FakeApt()
         system.simulate = lambda mode, names: 'Inst auditd (1 x [amd64])\nRemv other [1]\n'
@@ -164,7 +166,8 @@ class PackageRegistryTests(unittest.TestCase):
             action = 'ubuntu.%s.v1' % cid
             self.assertEqual((FAMILIES[action].version, FAMILIES[action].implementation_sha256),
                              (target[action].version, target[action].implementation_sha256))
-            self.assertEqual((target[action].supervision, target[action].max_seconds), ('job', 900))
+            # 30 minutes since 2026-11-13: apt may wait 15 minutes for the package lock first.
+            self.assertEqual((target[action].supervision, target[action].max_seconds), ('job', 1800))
         from tests.integration.ubuntu_fixtures import FAILURES
         units = {unit + '.' + field: value for unit in ('avahi-daemon.service', 'avahi-daemon.socket')
                  for field, value in (('active', 'active'), ('enabled', 'enabled'))}  # as found on the live VM

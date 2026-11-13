@@ -1,4 +1,5 @@
 """Agentic hardening page: one live VM, AI-coordinated rounds, human approval, verified fixes."""
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import json
@@ -40,8 +41,17 @@ WAIT_SECONDS = 1
 ROUND_LABEL = 'Round: Orchestrator → Scanner → Analysis → plan'
 EXECUTE_LABEL = 'Remediation Agent executing the approved fixes, then Scanner verifying'
 FALLBACK_LABEL = 'Executing the approved fixes in rank order without AI, then verifying'
-UBUNTU_EXECUTE_LABEL = 'Executing the approved fixes, then verifying'
+UBUNTU_EXECUTE_LABEL = 'Executing the approved fixes in plan order without AI, then verifying'
 UBUNTU_AGENTS_EXECUTE_LABEL = 'Remediation Agent executing, then Scanner verifying'
+# The rest of an execution names its agents too, so the live view shows Orchestrator -> Remediation -> Scanner as for
+# the first part (administrator, 13 November 2026: it showed the Scanner card alone).
+# Since the batched execution (13 November 2026) the rest runs by code in plan order, without a new AI step; the
+# live view still shows Orchestrator -> Remediation -> Scanner, with Remediation at work (_stage_for).
+UBUNTU_CONTINUE_LABEL = 'Continuing with the remaining approved fixes in plan order, then verifying'
+UBUNTU_EXECUTION_LABELS = frozenset({UBUNTU_EXECUTE_LABEL, UBUNTU_AGENTS_EXECUTE_LABEL, UBUNTU_CONTINUE_LABEL})
+UBUNTU_EXECUTION_SINCE = 'ubuntu_execution_since'  # When the administrator clicked Confirm and execute: every running
+# view of that execution (its agent runs, continuations and the steps between them) counts the time from here.
+UBUNTU_CONTINUED = 'ubuntu_continued'  # Continuations started in this browser session: the same one never twice.
 CLOCK = 'agentic_clock'                # Windows: the last check of the server clock (plain session key).
 CLOCK_NOTICE = 'agentic_clock_notice'  # What the last clock sync did, shown once.
 CLOCK_RECHECK = timedelta(minutes=2)   # The box checks again after this; Start and Execute always check afresh.
@@ -76,6 +86,7 @@ COMPLETE_ASK = 'agentic_complete_ask'      # The latest round whose Complete har
 COMPLETE_OPEN = 'agentic_complete_open'    # What the last final scan still found open (time, items).
 COMPLETE_ERROR = 'agentic_complete_error'
 GO_OVERVIEW = 'workspace_go_overview'      # A session was just completed: app.py opens Overview, which says so.
+GO_AGENTIC = 'workspace_go_agentic'        # Overview's "Open the round" (Ubuntu register): app.py opens Agentic hardening.
 SCANS = ('assessment', 'verification_scan', 'settle_scan', 'final_scan')  # Round rows that hold a scan of the server.
 SETTLE_NOTICE = 'agentic_settle_notice'  # What the rescan to settle found, shown once.
 
@@ -134,11 +145,61 @@ def _start(label, work, after):
 
 
 def _live_store(database_path, target):
-    """Where the Windows agents log what they do (read by the live view), or None (Ubuntu keeps its own log)."""
+    """Where the agents log what they do, read by the live view: the Windows store, or the Ubuntu agents' own log."""
     backend = active_backend(st.session_state)
     if backend:
-        return backend.store if backend.session.identity.platform == 'windows' else None
+        return backend.store if backend.session.identity.platform == 'windows' else _UbuntuLiveLog(backend)
     return _services(database_path, target)[1]
+
+
+class _UbuntuLiveLog:
+    """The Ubuntu agents' log for the live view (user report 2026-11-13: without it every card read "working…").
+    Their roles ('scanner', 'orchestrator (review)', ...) read as the names the view knows; read-only, and while the
+    Ubuntu store does not exist yet (before the first round) it reads as an empty log, never creating it."""
+
+    def __init__(self, backend):
+        self.backend = backend
+
+    @contextmanager
+    def _connection(self):
+        store = self.backend._store()
+        if store is None:
+            yield _NoRows()
+            return
+        with store.agent_log()._connection() as db:
+            yield _RenamedRoles(db)
+
+
+class _NoRows:
+    def execute(self, sql, params=()):
+        return self
+
+    def fetchall(self):
+        return []
+
+
+class _RenamedRoles:
+    def __init__(self, db):
+        self.db = db
+
+    def execute(self, sql, params=()):
+        cursor = self.db.execute(sql, params)
+        if 'FROM investigation_runs' not in sql:
+            return cursor
+        rows = []
+        for run_id, payload in cursor.fetchall():
+            data = json.loads(payload)
+            data['agent_role'] = UBUNTU_AGENT_NAMES.get(data.get('agent_role'), data.get('agent_role'))
+            rows.append((run_id, json.dumps(data)))
+        return _Rows(rows)
+
+
+class _Rows:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def fetchall(self):
+        return self.rows
 
 
 def _error_text(error):
@@ -157,12 +218,19 @@ def _collect_finished(key):
         st.session_state[JOB_ERROR] = _error_text(job.error)
 
 
+def _running_since(job, state):
+    """When the work shown in the running view began: for an Ubuntu execution, the Confirm and execute click (its
+    continuations and the steps between them add up to one time), else the job's own start."""
+    since = state.get(UBUNTU_EXECUTION_SINCE)
+    return since if job.label in UBUNTU_EXECUTION_LABELS and since and since <= job.started_at else job.started_at
+
+
 def _show_running(job, store=None):
     """While a round or an execution runs, this is the whole page: nothing on it can be clicked meanwhile. The
     sidebar (Overview, History and drift) stays open, and says when the work has finished."""
     with st.container(border=True):
         _working_view(job.key, store)
-        st.caption(f'Started {myt(job.started_at, "%H:%M:%S")}. It keeps running if you open Overview or History and '
+        st.caption(f'Started {myt(_running_since(job, st.session_state), "%H:%M:%S")}. It keeps running if you open Overview or History and '
                    'drift in the sidebar, and you are told when it has finished. Nothing else can start on this server '
                    'until then, and this page shows the result by itself.')
 
@@ -173,16 +241,52 @@ def _working_view(key, store):
     job = background.running(key)
     if job is None:
         st.rerun(scope='app')
-    try:
-        state = live_progress.progress(store, job.started_at) if store is not None else None
-    except sqlite3.Error:  # The log is being written: the next second reads it.
-        state = None
-    st.html(live_progress.stage_html(live_progress.phase_roles(job.label), state))
-    seconds = (datetime.now(timezone.utc) - job.started_at).total_seconds()
+    roles, state = _stage_for(job, store)
+    st.html(live_progress.stage_html(roles, state))
+    seconds = (datetime.now(timezone.utc) - _running_since(job, st.session_state)).total_seconds()
     st.markdown(f':blue-badge[:material/progress_activity: Running] **{md_escape(job.label)}** · '
                 f'{duration_text(seconds)} so far')
     if state and state['active']:
         st.caption(f"**{md_escape(state['active'])}**: {md_escape(state['words'])}")
+
+
+def _ubuntu_held_view(words):
+    """Remediation the dashboard carries on by itself between agent runs (a supervised job, a confirmation over a fresh
+    login, the next approved fixes starting, the server restarting for an approved reboot), shown as the same running
+    animation instead of the full page with messages (administrator, 13 November 2026: "the page not always changing")."""
+    state = dict(active=REMEDIATION, done={ORCHESTRATOR}, words='')
+    with st.container(border=True):
+        st.html(live_progress.stage_html((ORCHESTRATOR, REMEDIATION, SCANNER), state))
+        _ubuntu_held_clock()
+        st.caption(md_escape(words))
+        st.caption('Nothing to click: this page goes on by itself and shows the result when it has finished.')
+
+
+@st.fragment(run_every=1)
+def _ubuntu_held_clock():
+    """The held view's badge, with the execution's total time so far, every second."""
+    since = st.session_state.get(UBUNTU_EXECUTION_SINCE)
+    total = (f' · {duration_text((datetime.now(timezone.utc) - since).total_seconds())} so far' if since else '')
+    st.markdown(':blue-badge[:material/progress_activity: Running] **Remediation** · carried on by the dashboard'
+                + total)
+
+
+def _stage_for(job, store):
+    """(agent cards, live state) for the running view. The rest of an Ubuntu execution runs by code: shown as the
+    remediation step of the same three agents, as the held view does, not as the Scanner alone."""
+    if job.label == UBUNTU_CONTINUE_LABEL:
+        return ((ORCHESTRATOR, REMEDIATION, SCANNER),
+                dict(active=REMEDIATION, done={ORCHESTRATOR}, words='running the remaining approved fixes in plan order'))
+    try:
+        state = live_progress.progress(store, job.started_at) if store is not None else None
+    except sqlite3.Error:  # The log is being written: the next second reads it.
+        state = None
+    roles = live_progress.phase_roles(job.label)
+    if roles == (SCANNER,) and isinstance(store, _UbuntuLiveLog) and not (state and state['active']):
+        # An Ubuntu scan run by code (the final scan before completing, a settling rescan) has no agent run to follow,
+        # so the card read "waiting" all along (administrator, 13 November 2026): it is the Scanner at work.
+        state = dict(active=SCANNER, done=set(), words='scanning the server (read-only)')
+    return roles, state
 
 
 def _after_round(result, error):
@@ -315,11 +419,58 @@ def _run_round(hardening, session_id, mode=AssessmentMode.AGENTIC):
     _start(ROUND_LABEL, work, _after_round)
 
 
+UBUNTU_CLOCK_NOTICE = 'ubuntu_clock_notice'
+
+
+def _ubuntu_apart(seconds):
+    """A clock difference in words: snapshot restores leave Ubuntu servers days behind, not minutes."""
+    days, rest = divmod(round(abs(seconds)), 86400)
+    hours, rest = divmod(rest, 3600)
+    minutes, secs = divmod(rest, 60)
+    if days:
+        return f'{days} d {hours} h {minutes} min'
+    if hours:
+        return f'{hours} h {minutes} min'
+    return f'{minutes} min {secs} s' if minutes else f'{secs} s'
+
+
+def _ubuntu_clock_box(backend, connection):
+    """As the Windows clock check (administrator request 2026-11-11): when the server clock is more than 30 s off this
+    laptop, say how far, and offer Sync server clock to this laptop (through the fix runner; recorded in the ledger)."""
+    notice = st.session_state.pop(UBUNTU_CLOCK_NOTICE, None)
+    if notice:
+        (st.success if notice[0] == 'success' else st.error)(md_escape(notice[1]))
+    offset = backend.deployment_status(connection).clock_offset
+    if offset is None or abs(offset) <= MAX_CLOCK_OFFSET_SECONDS:
+        return
+    now, shown = datetime.now(timezone.utc), '%d %b %H:%M:%S'
+    with st.container(border=True):
+        st.markdown(f":orange-badge[:material/schedule: Clocks differ] server {myt(now + timedelta(seconds=offset), shown)}"
+                    f" · this laptop {myt(now, shown)}: the server is {_ubuntu_apart(offset)} "
+                    f"{'ahead of' if offset > 0 else 'behind'} this laptop. Sync the server clock before you continue.")
+        st.caption(f"Scans, fixes and the safety check carry the server's time, so fixes wait until the clocks are within "
+                   f'{MAX_CLOCK_OFFSET_SECONDS} s.')
+        with st.container(horizontal=True):
+            if st.button('Sync server clock to this laptop', type='primary', key='ubuntu_clock_sync', icon=':material/sync:',
+                         help="Sets the server's clock to this laptop's time through the fix runner. Changes nothing "
+                              'else; recorded in the ledger. Refused while a change is open on the server.'):
+                try:
+                    result = backend.sync_clock(connection, st.session_state.get(WORKFLOW_KEY), uuid4().hex)
+                    st.session_state[UBUNTU_CLOCK_NOTICE] = (
+                        'success', f"Server clock set from {myt(result['before'], shown)} to "
+                                   f"{myt(result['after'], shown)}, this laptop's time.")
+                except ValueError as exc:
+                    st.session_state[UBUNTU_CLOCK_NOTICE] = ('error', str(exc))
+                st.rerun()
+            if st.button('Check again', key='ubuntu_clock_check', icon=':material/refresh:'):
+                backend.deployment_status(connection, refresh=True)
+                st.rerun()
+
+
 def _ubuntu_states(snapshot):
     executed = {r.proposal_reference for r in snapshot.results}
     applied = {r.proposal_reference for r in snapshot.results if r.execution_state in ('applied', 'reconciled_applied')}
-    restoring = {p.title.split('(undo ')[0] for p in snapshot.proposals if p.kind == 'recovery'}
-    return executed, applied, restoring
+    return executed, applied
 
 
 # Maintenance is offered only when a fix of the round needs it (administrator request 2026-11-09).
@@ -327,17 +478,19 @@ def _ubuntu_states(snapshot):
 # them (1.5.4 purges from the local package database, so it needs none).
 REFRESH_HELPS = frozenset({'1.3.1.1', '6.3.1.1'})
 # GRUB audit=1: the boot entries comply at once, but early-process auditing starts at the next boot.
-REBOOT_COMPLETES = frozenset({'6.3.1.3'})
+REBOOT_COMPLETES = frozenset()  # 6.3.1.3 complies from the boot entries: no reboot offered (administrator, 2026-11-13)
 MAINTENANCE_KINDS = ('metadata_refresh', 'reboot')
 
 
 def _ubuntu_maintenance_needs(cards, applied):
     """(package-install controls a package-list refresh may unblock, approved request IDs of applied fixes a reboot
     completes), from the round's fix cards. A refresh follows an install that could not be planned or run; a
-    reboot names only fixes that are applied and not restored."""
+    reboot names only fixes that are applied and not restored (none since 13 November 2026: REBOOT_COMPLETES)."""
     from system.ui.components import NO_PLAN, SKIPPED
     blocked = (NO_PLAN, SKIPPED, 'Not applied', 'Outcome unknown')
-    refresh = tuple(c['control_id'] for c in cards if c['control_id'] in REFRESH_HELPS and c['state'] in blocked)
+    # Not while apt was busy: a refresh needs the same lock and would be refused too (2026-11-13).
+    refresh = tuple(c['control_id'] for c in cards if c['control_id'] in REFRESH_HELPS and c['state'] in blocked
+                    and 'apt is busy' not in str(c.get('reason', '')))
     reboot = tuple(p.approved_request_id for c in cards if c['control_id'] in REBOOT_COMPLETES
                    and (c['state'].startswith('Applied') or c['state'] == 'Fixed, re-scan: Compliant')
                    for p in c['proposals'] if p.kind == 'control_remediation' and p.reference in applied)
@@ -351,6 +504,8 @@ def _ubuntu_maintenance_actions(backend, connection, snapshot, capabilities, wor
     ours = [p for p in snapshot.proposals if p.kind in MAINTENANCE_KINDS]
     open_kinds = {p.kind for p in ours if p.reference not in executed and p.decision != 'rejected'}
     ran = {p.kind for p in ours if p.reference in executed}
+    states = {r.proposal_reference: r.execution_state for r in snapshot.results}
+    running = {p.kind for p in ours if states.get(p.reference) in ('running', 'unresolved')}
 
     def prepare(kind):
         try:
@@ -361,7 +516,11 @@ def _ubuntu_maintenance_actions(backend, connection, snapshot, capabilities, wor
 
     def named(ids):
         return ', '.join(ids) + (' is' if len(ids) == 1 else ' are')
-    if refresh and 'metadata_refresh' in ran:
+    if refresh and 'metadata_refresh' in running:
+        # Settles by itself: the page checks the server every five seconds (administrator, 13 November 2026).
+        st.status('Package-list refresh is running on the server (apt-get update). This updates by itself when it '
+                  'is done.', state='running')
+    elif refresh and 'metadata_refresh' in ran:
         st.caption('Package lists refreshed. Start a new round so ' + md_escape(', '.join(refresh))
                    + ' is planned and installed again.')
     elif refresh:
@@ -370,11 +529,16 @@ def _ubuntu_maintenance_actions(backend, connection, snapshot, capabilities, wor
                    'start a new round afterwards so the fix is planned again.')
     reboot_controls = sorted({p.control_id for p in snapshot.proposals
                               if p.kind == 'control_remediation' and p.approved_request_id in staged})
-    if staged and 'reboot' in ran:
-        st.caption('Reboot sent in this round. When the server is back, connect again and use Check status.')
+    if staged and 'reboot' in running:
+        st.status('Reboot running: the server restarts within a minute; the page reconnects by itself when it is back.',
+                  state='running')
+    elif staged and 'reboot' in ran:
+        st.caption('Reboot sent in this round. The page reconnects by itself when the server is back.')
     elif staged:
-        st.caption(md_escape(named(reboot_controls)) + ' applied but takes full effect after a restart. The server is '
-                   'never restarted automatically: prepare the reboot when it can go down.')
+        st.caption(md_escape(named(reboot_controls)) + ' set in the boot entries, which is what the CIS check reads. '
+                   'The running kernel uses it from the next restart (until then, processes that start before auditd '
+                   'are not audited). The restart is optional and never automatic: prepare the reboot when the server '
+                   'can go down.')
     with st.container(horizontal=True):
         if refresh and 'metadata_refresh' not in ran:
             st.button('Prepare package-list refresh', key='ubuntu_prepare_refresh', on_click=prepare,
@@ -384,7 +548,7 @@ def _ubuntu_maintenance_actions(backend, connection, snapshot, capabilities, wor
         if staged and 'reboot' not in ran:
             st.button('Prepare reboot to complete applied changes', key='ubuntu_prepare_reboot', on_click=prepare,
                       args=(AuxiliaryKind.REBOOT,), disabled=not capabilities.can_remediate or 'reboot' in open_kinds,
-                      help='The server restarts 60 s after it runs; connect again, then Check status.')
+                      help='The server restarts 60 s after it runs; the page waits and reconnects by itself.')
     for p in snapshot.proposals:
         if p.kind not in ('metadata_refresh', 'reboot') or p.decision != 'approved' or p.reference in executed:
             continue
@@ -506,61 +670,206 @@ def _ubuntu_acceptance(backend, connection):
                     st.button('Confirm', key='ubuntu_acceptance_confirm_run_' + run.request_id, type='primary',
                               on_click=act, kwargs={'confirm': True})
 
-        def start(scenario):
-            try:
-                backend.start_acceptance(connection, scenario, operator, uuid4().hex)
-                st.session_state['ubuntu_acceptance_notice'] = scenario + ' scenario started.'
-            except (ValueError, OSError) as failure:
-                st.session_state['ubuntu_acceptance_error'] = str(failure)[:300]
-        st.caption('Or run each test yourself:')
-        with st.container(horizontal=True):
-            for scenario, label in (('confirm', 'Run confirm scenario'), ('rollback', 'Run rollback scenario')):
-                st.button(label, key='ubuntu_acceptance_' + scenario, on_click=start, args=(scenario,),
-                          disabled=open_run or not operator.strip())
 
 
 AUTO_FAILED = 'ubuntu_autoconfirm_failed'
+STATUS_FAILURES = 'ubuntu_status_failures'  # request ID -> (status checks failed in a row, the last error)
+STATUS_FAILURE_LIMIT = 3  # then the page leaves the running animation and shows the error (2026-11-13)
+REBOOT_LOGIN = 'ubuntu_reboot_login'  # The login kept while the server restarts for an approved reboot (task 6).
+REBOOT_ERROR = 'ubuntu_reboot_error'  # Why the page stopped waiting for the restart; shown once, connected or not.
+REBOOT_WAIT_SECONDS = 600
+
+
+def _ssh_answers(host, port):
+    """True when the server's SSH port accepts a TCP connection: no login, nothing sent (reachability.answers)."""
+    from .reachability import answers
+    return answers(host, port)
+
+
+def _reboot_clock():
+    import time
+    return time.time()
+
+
+def _ubuntu_hold_for_reboot(backend, connection):
+    """The SSH link dropped while an approved reboot is open: the server is restarting. Keep the remembered login (in
+    this browser session's memory only, as reconnect.py does) until the server is back or ten minutes have passed, so
+    the page can log in again by itself after the usual disconnect forgets it. Nothing is kept when no reboot is open
+    or no login is remembered; a deliberate Disconnect never gets here, since the link was alive then."""
+    from .reconnect import RECONNECT
+    login = st.session_state.get(RECONNECT)
+    reboot = backend.pending_reboot(connection) if login else None
+    if reboot is None:
+        return
+    st.session_state[REBOOT_LOGIN] = dict(login=dict(login), since=_reboot_clock(), answered=0,
+                                          workflow=reboot.workflow_session_id, round=reboot.round_reference,
+                                          hostname=backend.session.identity.hostname)
+
+
+def ubuntu_hold_if_restarting():
+    """app.py, before its connection check: a dropped SSH link while an approved reboot is open is the restart, so the
+    login is kept and the page waits on Agentic hardening (before: the check disconnected, said "Connect again" and
+    moved to Servers, then to Overview after a reconnect; administrator, 13 November 2026)."""
+    service, connection = st.session_state.get(SERVICE_KEY), st.session_state.get(CONNECTION_KEY)
+    if st.session_state.get(REBOOT_LOGIN) or not (service and connection):
+        return
+    try:
+        session = service.session(connection)
+    except ValueError:
+        return
+    alive = getattr(session.channel, 'alive', None)
+    if session.identity.platform == 'ubuntu' and alive is not None and not alive():
+        _ubuntu_hold_for_reboot(service.backend_for(connection), connection)
+
+
+def ubuntu_restarting():
+    """(hostname, 'ubuntu', workspace key) of the server restarting for an approved reboot, else None: app.py keeps
+    its workspace open meanwhile, under the key it was opened with, so the page neither moves nor jumps to Overview."""
+    held = st.session_state.get(REBOOT_LOGIN)
+    return (held['hostname'], 'ubuntu', 'ubuntu:' + held['login']['identity']) if held else None
+
+
+def _ubuntu_reboot_return():
+    """While the server restarts for an approved reboot, the page waits for it instead of asking for a reconnect.
+    True when the page is showing that wait (nothing else is drawn)."""
+    from .connection_view import disconnect
+    error = st.session_state.pop(REBOOT_ERROR, None)
+    if error:
+        st.error(error)
+    held = st.session_state.get(REBOOT_LOGIN)
+    if not held:
+        return False
+    connection = st.session_state.get(CONNECTION_KEY)
+    if connection:
+        try:
+            alive = getattr(st.session_state[SERVICE_KEY].session(connection).channel, 'alive', None)
+        except ValueError:
+            alive = None
+        if alive is None or alive():
+            st.session_state.pop(REBOOT_LOGIN, None)  # connected again (for example by hand): nothing to wait for
+            return False
+        disconnect()  # the link is gone: end it, as the sidebar's check does; only the reboot login is kept
+    _ubuntu_reboot_wait()
+    return True
 
 
 @st.fragment(run_every=5)
-def _ubuntu_watch_changes():
+def _ubuntu_reboot_wait():
+    """Every five seconds: is the server's SSH port answering? After two answers in a row, log in again with the kept
+    login, then ask the runner for the reboot's status (it settles only on a new boot ID) and redraw the page."""
+    from .reconnect import RECONNECT, fresh_login
+    held = st.session_state.get(REBOOT_LOGIN)
+    if not held:
+        st.rerun(scope='app')
+    login, host = held['login'], md_escape(held['hostname'])
+    if _reboot_clock() - held['since'] > REBOOT_WAIT_SECONDS:
+        st.session_state.pop(REBOOT_LOGIN, None)
+        st.session_state[REBOOT_ERROR] = (f'{host} did not come back within 10 minutes of its restart, so the page stopped '
+                                       'waiting. When it is back, connect again under Servers > My servers; the reboot '
+                                       'is then checked by its boot ID.')
+        st.rerun(scope='app')
+    _ubuntu_held_view(f'{held["hostname"]} is restarting to complete the approved reboot. The page reconnects by '
+                      f'itself when it is back (waiting since '
+                      f'{datetime.fromtimestamp(held["since"]).strftime("%H:%M:%S")}).')
+    held['answered'] = held['answered'] + 1 if _ssh_answers(login['host'], login['port']) else 0
+    if held['answered'] < 2:
+        return
+    st.session_state.pop(REBOOT_LOGIN, None)
+    st.session_state[RECONNECT] = login
+    try:
+        new = fresh_login(st.session_state)
+        st.session_state[WORKFLOW_KEY] = held['workflow']
+        handle = st.session_state[SERVICE_KEY].backend_for(new).refresh_execution(
+            new, held['workflow'], held['round'], uuid4().hex)
+        st.session_state['ubuntu_pending_notice'] = (held['hostname'] + ' is back after the restart: reboot '
+                                                     + handle.state.replace('_', ' ') + '.')
+    except (ValueError, OSError) as failure:
+        st.session_state[JOB_ERROR] = md_escape(str(failure)[:300])
+    st.rerun(scope='app')
+
+
+@st.fragment(run_every=5)
+def _ubuntu_watch_changes(quiet=False):
     """While a change runs or waits for confirmation, check it every five seconds; confirm a waiting one over a fresh
-    login made by the dashboard. The whole page redraws once something settles."""
+    login made by the dashboard. The whole page redraws once something settles. `quiet`: behind the held running view
+    (_ubuntu_held_view), which already says what is happening."""
     from .reconnect import can_reconnect, fresh_login
     backend, connection = active_backend(st.session_state), st.session_state.get(CONNECTION_KEY)
     if backend is None or connection is None:
         return
+    alive = getattr(backend.session.channel, 'alive', None)
+    if alive is not None and not alive():
+        _ubuntu_hold_for_reboot(backend, connection)
+        st.rerun(scope='app')
     items = backend.pending_supervised(connection)
     if not items:
         st.rerun(scope='app')
     failed = st.session_state.setdefault(AUTO_FAILED, set())
-    for item in items:
-        label = md_escape(item.control_id + ' · ' + item.title)
-        if item.code == 'awaiting_confirmation' and can_reconnect(st.session_state) and item.request_id not in failed:
-            st.info(f'**{label}** was applied. Confirming it over a fresh SSH login…')
+    waiting = [i for i in items if i.code == 'awaiting_confirmation' and i.request_id not in failed]
+    # A change of the execution still applying is waited for, so one login confirms them all (2026-11-13).
+    applying = any(i.outcome == 'running' and i.code not in ('awaiting_confirmation', 'awaiting_reboot') for i in items)
+    if waiting and can_reconnect(st.session_state) and not applying:
+        # One fresh login made after the last of them confirms them all (2026-11-13): it proves SSH survived every one.
+        if not quiet:
+            st.info('Confirming ' + md_escape(', '.join(i.control_id for i in waiting)) + ' over a fresh SSH login…')
+        try:
+            new = fresh_login(st.session_state)
+        except (ValueError, OSError) as failure:
+            failed.update(i.request_id for i in waiting)
+            st.session_state['ubuntu_pending_error'] = ('Not confirmed automatically: ' + str(failure)[:300])
+            st.rerun(scope='app')
+        confirmer = st.session_state[SERVICE_KEY].backend_for(new)
+        for item in waiting:
             try:
-                new = fresh_login(st.session_state)
-                handle = st.session_state[SERVICE_KEY].backend_for(new).confirm_change(
-                    new, item.workflow_session_id, item.round_reference, item.request_id, uuid4().hex)
-                st.session_state[WORKFLOW_KEY] = item.workflow_session_id
-                st.session_state['ubuntu_pending_notice'] = (item.control_id + ': confirmed after a fresh login, '
-                                                             + handle.state.replace('_', ' ') + '.')
+                confirmer.confirm_change(new, item.workflow_session_id, item.round_reference, item.request_id,
+                                         uuid4().hex)
+                st.session_state[WORKFLOW_KEY] = item.workflow_session_id  # the fix card shows the result
             except (ValueError, OSError) as failure:
                 failed.add(item.request_id)
                 st.session_state['ubuntu_pending_error'] = (item.control_id + ': not confirmed automatically. '
                                                             + str(failure)[:300])
-            st.rerun(scope='app')
+        st.rerun(scope='app')
+    for item in items:
+        label = md_escape(item.control_id + ' · ' + item.title)
+        if item.code == 'awaiting_confirmation' and can_reconnect(st.session_state) and item.request_id not in failed:
+            continue  # confirmed with the change still applying, over one login, once that one waits too
         elif item.code == 'awaiting_confirmation':
-            st.warning(f'**{label}** was applied and is waiting for confirmation. Disconnect, reconnect to the server '
-                       '(a fresh login proves SSH still works), then confirm before the rollback timer restores it.')
+            # Only when the dashboard could not confirm it by itself (no remembered login, or its fresh login failed).
+            st.warning(f'**{label}** was applied and is waiting for confirmation, and the dashboard could not confirm it '
+                       'by itself. Disconnect, connect to the server again (a fresh login proves SSH still works), then '
+                       'confirm before the rollback timer restores it.')
         elif item.outcome == 'running':
-            st.info(f'**{label}** is running on the server. This page checks it every few seconds.')
+            failures = st.session_state.setdefault(STATUS_FAILURES, {})
+            count, error = failures.get(item.request_id, (0, ''))
+            if count >= STATUS_FAILURE_LIMIT:
+                st.error(f'**{label}**: the server\'s status could not be read {count} times in a row '
+                         f'({md_escape(error)}). The page keeps checking; use Check status below, or connect again.')
+            elif not quiet:
+                st.info(f'**{label}** is running on the server. This page checks it every few seconds.')
+            try:
+                handle = backend.refresh_execution(connection, item.workflow_session_id, item.round_reference,
+                                                   uuid4().hex)
+            except (ValueError, OSError) as failure:
+                # Never swallowed for good (live 13 November 2026: "running" forever after a restart).
+                failures[item.request_id] = (count + 1, str(failure)[:200])
+                if count + 1 == STATUS_FAILURE_LIMIT:
+                    st.rerun(scope='app')  # leave the running animation: the full page shows the error
+                continue
+            failures.pop(item.request_id, None)
+            if handle.state != 'running':
+                st.session_state[WORKFLOW_KEY] = item.workflow_session_id
+                st.rerun(scope='app')
+        elif item.code == 'state_unreadable':
+            st.warning(f'**{label}**: the server could not read this change\'s state, so its outcome is not known '
+                       'yet. This usually means apt or dpkg is busy or was interrupted (for example by a restart during '
+                       'an install). The page checks again every few seconds; if a restart interrupted dpkg, '
+                       '`sudo dpkg --configure -a` on the server finishes it.')
             try:
                 handle = backend.refresh_execution(connection, item.workflow_session_id, item.round_reference,
                                                    uuid4().hex)
             except (ValueError, OSError):
                 continue
-            if handle.state != 'running':
+            if handle.state not in ('running', 'unresolved'):
                 st.session_state[WORKFLOW_KEY] = item.workflow_session_id
                 st.rerun(scope='app')
         else:
@@ -599,33 +908,72 @@ def _ubuntu_pending_changes(backend, connection):
                           on_click=act, kwargs={'confirm': True})
 
 
-def _ubuntu_restore_actions(backend, connection, proposals, capabilities, workflow, applied, executed, restoring):
-    """Approved recovery: prepare a restore of an applied fix, approve it, then confirm and run it once."""
-    from system.contracts import AuxiliaryKind, RecoveryInput
-    for p in proposals:
-        if (p.kind == 'control_remediation' and p.reference in applied
-                and 'Restore before-state of ' + p.control_id + ' ' not in restoring):
-            if st.button('Prepare restore of ' + p.control_id, key='ubuntu_prepare_restore_' + p.reference.record_id,
-                         disabled=not capabilities.can_remediate):
-                backend.request_auxiliary(connection, workflow, AuxiliaryKind.RECOVERY, p.reference,
-                                          RecoveryInput(p.approved_request_id, p.before_state_sha256,
-                                                        'restore_before_state'), uuid4().hex)
-                st.rerun()
-    for p in proposals:
-        if p.kind != 'recovery' or p.decision != 'approved' or p.reference in executed:
-            continue
-        key = p.reference.record_id
-        confirmed = st.checkbox('I confirm restoring the recorded before-state of ' + p.control_id + ' on the server',
-                                key='ubuntu_confirm_restore_' + key)
+def _ubuntu_continuation_due(backend, connection, snapshot, capabilities):
+    """The key of a continuation the page should start now, or None (nothing remaining, or already started once)."""
+    workflow = st.session_state.get(WORKFLOW_KEY)
+    if not (workflow and capabilities.can_remediate and snapshot.current_round_reference):
+        return None
+    remaining = backend.continuation(connection, workflow)
+    if not remaining:
+        return None
+    key = (snapshot.current_round_reference.record_id, tuple(sorted(remaining)))
+    return None if key in st.session_state.get(UBUNTU_CONTINUED, set()) else key
 
-        def run(reference=p.reference, key=key):
-            st.session_state['ubuntu_confirm_restore_' + key] = False
-            try:
-                backend.dispatch_auxiliary(connection, workflow, reference, uuid4().hex)
-            except ValueError as failure:
-                st.session_state['ubuntu_execute_error'] = str(failure)[:300]
-        st.button('Run approved restore of ' + p.control_id, key='ubuntu_run_restore_' + key, on_click=run,
-                  disabled=not (capabilities.can_remediate and confirmed))
+
+def _ubuntu_hold_remediation(backend, connection, capabilities):
+    """True when remediation is carrying on by itself, so the page shows only the running animation and does the next
+    step (administrator, 13 November 2026). Anything that needs the administrator (an outcome to reconcile, a change
+    the dashboard cannot confirm, a fix waiting for a reboot) and the Maintenance box's own work keep the full page."""
+    from .reconnect import can_reconnect
+    failed = st.session_state.get(AUTO_FAILED, set())
+    items = [i for i in backend.pending_supervised(connection) if i.control_id != 'maintenance']
+    words = None
+    for item in items:
+        label = item.control_id + ' · ' + item.title
+        if item.code == 'awaiting_confirmation':
+            if not can_reconnect(st.session_state) or item.request_id in failed:
+                return False
+            confirming = [i.control_id for i in items if i.code == 'awaiting_confirmation']
+            words = (', '.join(confirming) + ': applied; confirming them over one fresh SSH login.'
+                     if len(confirming) > 1 else label + ': applied; confirming it over a fresh SSH login.')
+        elif item.outcome == 'running' and item.code != 'awaiting_reboot':
+            if st.session_state.get(STATUS_FAILURES, {}).get(item.request_id, (0, ''))[0] >= STATUS_FAILURE_LIMIT:
+                return False  # its status cannot be read: the full page shows why, with Check status
+            words = words or label + ': running on the server as a supervised job.'
+        else:
+            return False
+    if items:
+        _ubuntu_held_view(words)
+        _ubuntu_watch_changes(quiet=True)
+        return True
+    workflow = st.session_state.get(WORKFLOW_KEY)
+    if not workflow or backend.completion(connection, workflow) is not None:
+        return False
+    snapshot = backend.snapshot(connection, workflow)
+    if _ubuntu_continuation_due(backend, connection, snapshot, capabilities) is None:
+        return False
+    _ubuntu_held_view('Starting the remaining approved fixes.')
+    _ubuntu_continue(backend, connection, snapshot, capabilities)
+    return True
+
+
+def _ubuntu_continue(backend, connection, snapshot, capabilities):
+    """The rest of an execution, without a new click (problem 7): once the fix it waited for (a supervised job, a
+    confirmation after a fresh login) has settled, the remaining approved, unexpired fixes the administrator sent run
+    in the background, in the same mode the Confirm button would use. The backend decides what may continue; the page
+    starts each continuation once, so a refusal is shown and never retried by itself."""
+    workflow = st.session_state.get(WORKFLOW_KEY)
+    key = _ubuntu_continuation_due(backend, connection, snapshot, capabilities)
+    if key is None:
+        return
+    st.session_state.setdefault(UBUNTU_CONTINUED, set()).add(key)
+    round_ref, operation = snapshot.current_round_reference, uuid4().hex
+    st.session_state.setdefault(UBUNTU_EXECUTION_SINCE, datetime.now(timezone.utc))
+    # By code, in plan order (deterministic): the agents chose and checked the execution once; each remaining fix
+    # keeps its approval, ledger claim and server checks (administrator, 13 November 2026: a new AI step per fix).
+    _start(UBUNTU_CONTINUE_LABEL,
+           lambda: backend.continue_execution(connection, workflow, round_ref, True, operation),
+           _after_ubuntu_execute)
 
 
 # ------------------------------------------------------------------ Windows: the server clock
@@ -1480,6 +1828,8 @@ def _show_agent_log(hardening, phases):
 
 def render_agentic(database_path: Path):
     st.title('Agentic hardening')
+    if _ubuntu_reboot_return():
+        return  # The Ubuntu server is restarting for an approved reboot; the page reconnects by itself.
     try:
         target = render_connection(key='agentic')
     except (ValueError, ChannelError) as exc:
@@ -1501,13 +1851,23 @@ def render_agentic(database_path: Path):
         if backend:
             connection = st.session_state[CONNECTION_KEY]
             capabilities = backend.capabilities(connection)
+            if backend.session.identity.platform == 'ubuntu' and _ubuntu_hold_remediation(backend, connection,
+                                                                                          capabilities):
+                return  # remediation carries on by itself: only the running animation (2026-11-13)
+            if backend.session.identity.platform == 'ubuntu':
+                st.session_state.pop(UBUNTU_EXECUTION_SINCE, None)  # settled: the next execution counts afresh
             for reason in capabilities.blocked_reasons:
                 st.info(md_escape(reason))
             if backend.session.identity.platform == 'ubuntu':
+                _ubuntu_clock_box(backend, connection)
                 _ubuntu_pending_changes(backend, connection)
                 _ubuntu_acceptance(backend, connection)
+                _ubuntu_server_decisions(backend, connection)
                 workflow = st.session_state.get(WORKFLOW_KEY)
                 snapshot = backend.snapshot(connection, workflow)
+                completion = backend.completion(connection, workflow) if workflow else None
+                if completion is None:
+                    _ubuntu_continue(backend, connection, snapshot, capabilities)
                 previous = None if workflow else backend.previous_workflow(connection)
                 if previous:  # After a reconnect, as on Windows: the last session on this server can be resumed.
                     earlier, at, open_count = previous
@@ -1522,8 +1882,12 @@ def render_agentic(database_path: Path):
                                           if workflow and viewed.current_round_reference else None)
                 _show_progress(dict(zip(STEPS, viewed.step_states)),
                                {'outcome': {'outcome': outcome}} if outcome else None)
+                spent = (backend.execution_time(connection, workflow, viewed.current_round_reference)
+                         if workflow and viewed.current_round_reference else None)
+                for line in _ubuntu_phase_lines(viewed.events, spent):  # as the Windows page: each phase's time
+                    st.caption(line)
                 tabs = dict(fixes_panel=lambda: _ubuntu_show_fixes(backend, connection, viewed, capabilities,
-                                                                   editable=chosen is None),
+                                                                   editable=chosen is None and completion is None),
                             risk_panel=lambda: _ubuntu_show_risk(backend, connection, workflow, viewed),
                             results_panel=lambda: _ubuntu_show_results(backend, connection, workflow, viewed),
                             log_panel=lambda: _ubuntu_show_agent_log(viewed),
@@ -1532,7 +1896,12 @@ def render_agentic(database_path: Path):
                     st.caption('An earlier round, read-only. Decisions and execution happen in the latest round.')
                     render_snapshot_tabs(viewed, **tabs)
                     return
+                if completion is not None:  # Module 1: a completed session is read-only, as on Windows.
+                    _ubuntu_show_completed(backend, connection, workflow, snapshot, rounds, completion)
+                    render_snapshot_tabs(snapshot, **tabs)
+                    return
                 undecided, pending = _ubuntu_open_fixes(snapshot)
+                ai = _ubuntu_ai_readiness(capabilities)
                 with st.container(horizontal=True, vertical_alignment='center'):
                     # Ubuntu page (administrator request 2026-11-10): a new round can start at any time, also while
                     # fixes of this round are undecided or approved but not executed. Those stay in this round,
@@ -1542,7 +1911,8 @@ def render_agentic(database_path: Path):
                                  'read-only; the new round proposes them again.') if undecided or pending else ''
                     if st.button(
                             'Start agentic round' if snapshot.current_round_reference is None else 'Run next round',
-                            key='agentic_run', type='primary', disabled=not capabilities.can_use_model,
+                            key='agentic_run', type='primary',
+                            disabled=not capabilities.can_use_model or (ai is not None and ai.state == 'down'),
                             help='Scan the server, rank the findings and propose fixes. Nothing changes until you '
                                  'approve and execute.' + open_note):
                         # Bounded Ubuntu agents through the backend; the orchestrator plans, the administrator approves.
@@ -1554,6 +1924,15 @@ def render_agentic(database_path: Path):
                         st.rerun()
                     if undecided:
                         st.markdown(f'{len(undecided)} proposed fix(es) need your decision in **Fixes**.')
+                    round_id = snapshot.current_round_reference.record_id if snapshot.current_round_reference else None
+                    # Module 1, as on Windows: offered once nothing of the latest round awaits a decision or execution.
+                    if (workflow and round_id and not undecided and not pending
+                            and not backend.pending_supervised(connection)
+                            and st.session_state.get(UBUNTU_COMPLETE_ASK) != round_id):
+                        st.button('Complete hardening', key='ubuntu_complete', icon=':material/flag:',
+                                  on_click=st.session_state.__setitem__, args=(UBUNTU_COMPLETE_ASK, round_id),
+                                  help='A final read-only scan, then the session is completed if every control is '
+                                       'compliant or accepted as an exception.')
                     if workflow:
                         _ubuntu_report_button(backend, connection, workflow, snapshot, rounds)
                     if workflow and st.button('New session', key='agentic_reset', type='tertiary',
@@ -1562,6 +1941,8 @@ def render_agentic(database_path: Path):
                         st.session_state.pop(UBUNTU_CONFIRM, None)
                         st.session_state.pop(UBUNTU_ROUND_VIEW, None)
                         st.rerun()
+                if workflow and round_id and st.session_state.get(UBUNTU_COMPLETE_ASK) == round_id and not undecided:
+                    _ubuntu_show_completion(backend, connection, workflow)
                 _ubuntu_execute_bar(backend, connection, snapshot, capabilities)
                 render_snapshot_tabs(snapshot, **tabs)
                 return
@@ -1764,7 +2145,10 @@ def _ubuntu_step_rows(events):
         result = {'tool': _compact(e.result_summary), 'tool_rejected': e.result_summary.removeprefix('Refused: '),
                   'nudge': 'Asked for exactly one tool call', 'finished': e.result_summary}[e.event_kind]
         rows.append({'Step': step, 'Event': UBUNTU_EVENT_NAMES[e.event_kind], 'Tool': e.tool_name if call else '',
-                     'Arguments': _compact(e.safe_arguments) if call else '', 'Result or error': result})
+                     'Arguments': _compact(e.safe_arguments) if call else '', 'Result or error': result,
+                     # Module 2: the model's response time for the step that produced this event, once per request.
+                     'Model seconds': '' if e.model_seconds is None else
+                     f'{e.model_seconds:.1f}' + (' (retried once)' if e.model_retried else '')})
     return rows
 
 
@@ -1821,12 +2205,14 @@ def _ubuntu_results(snapshot):
 def _ubuntu_review_line(review):
     """The Orchestrator's next-step decision after the remediation phase, or (`fallback`) that the remaining fixes
     then ran without AI, as the Windows page shows its outcome."""
-    review_line(review['next_step'], review['reason'])
+    if review.get('reason_code') == 'awaiting_confirmation':
+        return  # the dashboard confirms by itself; the outcome is decided again once it has settled (2026-11-13)
+    review_line(review['next_step'], review['reason'])  # the shared helper, as the Windows page
 
 
 def _ubuntu_show_fixes(backend, connection, snapshot, capabilities, editable=True):
-    """As the Windows Fixes tab. An earlier round (`editable` false) is read-only: no verification, restore or
-    maintenance actions, and its proposals carry no decision commands."""
+    """As the Windows Fixes tab. An earlier round (`editable` false) is read-only: no verification or maintenance
+    actions, and its proposals carry no decision commands."""
     from system.ui.components import NO_PLAN, plan_cards, plan_summary
     for key, show in (('ubuntu_decision_error', st.error), ('ubuntu_verify_error', st.error),
                       ('ubuntu_execute_error', st.error), ('ubuntu_verify_notice', st.success)):
@@ -1840,7 +2226,7 @@ def _ubuntu_show_fixes(backend, connection, snapshot, capabilities, editable=Tru
         if editable and workflow and hasattr(backend, 'remediation_review') else None
     if review:  # The Orchestrator's next-step decision after the Remediation Agent ran (code-written sentence).
         _ubuntu_review_line(review)
-    executed, applied, restoring = _ubuntu_states(snapshot)
+    executed, applied = _ubuntu_states(snapshot)
     cards = plan_cards(snapshot)
     fixes = [c for c in cards if any(p.kind == 'control_remediation' for p in c['proposals'])]
     if snapshot.plan:
@@ -1849,7 +2235,7 @@ def _ubuntu_show_fixes(backend, connection, snapshot, capabilities, editable=Tru
         st.info('The Orchestrator proposed no fixes in this round.')
     undecided = [p for c in fixes for p in c['proposals'] if p.kind == 'control_remediation' and p.eligible_commands]
     operator = comment = ''
-    if any(p.eligible_commands for p in snapshot.proposals):  # A fix, a restore or a maintenance step awaits you.
+    if any(p.eligible_commands for p in snapshot.proposals):  # A fix or a maintenance step awaits you.
         with st.container(horizontal=True, vertical_alignment='bottom'):
             operator = st.text_input('Your name (recorded with each decision)', key='agentic_operator',
                                      persist_state='session', width=320)
@@ -1881,22 +2267,15 @@ def _ubuntu_show_fixes(backend, connection, snapshot, capabilities, editable=Tru
                          + (' · Analysis flag: ' + md_escape(card['flag']) if card['flag'] else ''))
             with right:
                 _ubuntu_decision_cell(backend, connection, card, p, operator, comment)
-            restores = [q for q in card['proposals'] if q.kind == 'recovery']
-            if editable and (p.reference in applied or restores):
-                with left:
-                    _ubuntu_restore_actions(backend, connection, card['proposals'], capabilities, workflow, applied,
-                                            executed, restoring)
-                    for q in restores:
-                        if q.eligible_commands:
-                            st.caption('Restore of ' + md_escape(card['control_id']) + ' awaits your decision:')
-                            _ubuntu_decision_cell(backend, connection, dict(card, state='Awaiting your decision'), q,
-                                                  operator, comment)
+            # No per-control restore on the Ubuntu page (administrator, 12 November 2026: as on Windows).
     skipped = [c for c in cards if c not in fixes]
     if skipped:
         st.markdown('**Not proposed this round**')
         st.dataframe([{'Control': c['control_id'], 'Reason': (
-            'Fix proposed, but the read-only check on the server refused it (a prerequisite is missing, for example '
-            'an SSH allow rule before the firewall is enabled)' if c['state'] == NO_PLAN
+            # The server's own reason when the round recorded one (2026-11-13), else the general explanation.
+            c['reason'].split(' · ', 1)[1] if c['state'] == NO_PLAN and 'refused its read-only check' in c['reason']
+            else 'Fix proposed, but the read-only check on the server refused it (a prerequisite is missing, for '
+                 'example auditd before the audit rules)' if c['state'] == NO_PLAN
             else c['decision'] + ': ' + c['reason'])} for c in skipped], hide_index=True)
     if snapshot.current_round_reference is None or not editable:
         return  # Maintenance belongs to the latest round's applied fixes: nothing before the first round.
@@ -1932,13 +2311,284 @@ def _ubuntu_choose_round(rounds):
     return None if chosen == rounds[-1][0] else chosen
 
 
+SERVER_DECISIONS = {
+    'firewall_manager': ('Firewall manager', 'The UFW fixes (4.1.3, 4.1.4, 4.1.7) write UFW rules. Confirm only if UFW '
+                         'manages this server\'s firewall (not nftables or firewalld); the scan still checks for '
+                         'competing managers each time.',
+                         (('ufw', 'This server uses UFW'), ('none', 'Not UFW: no firewall fixes'))),
+    'avahi_2_1_2': ('2.1.2 avahi-daemon', 'CIS allows removing avahi-daemon or keeping it with its socket and service '
+                    'stopped and masked. Removing it also removes packages that depend on it, so the program only offers '
+                    'keep-and-mask.', (('mask', 'Keep it, stop and mask it'), ('none', 'Leave 2.1.2 without a fix')))}
+
+
+def _ubuntu_server_decisions(backend, connection):
+    """Two reviewed decisions per server, recorded once with the administrator's name (2026-11-13): they were
+    registered in code for the first lab VM only, so a new VM could never plan 2.1.2, 4.1.4 or 4.1.7."""
+    state = backend.server_decisions(connection)
+    open_keys = [k for k, v in state.items() if v['value'] is None]
+    if not open_keys:
+        return  # all made: nothing left to show (administrator, 13 November 2026); they stay in the decisions store
+    host = md_escape(backend.session.identity.hostname)
+    label = f'Server decisions for {host}: {len(open_keys)} to make'
+    with st.expander(label, expanded=True, icon=':material/rule:'):
+        error = st.session_state.pop('ubuntu_decision_record_error', None)
+        if error:
+            st.error(md_escape(error))
+        operator = (st.session_state.get('agentic_operator') or '').strip()  # the name typed in Fixes counts too
+        if open_keys and not operator:
+            operator = st.text_input('Your name (recorded with each decision)', key='ubuntu_decisions_operator',
+                                     width=320).strip()
+            if not operator:
+                st.caption(NAME_HINT)
+        for key, (title, why, options) in SERVER_DECISIONS.items():
+            entry = state[key]
+            st.markdown(f'**{title}**')
+            st.caption(why)
+            if entry['value'] is not None:
+                words = dict(options).get(entry['value'], entry['value'])
+                st.caption('Decided: ' + md_escape(words) + (' (registered in the program for this server)'
+                           if entry['source'] == 'code' else f" by {md_escape(entry['operator'] or '')} on "
+                           f"{myt(entry['decided_at'])}") + '. Takes effect from the next round.')
+                continue
+            with st.container(horizontal=True):
+                for value, words in options:
+                    if st.button(words, key=f'ubuntu_decide_{key}_{value}', disabled=not operator,
+                                 help=None if operator else DECIDE_HINT):
+                        try:
+                            backend.record_server_decision(connection, key, value, operator)
+                        except ValueError as exc:
+                            st.session_state['ubuntu_decision_record_error'] = str(exc)
+                        st.rerun()
+
+
+UBUNTU_COMPLETE_ASK = 'ubuntu_complete_ask'    # The latest round whose Complete hardening panel is open (module 1).
+UBUNTU_COMPLETE_OPEN = 'ubuntu_complete_open'  # What the last final scan still found open (time, items).
+UBUNTU_COMPLETE_ERROR = 'ubuntu_complete_error'
+
+
+def _ubuntu_show_completion(backend, connection, workflow):
+    """Module 1, as the Windows Complete hardening panel: what is still open in the newest scan, accepting any of it
+    as an exception with a reason, and the final read-only scan that completes the session."""
+    state = backend.completion_state(connection, workflow)
+    found = st.session_state.get(UBUNTU_COMPLETE_OPEN)
+    with st.container(border=True):
+        st.markdown('**Complete hardening**')
+        st.caption('A final read-only scan checks the server now. The session is completed when every control is '
+                   'Compliant or accepted as an exception; it is then closed (read-only), and a later check starts a '
+                   'new session. An exception never counts as compliant.')
+        error = st.session_state.pop(UBUNTU_COMPLETE_ERROR, None)
+        if error:
+            st.error(md_escape(error))
+        if found:
+            st.warning(f"Not completed: the final scan at {myt(found['at'], '%H:%M:%S')} still found "
+                       f"{len(found['items'])} control(s) open. Fix them, or accept them as exceptions, then run the "
+                       'final scan again.')
+        operator = st.text_input('Your name (recorded with the completion and each exception)',
+                                 key='ubuntu_complete_operator', width=320,
+                                 value=st.session_state.get('agentic_operator') or '')
+        ready = bool(operator.strip())
+        if not ready:
+            st.caption(NAME_HINT)
+        if state['items']:
+            st.markdown(f"**{len(state['items'])} control(s) still open** in the newest scan:")
+            for item in state['items']:
+                left, right = st.columns([3, 1.4], vertical_alignment='center')
+                left.markdown(f"**{item['control_id']}** · {md_escape(item['title'])} "
+                              f":orange-badge[{md_escape(item['status'])}]")
+                left.caption(md_escape(item['why']))
+                with right:
+                    reason = st.text_input('Reason to accept it', key='ubuntu_complete_reason_' + item['control_id'],
+                                           max_chars=500, label_visibility='collapsed',
+                                           placeholder='Reason to accept it as an exception')
+                    if st.button('Accept as exception', key='ubuntu_complete_accept_' + item['control_id'],
+                                 disabled=not ready, help=None if ready else DECIDE_HINT):
+                        try:
+                            backend.accept_exception(connection, workflow, item['control_id'], operator, reason)
+                            st.session_state.pop(UBUNTU_COMPLETE_OPEN, None)  # the last final scan is out of date
+                        except ValueError as exc:
+                            st.session_state[UBUNTU_COMPLETE_ERROR] = str(exc)
+                        st.rerun()
+        else:
+            st.success('In the newest scan, every control is Compliant or accepted as an exception. The final scan '
+                       'checks it once more.')
+        if state['exceptions']:
+            st.caption('Accepted as exceptions in this session: ' + md_escape(', '.join(
+                f"{c} ({e['reason']}, {e['operator']})" for c, e in state['exceptions'].items())))
+        with st.container(horizontal=True):
+            if st.button('Run final scan and complete', type='primary', key='ubuntu_complete_run',
+                         icon=':material/flag:', disabled=not ready, help=None if ready else DECIDE_HINT):
+                hostname, operation = backend.session.identity.hostname, uuid4().hex
+
+                def after(result, error):
+                    if isinstance(error, ValueError):
+                        st.session_state[UBUNTU_COMPLETE_ERROR] = str(error)[:300]
+                        return True
+                    if error is not None:
+                        return False
+                    if result['completed']:
+                        for name in (UBUNTU_COMPLETE_ASK, UBUNTU_COMPLETE_OPEN, UBUNTU_COMPLETE_ERROR):
+                            st.session_state.pop(name, None)
+                        st.session_state[COMPLETED] = _completion_message(hostname, result['compliant'],
+                                                                          result['total'], result['exceptions'])
+                        st.session_state[GO_OVERVIEW] = True  # app.py opens Overview, which says so
+                    else:
+                        st.session_state[UBUNTU_COMPLETE_OPEN] = dict(at=datetime.now(timezone.utc),
+                                                                      items=result['items'])
+                    return True
+                _start(FINAL_LABEL, lambda: backend.complete_hardening(connection, workflow, operator.strip(),
+                                                                       operation), after)
+            if st.button('Cancel', key='ubuntu_complete_cancel'):
+                st.session_state.pop(UBUNTU_COMPLETE_ASK, None)
+                st.session_state.pop(UBUNTU_COMPLETE_OPEN, None)
+                st.rerun()
+
+
+def _ubuntu_show_completed(backend, connection, workflow, snapshot, rounds, completion):
+    """A completed Ubuntu session: read-only, with its completion report and New session (as on Windows)."""
+    from system.ui.round_report import ubuntu_round_report
+    exceptions = completion['exceptions']
+    st.success(f"**Hardening complete.** Completed by {md_escape(completion['operator'])} on "
+               f"{myt(completion['completed_at'])}: {completion['compliant']} of {completion['total']} controls "
+               'compliant' + (f', {len(exceptions)} accepted as exception(s)' if exceptions else '')
+               + '. This session is closed (read-only); a new check starts a new session.', icon=':material/verified:')
+    with st.container(horizontal=True, vertical_alignment='center'):
+        html = ubuntu_round_report(snapshot, rounds, backend.remediation_review(connection, workflow),
+                                   backend.verification_changes(connection, workflow, snapshot.current_round_reference),
+                                   register=backend.live_validation(connection), completion=completion)
+        st.download_button('Completion report', html, icon=':material/download:', mime='text/html',
+                           key='ubuntu_completion_report',
+                           file_name='cis-completion-' + backend.session.identity.hostname + '-'
+                           + myt(completion['completed_at'], '%Y-%m-%dT%H%M') + '.html',
+                           help='The last round, plus who completed the session, when, the final scan and each '
+                                'accepted exception. Open it in a browser to print to PDF.')
+        if st.button('New session', key='agentic_reset', type='tertiary',
+                     help='This session stays completed in the records; a new session checks the server again.'):
+            st.session_state.pop(WORKFLOW_KEY, None)
+            st.session_state.pop(UBUNTU_CONFIRM, None)
+            st.session_state.pop(UBUNTU_ROUND_VIEW, None)
+            st.rerun()
+
+
+AI_READINESS = 'ubuntu_ai_readiness'  # The last Check AI result in this browser session (module 2).
+AI_BADGE = {'ready': ('green', 'check_circle', 'AI ready'), 'slow': ('orange', 'warning', 'AI slow'),
+            'down': ('red', 'error', 'AI not answering')}
+
+
+def _ubuntu_ai_readiness(capabilities):
+    """Module 2: Check AI, only when the administrator clicks it (their choice): a tiny timed request to the local
+    model (which also loads it), free laptop memory and GPU or CPU. Returns the last result, or None while unchecked;
+    'down' keeps Start disabled until checked again."""
+    from backends.ubuntu import ai_readiness
+    with st.container(horizontal=True, vertical_alignment='center'):
+        if st.button('Check AI', key='ubuntu_ai_check', icon=':material/speed:',
+                     help='Sends a one-word request to the local model (this also loads it), and reads free laptop '
+                          'memory and whether the model runs on the GPU. Nothing is sent to any server.'):
+            import time
+            with st.spinner('Checking the local model (a few seconds; up to about a minute if it has to load)…'):
+                started = time.monotonic()
+                result = ai_readiness.check()
+                st.session_state[AI_READINESS] = (result, time.monotonic() - started)
+        checked = st.session_state.get(AI_READINESS)
+        if checked is None:
+            st.caption('Optional: Check AI loads the local model and shows whether it is fast enough.')
+            return None
+        result, seconds = checked
+        colour, icon, label = AI_BADGE[result.state]
+        st.markdown(f':{colour}-badge[:material/{icon}: {label}] · check took {duration_text(seconds)}')
+    {'ready': st.success, 'slow': st.warning, 'down': st.error}[result.state](md_escape(result.text))
+    return result
+
+
+def _ubuntu_phase_lines(events, remediation_seconds=None):
+    """'Assessment took 42 s (Scanner 11 s · Analysis 10 s · Orchestrator planning 21 s), within the 10-minute limit
+    per phase.' (and the same for the remediation phase), as the Windows page says, from the Ubuntu agents' own
+    recorded run times. The Orchestrator's run covers the agents it delegated, so its own time is the rest."""
+    from .round_report import PHASE_LIMIT_SECONDS
+    lines = []
+    for phase, name, own_word in (('Assessment phase', 'Assessment', 'planning'), ('Remediation phase', 'Remediation',
+                                                                                  'review')):
+        agents = {}
+        for e in events:
+            if e.phase == phase and e.event_kind == 'finished' and e.duration_seconds is not None:
+                role = UBUNTU_AGENT_NAMES.get(e.role, e.role)
+                agents[role] = agents.get(role, 0) + e.duration_seconds
+        total = agents.get(ORCHESTRATOR)
+        if total is None:
+            continue
+        others = {role: seconds for role, seconds in agents.items() if role != ORCHESTRATOR}
+        parts = [f'{role.replace(" Agent", "")} {duration_text(seconds)}' for role, seconds in others.items()]
+        own = total - sum(others.values())
+        if own > 1:
+            parts.append(f'Orchestrator {own_word} {duration_text(own)}')
+        if name == 'Remediation' and remediation_seconds is not None and remediation_seconds >= total:
+            # The whole execution, from Confirm and execute to the last verification scan; the agents' runs are only
+            # part of it (administrator, 13 November 2026: "took 2 min 29 s" for about 10 minutes).
+            rest = remediation_seconds - total
+            limit = ('within the 10-minute limit' if remediation_seconds <= PHASE_LIMIT_SECONDS
+                     else 'over the 10-minute limit')
+            lines.append(f'Remediation took {duration_text(remediation_seconds)} from Confirm and execute to the last '
+                         f'verification scan (agents {duration_text(total)}: {" · ".join(parts) or "Orchestrator"}; '
+                         f'server jobs, confirmations and scans {duration_text(rest)}), {limit}.')
+            continue
+        limit = ('within the 10-minute limit per phase' if total <= PHASE_LIMIT_SECONDS
+                 else 'over the 10-minute limit per phase')
+        lines.append(f'{name} took {duration_text(total)}' + (f' ({" · ".join(parts)})' if parts else '')
+                     + f', {limit}.')
+    return lines
+
+
+def _ubuntu_live_register(backend, connection):
+    """Module 3: which of the 30 controls were proven on this server, read-only, from its stored approvals, receipts
+    and verification scans, with each row's evidence and a way back to the round where it was proven or tried."""
+    from tools.live_validation_register import summary
+    rows = backend.live_validation(connection)
+    with st.expander('Live validation register: ' + summary(rows) + ' on '
+                     + md_escape(backend.session.identity.hostname), icon=':material/fact_check:'):
+        st.caption('"Validated live": an approved fix was applied on this server and the automatic verification scan '
+                   'read the control Compliant. "Fixture-tested only": no live outcome is recorded, whatever the '
+                   'fixture tests show. From the stored records only; nothing here can be edited.')
+        titles = {c: t for c, t in ((cid, ctl.title) for cid, ctl in _ubuntu_titles().items())}
+        st.dataframe([{'Control': r['control_id'], 'Title': titles.get(r['control_id'], ''), 'Status': r['status'],
+                       'Proven (MYT)': myt(r['evidence']['time']) if r['evidence'] else '—',
+                       'Approver': (r['evidence'] or {}).get('approver') or '—',
+                       'Request': ((r['evidence'] or {}).get('request_id') or '—')[:8],
+                       'Fix attempts': r['attempts']} for r in rows], hide_index=True)
+        linked = {r['control_id']: r['evidence'] for r in rows if r['evidence'] and r['evidence'].get('workflow')}
+        if not linked:
+            return
+        with st.container(horizontal=True, vertical_alignment='bottom'):
+            chosen = st.selectbox('Round where a control was proven or tried', list(linked), key='ubuntu_register_round',
+                                  width=320)
+
+            def open_round(evidence=None):
+                evidence = linked[st.session_state['ubuntu_register_round']]
+                workflow = evidence['workflow']
+                rounds = backend.assessment_rounds(connection, workflow)
+                st.session_state[WORKFLOW_KEY] = workflow
+                st.session_state[GO_AGENTIC] = True  # shown on Agentic hardening (the register is on Overview)
+                st.session_state.pop(UBUNTU_CONFIRM, None)
+                st.session_state.pop(UBUNTU_ROUND_VIEW, None)
+                for n, (ref, at) in enumerate(rounds, 1):
+                    if ref.record_id == evidence['round_id'] and len(rounds) > 1:
+                        st.session_state[UBUNTU_ROUND_VIEW] = (f'Round {n} · {myt(at)}'
+                                                               + (' (latest)' if n == len(rounds) else ''))
+            st.button('Open the round', key='ubuntu_register_open', on_click=open_round,
+                      help='Shows the session and round in which ' + md_escape(chosen) + ' was proven or last tried.')
+
+
+def _ubuntu_titles():
+    from backends.ubuntu.adapter import _controls
+    return _controls()
+
+
 def _ubuntu_report_button(backend, connection, workflow, snapshot, rounds):
     """As the Windows "Round report": a self-contained HTML record of the latest round, built from stored records."""
     from system.ui.round_report import ubuntu_round_report
     if snapshot.current_round_reference is None:
         return
     html = ubuntu_round_report(snapshot, rounds, backend.remediation_review(connection, workflow),
-                               backend.verification_changes(connection, workflow, snapshot.current_round_reference))
+                               backend.verification_changes(connection, workflow, snapshot.current_round_reference),
+                               register=backend.live_validation(connection))
     started = next((at for ref, at in rounds if ref == snapshot.current_round_reference), None)
     st.download_button('Round report', html, icon=':material/download:', mime='text/html', key='ubuntu_report',
                        file_name='cis-round-' + backend.session.identity.hostname + '-'
@@ -2090,8 +2740,9 @@ def _ubuntu_execute_bar(backend, connection, snapshot, capabilities):
         st.caption(('The Remediation Agent re-checks each fix read-only and skips anything that changed since the '
                     'plan; the server checks it again before writing. ' if agentic else
                     'The server re-checks each value and refuses anything that changed since the plan. ')
-                   + 'A fresh scan verifies the result. Expired approvals are refused. SSH and firewall changes must '
-                   'be confirmed after reconnecting, or the server undoes them by itself.')
+                   + 'A fresh scan verifies the result. Expired approvals are refused. SSH and firewall changes are '
+                   'confirmed by the dashboard over a fresh login; if that login fails, the server undoes them by '
+                   'itself.')
         with st.container(horizontal=True):
             if st.button('Confirm and execute', type='primary', key='ubuntu_execute'):
                 st.session_state.pop(UBUNTU_CONFIRM, None)
@@ -2099,6 +2750,7 @@ def _ubuntu_execute_bar(backend, connection, snapshot, capabilities):
                 workflow, round_ref, operation = (st.session_state.get(WORKFLOW_KEY), snapshot.current_round_reference,
                                                   uuid4().hex)
                 # In the background worker, so opening another page cannot stop it half-way.
+                st.session_state[UBUNTU_EXECUTION_SINCE] = datetime.now(timezone.utc)  # the total starts here
                 _start(UBUNTU_AGENTS_EXECUTE_LABEL if agentic else UBUNTU_EXECUTE_LABEL,
                        lambda: backend.execute_approved(connection, workflow, round_ref, ids, not agentic, operation),
                        _after_ubuntu_execute)

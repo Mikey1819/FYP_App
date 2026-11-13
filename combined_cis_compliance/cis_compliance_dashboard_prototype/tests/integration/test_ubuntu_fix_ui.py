@@ -123,6 +123,9 @@ class FixUiTests(StoreFixture):
                 self.model_up = False  # without the model, Confirm runs the fixes in plan order
                 app.button(key='ubuntu_execute_review').click().run()
                 self.assertIn('Confirm: change 1 setting(s) on', self.text(app))
+                # Task 6: no manual reconnect is asked for; the dashboard confirms SSH and firewall changes itself.
+                self.assertIn('confirmed by the dashboard over a fresh login', self.text(app))
+                self.assertNotIn('after reconnecting', self.text(app))
                 self.assertEqual(self.writes(), [])
                 app.button(key='ubuntu_execute').click().run()  # the model is down: plan order (agentic: test_ubuntu_remediation_ui)
                 self.assertFalse(list(app.error), [e.value for e in app.error])
@@ -130,23 +133,12 @@ class FixUiTests(StoreFixture):
                 self.assertEqual(self.writes(), ['alpha'])
                 self.assertEqual((self.work / 'alpha').read_bytes(), b'new')
                 self.assertIn(':red-badge[Failed]', self.text(app))  # fixture keeps ASLR 0, so the re-scan fails
-                # Restore: prepare -> approve -> confirm -> run, through the same page and gates.
-                [prepare] = [b for b in app.button if b.key and b.key.startswith('ubuntu_prepare_restore_')]
-                prepare.click().run()
-                self.assertFalse(list(app.error), [e.value for e in app.error])
-                [approve] = self.approve_buttons(app)
-                approve.click().run()
-                self.assertFalse(list(app.error), [e.value for e in app.error])
-                [run] = [b for b in app.button if b.key and b.key.startswith('ubuntu_run_restore_')]
-                self.assertTrue(run.disabled)  # confirmation required
-                [confirm] = [c for c in app.checkbox if c.key and c.key.startswith('ubuntu_confirm_restore_')]
-                confirm.check().run()
-                [b for b in app.button if b.key and b.key.startswith('ubuntu_run_restore_')][0].click().run()
-                self.assertFalse(list(app.error), [e.value for e in app.error])
-                app.run()
-                self.assertIn(':gray-badge[Restored]', self.text(app))
-        self.assertEqual((self.work / 'alpha').read_bytes(), b'old')
-        self.assertEqual(len([c for c in channel.runner_calls if c.startswith(b'{"op":"execute"}')]), 2)
+                # Task 8 (administrator, 12 November): no per-control restore on the Ubuntu page, as on Windows.
+                self.assertEqual([b.key for b in app.button if b.key and 'restore' in b.key], [])
+                self.assertEqual([c.key for c in app.checkbox if c.key and 'restore' in c.key], [])
+                self.assertNotIn('Prepare restore', self.text(app))
+        self.assertEqual((self.work / 'alpha').read_bytes(), b'new')
+        self.assertEqual(len([c for c in channel.runner_calls if c.startswith(b'{"op":"execute"}')]), 1)
         for database in self.root.rglob('*.sqlite3'):
             self.assertNotIn(b'FIXTURE-SECRET-SENTINEL', database.read_bytes())
 

@@ -56,9 +56,10 @@ def _time(value):
 
 
 def _avahi_retention(doc):
-    """The registered 2.1.2 retention review for this evidence's machine (system.config.UBUNTU_AVAHI_RETENTION)."""
-    from system.config import UBUNTU_AVAHI_RETENTION
-    return UBUNTU_AVAHI_RETENTION.get(doc.get('machine_id')) == 'mask'
+    """The 2.1.2 retention review for this evidence's machine: registered in code (system.config) or recorded by the
+    administrator on the Ubuntu page (server_decisions, 2026-11-13)."""
+    from .server_decisions import decision
+    return decision(doc.get('machine_id'), 'avahi_2_1_2') == 'mask'
 
 
 def parse_bundle(raw, expected, *, now=None, ssh_effective_authority=True, cis_audit_authority=True, audit_wording=None,

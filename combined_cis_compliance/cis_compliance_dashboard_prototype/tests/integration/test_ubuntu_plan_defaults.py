@@ -34,7 +34,12 @@ class PlanDefaultTests(unittest.TestCase):
         self.assertEqual(plan['outcome'], 'fix_proposed')
 
     def test_a_deferral_is_still_the_orchestrators_decision(self):
-        tools, _ = submit({'defers': [{'control_id': '5.1.20', 'reason_code': 'needs_manual_review'}]})
+        # A review deferral of a fixable control stands when a fact supports it: an earlier fix of it was applied and
+        # did not verify (2026-11-13; without it the control still gets its card: test_ubuntu_defer_truth).
+        tools = tools_for(LIVE_FAILING, ELIGIBLE)
+        tools.rounds.fix_failed = frozenset({'5.1.20'})
+        tools.call('submit_plan', {'target_id': 'ubuntu:fixture',
+                                   'defers': [{'control_id': '5.1.20', 'reason_code': 'needs_manual_review'}]})
         self.assertNotIn('5.1.20', [e['control_id'] for e in tools.rounds.plan['fixes']])
         self.assertEqual(tools.rounds.plan['decisions'], [{'control_id': '5.1.20', 'decision': 'defer',
                                                            'reason_code': 'needs_manual_review'}])

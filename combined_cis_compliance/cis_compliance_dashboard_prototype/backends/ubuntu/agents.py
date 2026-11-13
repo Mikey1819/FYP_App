@@ -60,10 +60,13 @@ FIX_REASONS = {'confirmed_failure': 'Confirmed CIS failure with a registered fix
                'highest_risk': 'Among the highest deterministic risk', 'serves_goal': 'Serves the administrator goal',
                'unblocks_other': 'Prerequisite for another finding'}
 # Written by code only, never offered to the model (live 06:40-06:57: refusing a partial plan never recovered).
-DEFAULT_FIX_REASONS = {'not_deferred': 'Confirmed CIS failure with a registered fix; the planner did not defer it'}
+DEFAULT_FIX_REASONS = {'not_deferred': 'Confirmed CIS failure with a registered fix; the planner did not defer it',
+                       # 2026-11-13: a review deferral no recorded fact supports does not hide a fixable control.
+                       'review_unsupported': 'The Orchestrator suggested manual review, but no earlier fix of it '
+                                             'failed; proposed so you decide'}
 LEGACY_FIX_REASONS = {'high_risk': 'High-priority confirmed failure'}  # stored rounds before 2026-11-07 05:00 UTC
 FLAGS = {'highest_risk': 'Among the highest deterministic risk', 'affects_remote_access': 'Affects remote administration',
-         'persistent_failure': 'Failing in an earlier comparable assessment'}
+         'persistent_failure': 'An approved fix of it was applied earlier and it still did not verify Compliant'}
 TRIAGE = {'manual_review': 'Requires bound human review', 'collection_error': 'Collection failed; inspect target prerequisites',
           'unresolved_effective_state': 'Effective state could not be resolved', 'evidence_conflict': 'SCAP and direct evidence disagree',
           'rescan': 'Collection error; a fresh collection could change it'}
@@ -100,15 +103,49 @@ def _entries(value, keys, enums, limit, label):
     return [dict(e) for e in value]
 
 
+# Module 2: one retry of a timed-out model request per agent run, only when at least this much of the run's time
+# budget is left (live 11 November 13:42: the Scanner's and the Orchestrator's second requests timed out once).
+MAX_RETRIES = 1
+RETRY_MIN_SECONDS = 20
+
+
 class _Labelled:
-    """Gives any client the model/provenance labels the Coordinator records."""
-    def __init__(self, client):
-        self.client = client
+    """Gives any client the model/provenance labels the Coordinator records. It also times each model request
+    (`timings`, one entry per step) and retries a timed-out request once with the same messages (module 2), so the
+    work already done in the run, such as the scan, is kept and no tool runs twice. `seconds` is the run's time
+    budget, counted from now; without it the budget is not checked (explanations)."""
+    def __init__(self, client, *, clock=time.monotonic, seconds=None):
+        self.client, self.clock, self.seconds = client, clock, seconds
         self.model = getattr(client, 'model', 'unspecified test client')
         self.provenance = getattr(client, 'provenance', 'Test client (not a model)')
+        self.started, self.retries_left, self.timings = clock(), MAX_RETRIES, []
 
     def chat(self, messages, tools, *, timeout):
-        return self.client.chat(messages, tools, timeout=timeout)
+        started, retried = self.clock(), False
+        try:
+            try:
+                return self.client.chat(messages, tools, timeout=timeout)
+            except TimeoutError:
+                left = None if self.seconds is None else self.seconds - (self.clock() - self.started) - 5
+                if not self.retries_left or (left is not None and left < RETRY_MIN_SECONDS):
+                    raise
+                self.retries_left -= 1
+                retried = True
+                return self.client.chat(messages, tools, timeout=timeout if left is None else min(timeout, int(left)))
+        finally:
+            self.timings.append({'step': len(self.timings) + 1, 'seconds': round(float(self.clock() - started), 1),
+                                 'retried': retried})
+
+
+def coordinate(client, tools, *, clock, limits):
+    """Run one agent (the unchanged Coordinator) and store each step's model response time with its run, as a
+    `model_timing` event after the run finished (read by the Agent log and the round report)."""
+    from hardening.investigation import InvestigationLog
+    labelled = _Labelled(client, clock=clock, seconds=limits.seconds)
+    result = Coordinator(labelled, tools, clock=clock, limits=limits).run()
+    if labelled.timings:
+        InvestigationLog(tools.store).append(result['run_id'], 'model_timing', {'steps': labelled.timings})
+    return result
 
 
 class _Round:
@@ -121,6 +158,7 @@ class _Round:
         self.children, self.scanned_runs, self.run_id, self.evidence = {}, [], None, None
         self.analysis, self.plan = None, None
         self.history = None  # control_id -> [(assessed_at, status), ...] of earlier assessments, newest first
+        self.fix_failed = frozenset()  # controls whose applied fix did not verify Compliant (persistent_failure)
 
     def remaining(self):
         return PHASE_SECONDS - (self.clock() - self.started)
@@ -144,14 +182,15 @@ class _Round:
         return [c for c in sorted(TRIAGE) if error or c not in ERROR_ONLY_TRIAGE]
 
 
-def flag_is_true(code, control_id, finding):
+def flag_is_true(code, control_id, finding, fix_failed=frozenset()):
     """Whether an attention flag is true for a finding, from deterministic facts only. highest_risk: risk rank within
-    the top MAX_FLAGS; persistent_failure: history factor D >= 3 (failing in an earlier comparable assessment);
-    affects_remote_access: an SSH or UFW control. Risk-based flags cannot be true while risk is withheld."""
+    the top MAX_FLAGS; persistent_failure: an approved fix of it was applied earlier and it still did not verify
+    Compliant (`fix_failed`; 2026-11-13: "failing in an earlier scan" alone read as if fixes kept failing, when they had
+    never run); affects_remote_access: an SSH or UFW control. Risk-based flags cannot be true while risk is withheld."""
     if code == 'highest_risk':
         return finding is not None and finding.rank <= MAX_FLAGS
     if code == 'persistent_failure':
-        return finding is not None and finding.D >= 3
+        return control_id in fix_failed
     if code == 'affects_remote_access':
         return control_id.startswith(('5.1.', '4.1.'))
     return False
@@ -198,8 +237,8 @@ class _RoleTools:
         seconds = int(min(ROLE_SECONDS[role], self.rounds.remaining()))
         if seconds < 5:
             raise ValueError('Round deadline reached; no further delegation')
-        child = Coordinator(_Labelled(self.rounds.client_factory(role)), tools, clock=self.rounds.clock,
-                            limits=Limits(steps=8, calls=10, seconds=seconds, request_seconds=min(90, seconds), invalid=2)).run()
+        child = coordinate(self.rounds.client_factory(role), tools, clock=self.rounds.clock,
+                           limits=Limits(steps=8, calls=10, seconds=seconds, request_seconds=min(90, seconds), invalid=2))
         self.rounds.children[role] = child['run_id']
         return child['events'][-1]['data']
 
@@ -308,14 +347,15 @@ class AnalysisTools(_RoleTools):
     repeatable = ('submit_analysis',)
 
     def _attention_codes(self, control_id, facts):
-        return [c for c in sorted(FLAGS) if flag_is_true(c, control_id, facts.get(control_id))]
+        return [c for c in sorted(FLAGS) if flag_is_true(c, control_id, facts.get(control_id), getattr(self.rounds, 'fix_failed', frozenset()))]
 
     def _true_flags(self, flags):
         """(kept, dropped): a flag is kept only when the deterministic facts make it true (flag_is_true)."""
         facts = {f.control_id: f for f in self.rounds.ranked() or ()}
         kept, dropped = [], []
         for flag in flags:
-            (kept if flag_is_true(flag['flag_code'], flag['control_id'], facts.get(flag['control_id']))
+            (kept if flag_is_true(flag['flag_code'], flag['control_id'], facts.get(flag['control_id']),
+                                  getattr(self.rounds, 'fix_failed', frozenset()))
              else dropped).append(flag)
         return kept, dropped
 
@@ -482,7 +522,10 @@ class OrchestratorTools(_RoleTools):
         """The list the model meant, from the unambiguous shapes qwen3:8b sends: one object for a one-item list
         (offline trial, 10 of 10), one object of equal-length parallel lists (live 07:11), and parallel lists with
         one shared scalar such as a single reason for several controls (evaluation 15:42-15:44, 8 of 9 failed
-        rounds). Then validated as usual."""
+        rounds). An empty object or null means none (live 13 November 07:14: `"defers": {}` beside five correct fixes
+        was refused three times, so round 2 stored no plan). Then validated as usual."""
+        if value is None or value == {}:
+            return []
         if type(value) is dict:
             columns = list(value.values())
             # A one-item list is a shared value too (evaluation 16:22: ["no_registered_action"] for three controls).
@@ -503,13 +546,19 @@ class OrchestratorTools(_RoleTools):
     def _plan(self, arguments):
         """Validated (defers, fixes, ignored) in the stored plan format; every reason must be true and of its own kind.
         `ignored`: defers entries that cannot change the plan (a fix restated, or a control that is not failing)."""
-        eligible, seen, defers, fixes, ignored = self._eligible(), set(), [], [], []
+        eligible, seen, defers, fixes, ignored, review = self._eligible(), set(), [], [], [], []
         fix_codes, defer_codes = self._fix_codes(), self._defer_codes()
         for entry in self._entries(arguments.get('fixes', []), 'fixes'):
             if set(entry) != {'control_id', 'action_id', 'reason_code'}:
                 raise ValueError('fixes entries take exactly: control_id, action_id, reason_code')
             if entry['control_id'] not in self.rounds.failing() or entry['control_id'] in seen:
                 raise ValueError('Unknown or duplicate control in the plan')
+            if entry['control_id'] not in eligible:
+                # Live 13 November 05:36: 4.1.4 and 4.1.7 (waiting for 4.1.3) listed as fixes and as
+                # no_registered_action deferrals; three identical refusals left the round with no plan at all. There
+                # is no fix to propose, so the entry is recorded and the control is deferred (by the model or by code).
+                ignored.append({'control_id': str(entry['control_id'])[:20], 'reason_code': 'fix_without_action'})
+                continue
             if eligible.get(entry['control_id']) != entry['action_id']:
                 raise ValueError(str(entry['control_id'])[:20] + ' has no registered action ' + str(entry['action_id'])[:60]
                                  + '; use the action listed in registered_actions')
@@ -541,6 +590,14 @@ class OrchestratorTools(_RoleTools):
                 # A deferral reason must be true (live: qwen3:8b claimed this for 20 offered actions).
                 raise ValueError(entry['control_id'] + ' has registered action ' + eligible[entry['control_id']]
                                  + ': fix it, or defer with another reason code')
+            if (entry['reason_code'] == 'needs_manual_review' and entry['control_id'] in eligible
+                    and entry['control_id'] not in getattr(self.rounds, 'fix_failed', frozenset())):
+                # No recorded fact calls for a person first (no earlier fix of it failed): it is proposed, with the
+                # Orchestrator's concern in its reason, so the administrator decides (live 12 November: 4.1.3 and
+                # 5.1.20 got no card after a flag that only meant "failing before too").
+                review.append(entry['control_id'])
+                seen.add(entry['control_id'])
+                continue
             seen.add(entry['control_id'])
             defers.append({'control_id': entry['control_id'], 'decision': 'defer', 'reason_code': entry['reason_code']})
         # The orchestrator decides by deferring: an undeferred failure with a registered action is proposed, and its
@@ -549,6 +606,8 @@ class OrchestratorTools(_RoleTools):
         ranks = {f.control_id: f.rank for f in self.rounds.ranked() or ()}
         rest = sorted((c for c in self.rounds.failing() if c not in seen and c in eligible),
                       key=lambda c: (ranks.get(c, len(ranks) + 1), c))
+        fixes += [{'control_id': c, 'decision': 'fix', 'action_id': eligible[c], 'reason_code': 'review_unsupported'}
+                  for c in review]
         fixes += [{'control_id': c, 'decision': 'fix', 'action_id': eligible[c], 'reason_code': 'not_deferred'}
                   for c in rest]
         return defers, fixes, ignored
@@ -620,7 +679,7 @@ class OrchestratorTools(_RoleTools):
 
 
 def run_agentic_round(*, client_factory, collect, log_store, target_id, titles, rank, goal=None, clock=time.monotonic,
-                      eligible=None, history=None):
+                      eligible=None, history=None, fix_failed=frozenset()):
     """One assessment round. `collect` performs the read-only scan and storage; `rank` returns findings or None.
 
     `eligible` maps confirmed failures to their registered action (or computes it from the evidence); without it
@@ -629,10 +688,10 @@ def run_agentic_round(*, client_factory, collect, log_store, target_id, titles, 
     """
     rounds = _Round(client_factory=client_factory, collect=collect, log_store=log_store, target_id=target_id,
                     titles=titles, rank=rank, goal=goal, clock=clock)
-    rounds.eligible, rounds.history = eligible, history
-    orchestrator = Coordinator(_Labelled(client_factory(ORCHESTRATOR)), OrchestratorTools(rounds), clock=clock,
-                               limits=Limits(steps=12, calls=16, seconds=PHASE_SECONDS,
-                                             request_seconds=ORCHESTRATOR_REQUEST_SECONDS, invalid=3)).run()
+    rounds.eligible, rounds.history, rounds.fix_failed = eligible, history, frozenset(fix_failed)
+    orchestrator = coordinate(client_factory(ORCHESTRATOR), OrchestratorTools(rounds), clock=clock,
+                              limits=Limits(steps=12, calls=16, seconds=PHASE_SECONDS,
+                                            request_seconds=ORCHESTRATOR_REQUEST_SECONDS, invalid=3))
     return {'orchestrator_run_id': orchestrator['run_id'], 'status': orchestrator['events'][-1]['data']['status'],
             'children': dict(rounds.children), 'scanned_runs': list(rounds.scanned_runs), 'run_id': rounds.run_id,
             'evidence': rounds.evidence, 'analysis': rounds.analysis, 'plan': rounds.plan, 'goal': rounds.goal}

@@ -96,7 +96,9 @@ class RebootTests(MaintenanceCase):
         self.assertIn(('reboot in', 60), self.maintenance.calls)
         self.assertEqual(self.refresh(backend, workflow, handle.round_reference).state, 'running')
         [row] = [r for r in backend.snapshot('c', workflow).results if r.proposal_reference == ref]
-        self.assertIn('connect again', row.detail.lower())
+        # Task 6: the page reconnects by itself after the restart; no manual reconnect is asked for.
+        self.assertIn('reconnects by itself', row.detail.lower())
+        self.assertNotIn('connect again', row.detail.lower())
         self.maintenance.boot = 'boot-2'  # the VM came back on a new boot
         self.assertEqual(self.refresh(backend, workflow, handle.round_reference).state, 'completed')
 

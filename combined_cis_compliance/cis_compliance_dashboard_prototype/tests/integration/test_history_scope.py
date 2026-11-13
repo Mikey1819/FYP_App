@@ -48,5 +48,6 @@ class HistoryScopeTests(unittest.TestCase):
                     app.session_state['fixture_database'] = str(Path(folder) / 'windows.sqlite3')
                     app.run()
                     self.assertEqual(len(app.exception), 0, [e.value for e in app.exception])
-                    self.assertTrue(any('No assessments' in i.value for i in app.info))
+                    self.assertTrue(any('start the first round' in s.value for s in app.success))  # 2026-11-13
+                    self.assertFalse(any('No assessments' in i.value for i in app.info))
             self.assertFalse(list(Path(folder).glob('*.sqlite3')))

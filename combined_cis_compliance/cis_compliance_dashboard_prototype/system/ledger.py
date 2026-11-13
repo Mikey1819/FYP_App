@@ -75,10 +75,17 @@ class CoordinationLedger:
                 CREATE TABLE IF NOT EXISTS endpoint_moves (
                     sequence INTEGER PRIMARY KEY AUTOINCREMENT, target_id TEXT NOT NULL,
                     endpoint TEXT NOT NULL, moved_at TEXT NOT NULL, proof TEXT NOT NULL);
+                -- A registered Ubuntu machine whose SSH host key changed, proven by a re-pair by code (the signed
+                -- pairing answer named the new key and the login found it): a new key under a new registration
+                -- epoch. Appended, never rewritten (2026-11-13).
+                CREATE TABLE IF NOT EXISTS key_changes (
+                    sequence INTEGER PRIMARY KEY AUTOINCREMENT, target_id TEXT NOT NULL,
+                    fingerprint TEXT NOT NULL, epoch TEXT NOT NULL, changed_at TEXT NOT NULL, proof TEXT NOT NULL);
             ''')
             for table, key in (('workflow_bindings', 'workflow_session_id'), ('operation_events', 'sequence'),
                                ('target_registrations', 'target_id'), ('acceptance_runs', 'request_id'),
-                               ('acceptance_outcomes', 'request_id'), ('endpoint_moves', 'sequence')):
+                               ('acceptance_outcomes', 'request_id'), ('endpoint_moves', 'sequence'),
+                               ('key_changes', 'sequence')):
                 for operation in ('UPDATE', 'DELETE'):
                     db.execute(f'''CREATE TRIGGER IF NOT EXISTS {table}_no_{operation}
                         BEFORE {operation} ON {table}
@@ -100,15 +107,23 @@ class CoordinationLedger:
 
     @staticmethod
     def _current(db, platform):
-        """Each registration of this platform with its current endpoint: the latest pairing move, else the original."""
-        return db.execute('''SELECT r.*, COALESCE((SELECT m.endpoint FROM endpoint_moves m WHERE m.target_id=r.target_id
-                                ORDER BY m.sequence DESC LIMIT 1), r.endpoint) AS current_endpoint
+        """Each registration of this platform with its current endpoint (the latest pairing move, else the original),
+        and its current host key and epoch (the latest proven key change, else the original)."""
+        return db.execute('''SELECT r.target_id, r.platform, r.machine_identity, r.hostname, r.endpoint,
+                                COALESCE((SELECT k.fingerprint FROM key_changes k WHERE k.target_id=r.target_id
+                                    ORDER BY k.sequence DESC LIMIT 1), r.fingerprint) AS fingerprint,
+                                COALESCE((SELECT k.epoch FROM key_changes k WHERE k.target_id=r.target_id
+                                    ORDER BY k.sequence DESC LIMIT 1), r.epoch) AS epoch,
+                                COALESCE((SELECT m.endpoint FROM endpoint_moves m WHERE m.target_id=r.target_id
+                                    ORDER BY m.sequence DESC LIMIT 1), r.endpoint) AS current_endpoint
                               FROM target_registrations r WHERE r.platform=?''', (platform,)).fetchall()
 
-    def register(self, identity, endpoint, *, readdress=False):
+    def register(self, identity, endpoint, *, readdress=False, key_confirmed=False):
         """Persist public facts only. Duplicate identity at another endpoint requires explicit review: here that
-        review is a pairing code (`readdress`), which may move the same machine (same hostname and, on Ubuntu, the same
-        SSH host key) to its new address. A changed host key is never accepted this way."""
+        review is a pairing code (`readdress`), which may move the same machine (same hostname) to its new address.
+        A changed Ubuntu host key is accepted only with that review and `key_confirmed`: the signed pairing answer
+        named exactly this key and the login found it (2026-11-13). It is then recorded under a new registration
+        epoch, so approvals and sessions of the old key no longer count; never while a change is open there."""
         endpoint_key = f'{endpoint.host}:{endpoint.port}'
         with self._db() as db:
             db.execute('BEGIN IMMEDIATE')
@@ -117,12 +132,24 @@ class CoordinationLedger:
             if old:
                 if old['hostname'].casefold() != identity.hostname.casefold():
                     raise _renamed(identity, old)
-                if old['fingerprint'] != identity.host_fingerprint:
+                epoch = old['epoch']
+                if old['fingerprint'] != identity.host_fingerprint and readdress and key_confirmed:
+                    if db.execute('SELECT 1 FROM target_owners WHERE target_id=?', (old['target_id'],)).fetchone():
+                        raise VerificationRefused(
+                            f"The SSH host key of {old['hostname'][:63]} changed, but a change made by this program is "
+                            'still open on it under the old key.',
+                            'Restore the server to the state with its old key, settle the open change, then re-pair.')
+                    epoch = uuid4().hex
+                    db.execute('INSERT INTO key_changes (target_id, fingerprint, epoch, changed_at, proof) '
+                               'VALUES (?,?,?,?,?)', (old['target_id'], identity.host_fingerprint, epoch, now(),
+                                                      'pairing_code'))
+                elif old['fingerprint'] != identity.host_fingerprint:
                     raise VerificationRefused(
                         f"This laptop recorded another SSH host key for {old['hostname'][:63]} "
                         f"({old['fingerprint']}). A reinstalled server, or a machine in the middle, shows a new key.",
-                        'Check the host key on the server\'s own console. A changed host key is never accepted '
-                        'from this page.')
+                        'Check the host key on the server\'s own console (ssh-keygen -lf '
+                        '/etc/ssh/ssh_host_ed25519_key.pub). If the server was restored or reinstalled, start pairing on '
+                        'it and use Re-pair: a changed key is accepted only through a pairing code.')
                 if old['current_endpoint'] != endpoint_key:
                     other = next((r for r in current if r is not old and r['current_endpoint'] == endpoint_key), None)
                     if other is not None:
@@ -136,7 +163,7 @@ class CoordinationLedger:
                             f"{endpoint_key}.", 'Start pairing on the server and use Re-pair below.')
                     db.execute('INSERT INTO endpoint_moves (target_id, endpoint, moved_at, proof) VALUES (?,?,?,?)',
                                (old['target_id'], endpoint_key, now(), 'pairing_code'))
-                return old['target_id'], old['epoch']
+                return old['target_id'], epoch
             target = ('windows:' + identity.machine_identity.lower() if identity.platform == 'windows'
                       else 'ubuntu:' + str(uuid4()))
             epoch = uuid4().hex
@@ -146,11 +173,16 @@ class CoordinationLedger:
             return target, epoch
 
     def registration(self, platform, machine_identity):
-        """The public facts recorded for one machine (target, epoch, hostname, current endpoint, host key), or None."""
+        """The public facts recorded for one machine (target, epoch, hostname, current endpoint, host key, and when its
+        current key was proven by a re-pair, or None for the key it was first paired with), or None."""
         with self._db() as db:
             row = next((r for r in self._current(db, platform) if r['machine_identity'] == machine_identity), None)
+            changed = None if row is None else db.execute(
+                'SELECT changed_at FROM key_changes WHERE target_id=? ORDER BY sequence DESC LIMIT 1',
+                (row['target_id'],)).fetchone()
         return None if row is None else {'target_id': row['target_id'], 'epoch': row['epoch'], 'hostname': row['hostname'],
-                                         'endpoint': row['current_endpoint'], 'fingerprint': row['fingerprint']}
+                                         'endpoint': row['current_endpoint'], 'fingerprint': row['fingerprint'],
+                                         'key_changed_at': changed[0] if changed else None}
 
     def known_fingerprint(self, endpoint):
         with self._db() as db:
@@ -215,7 +247,10 @@ class CoordinationLedger:
             raise ValueError('Workflow belongs to another platform, target or registration epoch')
         return binding
 
-    def claim(self, binding, operation_id, kind, command, *, mutation=False):
+    def claim(self, binding, operation_id, kind, command, *, mutation=False, stack=False):
+        """`stack` (Ubuntu commit-confirm only, 2026-11-13): an execution may be claimed while every open command of
+        the workflow is an execution waiting for its confirmation over a fresh login; the target's owner stays the
+        first of them and is handed to the next open one when it settles (_hand_over). Never used on Windows."""
         if not operation_id or len(operation_id) > 128:
             raise ValueError('Invalid operation ID')
         encoded = canonical({'binding': encode_record(binding), 'kind': kind, 'command': command})
@@ -243,18 +278,63 @@ class CoordinationLedger:
                               (binding.workflow_session_id,)).fetchone()
             owner = db.execute('SELECT 1 FROM target_owners WHERE target_id=? AND registration_epoch=?',
                                (binding.target_id, binding.registration_epoch)).fetchone()
-            if busy or owner:
+            if (busy or owner) and not (stack and kind == 'execution' and mutation
+                                        and self._all_waiting(db, binding)):
                 raise ValueError('Target or workflow has an unresolved operation; reconciliation is required')
             stamp = now()
             db.execute('INSERT INTO operation_claims VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
                        (operation_id, dispatch, digest, binding.workflow_session_id, binding.target_id,
                         binding.registration_epoch, kind, 'running', stamp, stamp, int(mutation), ''))
-            if mutation:
+            if mutation and not owner:
                 db.execute('INSERT INTO target_owners VALUES(?,?,?,?,?,?)', (binding.target_id,
                            binding.registration_epoch, operation_id, binding.workflow_session_id, uuid4().hex, 'running'))
             db.execute('INSERT INTO operation_events(operation_id,time,kind,payload) VALUES(?,?,?,?)',
                        (operation_id, stamp, 'claimed', canonical({'command_sha256': digest})))
         return True, OperationState(operation_id, 'running')
+
+    @staticmethod
+    def _all_waiting(db, binding):
+        """Every open command of the workflow is a running execution waiting for its confirmation, and the target's
+        owner (if any) is one of them."""
+        open_rows = db.execute("SELECT operation_id, kind, state, mutation FROM operation_claims WHERE "
+                               "workflow_session_id=? AND state NOT IN ('completed','refused')",
+                               (binding.workflow_session_id,)).fetchall()
+        if not open_rows:
+            return False
+        for row in open_rows:
+            if (row['kind'], row['state'], row['mutation']) != ('execution', 'running', 1):
+                return False
+            if not db.execute("SELECT 1 FROM operation_events WHERE operation_id=? AND kind='awaiting_confirmation'",
+                              (row['operation_id'],)).fetchone():
+                return False
+        owner = db.execute('SELECT operation_id FROM target_owners WHERE target_id=? AND registration_epoch=?',
+                           (binding.target_id, binding.registration_epoch)).fetchone()
+        return owner is None or owner[0] in {row['operation_id'] for row in open_rows}
+
+    @staticmethod
+    def _hand_over(db, operation_id):
+        """After `operation_id` gave up the target: the next open mutation on the same target (a stacked
+        commit-confirm change) becomes its owner, so the target is never left unowned while one is open."""
+        row = db.execute('SELECT target_id, registration_epoch FROM operation_claims WHERE operation_id=?',
+                         (operation_id,)).fetchone()
+        if row is None or db.execute('SELECT 1 FROM target_owners WHERE target_id=? AND registration_epoch=?',
+                                     (row[0], row[1])).fetchone():
+            return
+        nxt = db.execute("SELECT operation_id, workflow_session_id, state FROM operation_claims WHERE target_id=? AND "
+                         "registration_epoch=? AND mutation=1 AND state IN ('running','unresolved','cancel_requested') "
+                         'ORDER BY created_at, rowid LIMIT 1', (row[0], row[1])).fetchone()
+        if nxt is not None:
+            db.execute('INSERT INTO target_owners VALUES(?,?,?,?,?,?)',
+                       (row[0], row[1], nxt[0], nxt[1], uuid4().hex, nxt[2]))
+
+    def recorded(self, binding, kind, command):
+        """True when a completed claim with exactly these command bytes exists for this binding (read-only). The
+        ledger keeps only the digest, so a caller proves what was recorded by presenting the same command again."""
+        encoded = canonical({'binding': encode_record(binding), 'kind': kind, 'command': command})
+        digest = hashlib.sha256(encoded.encode('utf-8')).hexdigest()
+        with self._db() as db:
+            return db.execute("SELECT 1 FROM operation_claims WHERE dispatch_key=? AND kind=? AND state='completed'",
+                              (digest, kind)).fetchone() is not None
 
     def unsettled(self, workflow_session_id):
         """Operations of one workflow that are neither completed nor refused, oldest first (read-only)."""
@@ -286,6 +366,7 @@ class CoordinationLedger:
             db.execute('INSERT INTO operation_events(operation_id,time,kind,payload) VALUES(?,?,?,?)',
                        (operation_id, stamp, 'reconciled_' + state, canonical({'from': old[0], 'detail': detail})))
             db.execute('DELETE FROM target_owners WHERE operation_id=?', (operation_id,))
+            self._hand_over(db, operation_id)
         return self.operation_state(operation_id)
 
     def owner(self, target_id, epoch):
@@ -361,6 +442,7 @@ class CoordinationLedger:
                        (operation_id, stamp, state, canonical({'detail': detail})))
             if state in ('completed', 'refused'):
                 db.execute('DELETE FROM target_owners WHERE operation_id=?', (operation_id,))
+                self._hand_over(db, operation_id)
             else:
                 db.execute('UPDATE target_owners SET state=? WHERE operation_id=?', (state, operation_id))
         return self.operation_state(operation_id)

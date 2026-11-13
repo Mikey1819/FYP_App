@@ -9,7 +9,9 @@ TABS = ('Fixes', 'Risk ranking', 'Controls', 'Results', 'Agent log')
 def render_history_rows(backend, rows):
     """The Windows History page's sections for an Ubuntu server: assessment history, detected drift, compare."""
     if not rows:
-        st.info('No assessments yet. Open **Agentic hardening** and start a round.')
+        from hardening.overview_view import no_scan_note  # never "No assessments yet" (2026-11-13)
+        identity = backend.session.identity
+        no_scan_note('ubuntu', getattr(identity, 'machine_identity', '') or '', getattr(identity, 'hostname', None))
         return
     st.subheader('Assessment history')
     st.dataframe([{'Assessed (MYT)': myt(r.time, FULL), 'Run': r.run_reference.record_id[:8],

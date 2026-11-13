@@ -30,7 +30,7 @@ class AptRefreshFamily:
     action_id = 'maintenance.apt_refresh.v1'
     version = 1
     implementation_sha256 = IMPLEMENTATION_SHA256
-    max_seconds = 600
+    max_seconds = 1800  # apt may wait up to 15 minutes for the package lock
     supervision = 'job'
 
     def __init__(self, system):
@@ -56,6 +56,10 @@ class AptRefreshFamily:
     def apply(self, params):
         self.system.apt_update()
         self.system.write_stamp('apt-refresh', params['nonce'])
+
+    def check_eligible(self, params):
+        from .family_package import refuse_while_apt_busy
+        refuse_while_apt_busy(self.system, 'lists')  # as the package fixes, with apt's list lock (2026-11-13)
 
     def restore(self, params, before):
         raise ValueError('A package-list refresh changes no configuration and is not restored')
@@ -109,8 +113,11 @@ class LinuxMaintenanceIO:
 
     def apt_update(self):
         """`apt-get update` through LinuxPackageIO's fixed-environment runner (moved here from the retired 1.2.2.1
-        patch family on 2026-11-08; the approved package-list refresh is its only user)."""
-        if self._exec(list(self._APT) + ['update'], 600)[0] != 0:
+        patch family on 2026-11-08; the approved package-list refresh is its only user). `--error-on=any` (apt 2.1.16+,
+        Ubuntu 22.04 has 2.4): without it apt-get update exits 0 even when every download failed (live 2026-11-12:
+        two refreshes read applied on a server without internet, and the package fixes still could not be planned)."""
+        from .family_package import LinuxPackageIO
+        if self._exec(list(self._APT) + ['update', '--error-on=any'], LinuxPackageIO.RUN_SECONDS)[0] != 0:
             raise OSError('apt-get update failed')
 
     def apt_sources_digest(self):
