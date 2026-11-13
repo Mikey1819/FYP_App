@@ -110,7 +110,7 @@
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/risk.py": {
-      "sha256": "060b3b5ed7f2ea07afc26dd06810bb679b752e10691a95157423a8636f0a510e",
+      "sha256": "5e1ed584e1de50869c2ba730d263e3fcf36f38e056ab12aa3d8a1f6dff43b851",
       "category": "protected"
     },
     "cis_compliance_dashboard_prototype/hardening/round_report.py": {

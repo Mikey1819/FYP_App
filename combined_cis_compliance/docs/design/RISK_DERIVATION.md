@@ -1,6 +1,6 @@
 # Risk factor derivation
 
-Generated from `hardening/risk.py` by `scripts/tools/generate_risk_derivation.py`; rule version `rules-2026-10-26 (Table 4.15 derivation; category assignments under researcher review)`. Do not edit by hand: change the attributes or rules in code and regenerate.
+Generated from `hardening/risk.py` by `scripts/tools/generate_risk_derivation.py`; rule version `rules-2026-10-26 (Table 4.15a categories)`. Do not edit by hand: change the attributes or rules in code and regenerate.
 
 The report formula is `R = 6I + 5E + 4P + 3L + 2D` (Section 4.6.2.4). No factor value is assigned directly. Each control records three attributes read from its CIS Stand-alone v2.0.0 entry, and fixed rules map them to I, P and L. The rules follow report Table 4.15, and the wording comes from the Table 4.14a/4.14c rubrics. E and D are determined at assessment time.
 

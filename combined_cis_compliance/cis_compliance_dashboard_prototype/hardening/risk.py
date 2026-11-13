@@ -11,7 +11,7 @@ import json
 
 from .domain import RiskFactors, Status, comparable, drift_factor
 
-BASELINE_VERSION = 'rules-2026-10-26 (Table 4.15 derivation; category assignments under researcher review)'
+BASELINE_VERSION = 'rules-2026-10-26 (Table 4.15a categories)'
 PRIORITY = {'Critical': 1, 'High': 2, 'Moderate': 3, 'Low': 4}
 
 # Security Impact (I) from the consequence named in the benchmark Rationale/Impact text (Table 4.15),
