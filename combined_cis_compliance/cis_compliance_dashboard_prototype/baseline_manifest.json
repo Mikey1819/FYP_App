@@ -394,7 +394,7 @@
       "category": "protected"
     },
     "scripts/tools/extract_benchmark_audit.py": {
-      "sha256": "9b48cc96af79daa5ec34b49b6327e57f03d7f64456b27fa4b9728670809ddfe6",
+      "sha256": "d2938efceac5a79e6fccd15974071023e226bb91b52293a9a8d305141dc09669",
       "category": "protected"
     },
     "scripts/tools/generate_risk_derivation.py": {

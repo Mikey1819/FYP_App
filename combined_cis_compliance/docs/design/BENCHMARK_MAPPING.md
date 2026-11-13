@@ -137,3 +137,7 @@ The offline importer requires explicitly selected hostname/UUID; checks supporte
 Fixture tests cover parser/comparison/error/target boundaries. Separate imported-evidence dashboard/storage integration is fixture-tested. The first user-run VM export is received and validated, with collector-reported duration 0.342834s; see FIRST_VM_IMPORT_VALIDATION.md. Independent manual agreement remains pending.
 
 Technical references: [Microsoft secedit export](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/secedit-export), [Win32_UserAccount](https://learn.microsoft.com/en-us/windows/win32/cimwin32prov/win32-useraccount), [Win32_OperatingSystem](https://learn.microsoft.com/en-us/windows/win32/cimwin32prov/win32-operatingsystem).
+
+## Extraction script extended, 11 November 2026
+
+`scripts/tools/extract_benchmark_audit.py` was first written on 26 October for the firewall, audit and Remote Desktop candidates. On 11 November it was extended to all five areas: it now extracts every candidate in sections 1.1, 1.2, 2.3.1, 2.3.10, 9.1-9.3, 17.1.1, 17.2, 17.5, 18.10.57.2.2 and 18.10.57.3.9 (57 candidates), adds the Rationale and Impact text, marks the 32 catalogue controls as [SELECTED] and ends with a check that all 32 were found in the PDF. Its output reproduces the earlier reviews of the first 16 controls (19-24 October), which were made by text extraction and visual checks without a saved script; it does not replace or redate those reviews.
