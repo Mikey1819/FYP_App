@@ -21,6 +21,16 @@ Four AI helpers ("agents") share this work: the **Orchestrator** plans each step
 - **A Windows laptop** with [Python](https://www.python.org/downloads/) (version 3.13 or newer, free). When you install it, tick **"Add python.exe to PATH"**.
 - **A server to check:** Windows Server 2022 or Ubuntu 22.04, on the same network as the laptop. A virtual machine works too (see [Testing on a virtual machine or a real server](#testing-on-a-virtual-machine-or-a-real-server)).
 - **An administrator account** on that server.
+- **Ollama with the `qwen3:8b` AI model** on the same laptop. The program needs it to work; see [Install the AI model](#install-the-ai-model).
+
+## Install the AI model
+
+The program's AI runs through **Ollama**, using the **qwen3:8b** model. Without it, the program still opens and shows earlier results, but it cannot start a new check of a server.
+
+1. Download and install Ollama from [ollama.com/download](https://ollama.com/download).
+2. Open **Command Prompt**, type `ollama pull qwen3:8b` and press **Enter**. This downloads the model (about 5 GB, once).
+
+Ollama then keeps running in the background, so there is nothing else to do.
 
 ## Start the program
 
