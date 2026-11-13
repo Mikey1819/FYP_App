@@ -1,6 +1,6 @@
-"""The live validation register on the Windows pages (administrator, 14 November 2026: "implement it inside the
-Windows site as well", the same words on both systems). A connected fake Windows server through the real
-connection service and backend; no server is changed."""
+"""Check AI and the live validation register on the Windows pages (administrator, 14 November 2026: "implement it
+inside the Windows site as well", the same words on both systems). A connected fake Windows server through the real
+connection service and backend; Check AI is simulated, so no model is loaded and no server is changed."""
 import sys
 import tempfile
 import unittest
@@ -75,6 +75,37 @@ class WindowsPageModuleTests(unittest.TestCase):
         self.assertEqual(len(app.exception), 0, [e.value for e in app.exception])
         self.assertFalse(list(app.error), [e.value for e in app.error])
         return app
+
+    # ---- Check AI ------------------------------------------------------------------------------------------------
+    def check_ai(self, state):
+        from backends.ubuntu.ai_readiness import Readiness
+        checks = []
+
+        def fake_check():
+            checks.append(1)
+            return Readiness(state, 1.0, 6.0, '100% GPU', (), f'AI {state}: TEST-ONLY.')
+        with mock.patch('backends.ubuntu.ai_readiness.check', side_effect=fake_check):
+            self.assertFalse(self.app.button(key='agentic_run').disabled)
+            self.assertEqual(checks, [])  # never by itself
+            self.assertIn('Optional: Check AI loads the local model and shows whether it is fast enough.',
+                          [c.value for c in self.app.caption])
+            self.app.button(key='agentic_ai_check').click().run()
+            self.assertEqual(checks, [1])
+        return self.app
+
+    def test_check_ai_before_the_first_round_and_not_answering_keeps_start_disabled(self):
+        app = self.check_ai('down')
+        self.assertEqual(app.button(key='agentic_run').label, 'Start agentic round')
+        self.assertTrue(app.button(key='agentic_run').disabled)
+        self.assertIn('AI down: TEST-ONLY.', [e.value.replace('\\', '') for e in app.error])
+        self.assertEqual(self.vm.writes, [])  # Check AI never contacts the server
+
+    def test_check_ai_before_the_next_round_and_ready_leaves_it_enabled(self):
+        self.scan()
+        app = self.check_ai('ready')
+        self.assertEqual(app.button(key='agentic_run').label, 'Run next round')
+        self.assertFalse(app.button(key='agentic_run').disabled)
+        self.assertTrue(any('check took' in m.value for m in app.markdown))
 
     # ---- Live validation register --------------------------------------------------------------------------------
     def register(self, app):

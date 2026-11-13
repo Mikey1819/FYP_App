@@ -1162,8 +1162,9 @@ def _show_start(hardening, store, runtime, target):
     locked = _locked()
     ok = _clock_gate(hardening)
     _lock_box(locked, ok)
+    down = _ai_down()
     with st.container(horizontal=True):
-        st.button('Start agentic round', type='primary', key='agentic_run', disabled=not ok or bool(locked),
+        st.button('Start agentic round', type='primary', key='agentic_run', disabled=not ok or bool(locked) or down,
                   on_click=_click_start, args=('round', hardening))
         if previous and st.button('Resume earlier session', key='agentic_resume'):
             backend = active_backend(st.session_state)
@@ -1177,6 +1178,13 @@ def _show_start(hardening, store, runtime, target):
             st.session_state[SESSION] = previous['session_id']
             _reset_view()
             st.rerun()
+
+
+def _ai_down():
+    """Windows, as the Ubuntu page: the optional Check AI above the round buttons. True when its last result was 'AI
+    not answering', which keeps a new round from starting until it is checked again (a round needs the model)."""
+    result = ai_check('agentic_ai_check')
+    return result is not None and result.state == 'down'
 
 
 def _choose_round(assessments):
@@ -1224,9 +1232,11 @@ def _action_bar(hardening, session_id, latest, state, rounds, target, manual_ope
     can_run = not locked and not state['undecided'] and (not live or verification is not None)
     ok = _clock_gate(hardening) if can_run or state['pending'] or locked else True
     _lock_box(locked, ok)
+    down = _ai_down() if can_run else False
     with st.container(horizontal=True, vertical_alignment='center'):
         if can_run:
-            st.button('Run next round', type='primary', key='agentic_run', icon=':material/refresh:', disabled=not ok,
+            st.button('Run next round', type='primary', key='agentic_run', icon=':material/refresh:',
+                      disabled=not ok or down,
                       help='Rescan the server, re-rank the findings and propose again'
                            + (f'. The {len(live)} approved fix(es) not executed stay in this round.' if live else ''),
                       on_click=_click_start, args=('round', hardening, session_id))
@@ -2470,18 +2480,24 @@ def _ubuntu_show_completed(backend, connection, workflow, snapshot, rounds, comp
             st.rerun()
 
 
-AI_READINESS = 'ubuntu_ai_readiness'  # The last Check AI result in this browser session (module 2).
+AI_READINESS = 'ai_readiness'  # The last Check AI result in this browser session (module 2; the laptop's AI, so the
+# same result counts on both systems' pages).
 AI_BADGE = {'ready': ('green', 'check_circle', 'AI ready'), 'slow': ('orange', 'warning', 'AI slow'),
             'down': ('red', 'error', 'AI not answering')}
 
 
 def _ubuntu_ai_readiness(capabilities):
-    """Module 2: Check AI, only when the administrator clicks it (their choice): a tiny timed request to the local
-    model (which also loads it), free laptop memory and GPU or CPU. Returns the last result, or None while unchecked;
-    'down' keeps Start disabled until checked again."""
+    return ai_check('ubuntu_ai_check')
+
+
+def ai_check(key):
+    """Module 2, on both systems' Agentic hardening page (Windows: administrator, 14 November 2026): Check AI, only
+    when the administrator clicks it (their choice): a tiny timed request to the local model (which also loads it),
+    free laptop memory and GPU or CPU. Nothing is sent to any server. Returns the last result, or None while
+    unchecked; 'down' keeps Start disabled until checked again."""
     from backends.ubuntu import ai_readiness
     with st.container(horizontal=True, vertical_alignment='center'):
-        if st.button('Check AI', key='ubuntu_ai_check', icon=':material/speed:',
+        if st.button('Check AI', key=key, icon=':material/speed:',
                      help='Sends a one-word request to the local model (this also loads it), and reads free laptop '
                           'memory and whether the model runs on the GPU. Nothing is sent to any server.'):
             import time
