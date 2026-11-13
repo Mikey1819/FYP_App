@@ -1,6 +1,6 @@
 # Agentic framework architecture
 
-Current design as of 5 November 2026. It implements decisions D1–D7 in [AGENTS.md](../../AGENTS.md). Page: **Agentic hardening** (`app.py`). Code: [agentic.py](../../cis_compliance_dashboard_prototype/hardening/agentic.py).
+Current design as of 5 November 2026. It implements the project's design decisions (D1–D7). Page: **Agentic hardening** (`app.py`). Code: [agentic.py](../../cis_compliance_dashboard_prototype/hardening/agentic.py).
 
 Every role is a bounded local-LLM tool loop (`qwen3:8b`). It chooses its own tool calls, observes the results and acts on them (D6). PowerShell scripts are the agents' tools. Deterministic code does three jobs: it computes compliance and risk (D2), it validates every call, and it enforces approval.
 
@@ -94,7 +94,7 @@ As a result, every reason shown to the administrator is true by construction. Th
 
 ## Administrator goals (removed 6 November 2026)
 
-From 30 October to 6 November the administrator could type a free-text goal for a round, which the Orchestrator translated into constraints (`interpret_goal`, codes `serves_goal` and `outside_goal`). It was removed on 6 November because its results were too inconsistent: in the evaluation, about half of the goal rounds had their plan refused for format errors, and end to end it did no better than a keyword rule (see [AGENTIC_ASSESSMENT.md](../evaluation/AGENTIC_ASSESSMENT.md#administrator-goals-added-30-october)). Rounds now always run without a goal. Older stored rounds may still carry a `goal` field; nothing reads it. The original design is kept in [archive/ADMIN_GOALS_DESIGN.md](../archive/ADMIN_GOALS_DESIGN.md).
+From 30 October to 6 November the administrator could type a free-text goal for a round, which the Orchestrator translated into constraints (`interpret_goal`, codes `serves_goal` and `outside_goal`). It was removed on 6 November because its results were too inconsistent: in the evaluation, about half of the goal rounds had their plan refused for format errors, and end to end it did no better than a keyword rule. Rounds now always run without a goal. Older stored rounds may still carry a `goal` field; nothing reads it.
 
 ## Fallbacks (report Section 4.1.2)
 
@@ -153,8 +153,8 @@ These hold whether the Remediation Agent or the no-AI fallback runs the action:
   - Review: fact-checked next-step codes, unblocked findings leading to a new round, Orchestrator outage, no-AI fallback.
   - Executor guards, risk arithmetic, and library parity with real PowerShell.
 - `tests/test_agentic_view.py`: page walkthrough covering round, approve, reject, execute, verification and next step.
-- `scripts/evaluation/probe_agentic_round.py`: real `qwen3:8b` for all four roles against the simulated VM. Results are recorded in [PROGRESS.md](../../PROGRESS.md).
-- Real VM: one session on 30 October (two assessment rounds; 1.2.2, 1.1.1 and 1.1.3 approved, executed and verified compliant). See [PROGRESS.md](../../PROGRESS.md).
+- `scripts/evaluation/probe_agentic_round.py`: real `qwen3:8b` for all four roles against the simulated VM.
+- Real VM: one session on 30 October (two assessment rounds; 1.2.2, 1.1.1 and 1.1.3 approved, executed and verified compliant).
 
 ## Assessment run register
 

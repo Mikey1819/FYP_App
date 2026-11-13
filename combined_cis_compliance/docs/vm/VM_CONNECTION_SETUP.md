@@ -100,9 +100,9 @@ The password stays in the Streamlit session's memory only. It is never written t
 
 - Evidence collected over this channel is stored as `Live`, including the remediation runner's before/after evidence (since 3 November 2026; the 12 earlier runner records were relabelled). The file-era scans (19–26 October) were removed from the database on 3 November; a local backup is in `data/backup_before_cleanup_2026-11-03/`. `Imported` remains only for the command-line client's `--evidence file.json`. The **History and drift** table shows the source of every assessment.
 - Hardening can cut this channel. Future firewall controls (for example disabling local firewall rule merging), WinRM service policies and network logon rights can break remoting. The Remediation Agent must refuse, or flag, any action that would disconnect its own channel before verification.
-- The Remediation Agent runs [Invoke-RemediationAction.ps1](../../scripts/vm/Invoke-RemediationAction.ps1) over this channel for approved library actions, as described in [ARCHITECTURE.md](../design/ARCHITECTURE.md). Its precheck runs the same read-only collector without storing a new assessment. The manual file exchange of the retired upload page is documented in [archived VM_BRIDGE.md](../archive/legacy/VM_BRIDGE.md).
+- The Remediation Agent runs [Invoke-RemediationAction.ps1](../../scripts/vm/Invoke-RemediationAction.ps1) over this channel for approved library actions, as described in [ARCHITECTURE.md](../design/ARCHITECTURE.md). Its precheck runs the same read-only collector without storing a new assessment.
 - Nothing needs to be copied into the VM for the agentic page: the collector and runner are sent over the channel on every call.
-- Nothing is run by hand inside the VM. The shared-folder worker ([archived SCANNER_CONNECTION.md](../archive/legacy/SCANNER_CONNECTION.md)) was removed on 29 October, and the collector's and cross-check's save-to-file modes on 3 November: they needed a person inside the VM, so they did not satisfy D6.
+- Nothing is run by hand inside the VM. The shared-folder worker was removed on 29 October, and the collector's and cross-check's save-to-file modes on 3 November: they needed a person inside the VM, so they did not satisfy D6.
 
 ## Ubuntu 22.04 servers (unified system, 8 November 2026)
 

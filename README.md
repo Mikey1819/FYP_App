@@ -25,7 +25,7 @@ Four AI helpers ("agents") share this work: the **Orchestrator** plans each step
 ## Start the program
 
 1. Download this project and unzip it.
-2. Double-click **`Run-Dashboard.cmd`**.
+2. Open the `combined_cis_compliance` folder and double-click **`Run-Dashboard.cmd`**.
 
 The first time, it prepares itself. This takes a few minutes and needs an internet connection. After that it starts straight away. The program opens in your web browser; to stop it, close the black window.
 
@@ -94,10 +94,8 @@ Never use the program on the laptop it runs on: it is meant for servers only.
 
 ## More information
 
-- [AGENTS.md](AGENTS.md): the project's design decisions and safety rules
-- [PROGRESS.md](PROGRESS.md): what has been done and tested, day by day
-- [Architecture](docs/design/ARCHITECTURE.md): how the agents and their checks work
-- [Connecting a server](docs/vm/VM_CONNECTION_SETUP.md): pairing and connection problems in more detail
-- [Ubuntu operations](cis_compliance_dashboard_prototype/docs/OPERATIONS.md): Ubuntu setup, backup and recovery
+- [Architecture](combined_cis_compliance/docs/design/ARCHITECTURE.md): how the agents and their checks work
+- [Connecting a server](combined_cis_compliance/docs/vm/VM_CONNECTION_SETUP.md): pairing and connection problems in more detail
+- [Ubuntu operations](combined_cis_compliance/cis_compliance_dashboard_prototype/docs/OPERATIONS.md): Ubuntu setup, backup and recovery
 
-**For developers:** to run the automated tests, open PowerShell in `cis_compliance_dashboard_prototype` and run `..\.venv-integration\Scripts\python.exe -m unittest discover -s tests`.
+**For developers:** to run the automated tests, open PowerShell in `combined_cis_compliance\cis_compliance_dashboard_prototype` and run `..\.venv-integration\Scripts\python.exe -m unittest discover -s tests`.

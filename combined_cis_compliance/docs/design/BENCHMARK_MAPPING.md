@@ -4,7 +4,7 @@ This is the authoritative record of which controls are assessed, against which b
 
 ## Edition decision (26 October 2026)
 
-This Stand-alone v2.0.0 edition is the project baseline (decision D3 in [AGENTS.md](../../AGENTS.md)). The report's CIS Microsoft Windows Server 2022 Benchmark v5.1.0 is not used: its Intended Audience (printed page 26) covers domain-joined/AD-managed systems and explicitly excludes standalone/workgroup systems, which is what the lab VM is. Report Table 3.2 IDs are candidates only; each must be re-checked against this edition's numbering, values and pages before implementation.
+This Stand-alone v2.0.0 edition is the project baseline (project decision D3). The report's CIS Microsoft Windows Server 2022 Benchmark v5.1.0 is not used: its Intended Audience (printed page 26) covers domain-joined/AD-managed systems and explicitly excludes standalone/workgroup systems, which is what the lab VM is. Report Table 3.2 IDs are candidates only; each must be re-checked against this edition's numbering, values and pages before implementation.
 
 ## Source and applicability
 
