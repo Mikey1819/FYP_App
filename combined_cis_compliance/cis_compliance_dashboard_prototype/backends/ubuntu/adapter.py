@@ -201,10 +201,40 @@ def _risk_policy():
     return load_policy()
 
 
-AUDITD_PACKAGE = '6.3.1.1'
-NEEDS_AUDITD = frozenset({'6.3.1.2', '6.3.3.4', '6.3.3.6', '6.3.3.8'})
-AUDITD_WAIT = ('Planned after 6.3.1.1 installs auditd: its fix needs auditd on the server, so the next round after '
-               '6.3.1.1 is applied plans it')
+AUDIT_RULE_CONTROLS = ('6.3.3.4', '6.3.3.6', '6.3.3.8')
+
+
+def _prerequisite(control_id, observations):
+    """(prerequisite control, why) when the server's facts show that this control's fix waits for another control,
+    read from the same facts its registered fix plans from (backends/ubuntu/actions.py); None otherwise
+    (administrator, 20 November 2026: "No registered fix applies" named no prerequisite)."""
+    def value(cid, key):
+        found = observations.get(cid, {}).get(key, {})
+        return found.get('value') if found.get('state') == 'ok' else None
+    if control_id in ('4.1.4', '4.1.7') and value(control_id, 'firewall_manager') == 'ufw' \
+            and value(control_id, 'ufw.active') is not True:
+        what = 'the CIS loopback rules' if control_id == '4.1.4' else 'the default deny policy'
+        return '4.1.3', what + ' can only be applied while UFW is active, and UFW is inactive on this server'
+    package = value('6.3.1.1', 'package.auditd')  # None: not reported, so no prerequisite is claimed
+    if control_id == '6.3.1.2' and value(control_id, 'auditd.enabled') == 'not-found' and package not in (None,
+                                                                                                         'installed'):
+        return '6.3.1.1', ('the auditd service can only be enabled and started once it is installed, and the auditd '
+                           'package is not installed on this server')
+    loaded = observations.get(control_id, {}).get('loaded_audit_rules')
+    if control_id in AUDIT_RULE_CONTROLS and loaded is not None and loaded.get('state') != 'ok' and package:
+        if package != 'installed':
+            return '6.3.1.1', ('audit rules can only be loaded once auditd is installed, and the auditd package is not '
+                               'installed on this server')
+        return '6.3.1.2', ('audit rules can only be loaded while auditd runs, and the auditd service is not running on '
+                           'this server')
+    return None
+
+
+def _prerequisite_text(prerequisite, why, catalogue, proposed):
+    """The reason shown in "Not proposed this round" for a control that waits for `prerequisite`."""
+    return ('Requires %s (%s) first: %s. %s is %s in this round; once it is applied and verified, the next round '
+            'proposes this fix' % (prerequisite, catalogue[prerequisite].title, why, prerequisite,
+                                   'proposed' if prerequisite in proposed else 'not proposed'))
 
 
 def _step_times(events):
@@ -273,13 +303,17 @@ def _plan_rows(details, evidence, catalogue):
         if cid in decided and decided[cid][0] == 'Fix proposed':
             decided[cid] = ('Fix proposed', decided[cid][1] + ' · The server refused its read-only check: ' + why
                             + '.' + _refusal_hint(why))
-    # Task 4: the auditd service and audit-rule fixes are planned from a read-only preview on a server that has auditd,
-    # so while 6.3.1.1 (install auditd) fails they cannot be planned in this round. Say so, instead of the generic code.
-    failing = {a.control_id for a in evidence.assessments if a.status is ComplianceStatus.NON_COMPLIANT}
-    if AUDITD_PACKAGE in failing:
-        for e in plan.get('deferred_by_code', ()):
-            if e['control_id'] in NEEDS_AUDITD and e['reason_code'] == 'no_registered_action':
-                decided[e['control_id']] = ('Deferred (by the app)', AUDITD_WAIT)
+    # A fix that waits for another control (UFW rules for an active UFW, auditd's service and rules for the auditd
+    # package) names it, whether the Orchestrator or the app deferred it (stored round of 17 November: the Orchestrator).
+    try:
+        observations = json.loads(evidence.raw)['observations']
+    except (AttributeError, KeyError, TypeError, ValueError):
+        observations = {}
+    proposed = {e['control_id'] for e in plan.get('fixes', ())}
+    for e in tuple(plan.get('decisions', ())) + tuple(plan.get('deferred_by_code', ())):
+        waits = _prerequisite(e['control_id'], observations) if e['reason_code'] == 'no_registered_action' else None
+        if waits:  # Its decision label stays: 'Deferred' (the Orchestrator) or 'Deferred (by the app)'.
+            decided[e['control_id']] = (decided[e['control_id']][0], _prerequisite_text(*waits, catalogue, proposed))
     missing = ('Not decided', 'The planner left it out of its plan') if plan else (
         'No plan', 'The round stopped before the planner submitted a plan')
     flags = {}
