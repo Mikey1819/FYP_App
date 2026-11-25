@@ -35,7 +35,7 @@ Ollama then keeps running in the background, so there is nothing else to do.
 ## Start the program
 
 1. Download this project and unzip it.
-2. Open the `combined_cis_compliance` folder and double-click **`Run-Dashboard.cmd`**.
+2. In the project folder, double-click **`Run-Dashboard.cmd`**.
 
 The first time, it prepares itself. This takes a few minutes and needs an internet connection. After that it starts straight away. The program opens in your web browser; to stop it, close the black window.
 
